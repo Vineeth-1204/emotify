@@ -6,6 +6,8 @@ import { Colors } from "@/constants/Colors";
 import { Theme } from "@/constants/Theme";
 import { Button } from "@/components/ui/Button";
 
+import { ShieldSafetyIcon } from "@/components/svg/system";
+
 export default function EmergencyContactScreen() {
   const router = useRouter();
   const [name, setName] = useState("");
@@ -67,9 +69,12 @@ export default function EmergencyContactScreen() {
       </View>
 
       <View style={styles.info}>
-        <Text style={styles.infoText}>
-          💡 Emergency contact details are strictly required to ensure your safety in high-distress situations.
-        </Text>
+        <View style={{ flexDirection: "row", gap: Theme.spacing.sm, alignItems: "flex-start" }}>
+          <ShieldSafetyIcon size={20} color={Colors.primary} />
+          <Text style={[styles.infoText, { flex: 1 }]}>
+            Emergency contact details are strictly required to ensure your safety in high-distress situations.
+          </Text>
+        </View>
       </View>
 
       <Button

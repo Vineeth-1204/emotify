@@ -20,9 +20,9 @@ export const createAlert = mutation({
       throw new Error("Alert type too long.");
     }
 
-    console.log(`🚨 ALERT TRIGGERED — User: ${userId}, Type: ${args.type}`);
-    console.log(`⏰ Time: ${new Date().toISOString()}`);
-    console.log(`📋 Status: PENDING — Counselor notification required`);
+    console.log(`[ALERT TRIGGERED] User: ${userId}, Type: ${args.type}`);
+    console.log(`[TIME] ${new Date().toISOString()}`);
+    console.log(`[STATUS] PENDING — Counselor notification required`);
 
     return await ctx.db.insert("alerts", {
       userId,

@@ -11,17 +11,28 @@ import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useAvatar } from "@/context/AvatarContext";
+import { MitraAvatar } from "@/components/avatar/MitraAvatar";
+import { CalmPointToken } from "@/components/svg/system";
+import {
+  HappyEmotionIcon,
+  CalmEmotionIcon,
+  SadEmotionIcon,
+  WorriedEmotionIcon,
+  AngryEmotionIcon,
+  TiredEmotionIcon,
+} from "@/components/svg/emotions";
 
 const { width } = Dimensions.get('window');
 
 const MOODS = [
-  { label: "😊 Great", value: "great" },
-  { label: "🙂 Good", value: "good" },
-  { label: "😐 Okay", value: "okay" },
-  { label: "😔 Low", value: "low" },
-  { label: "😣 Stressed", value: "stressed" },
-  { label: "😴 Tired", value: "tired" },
-  { label: "😡 Frustrated", value: "frustrated" }
+  { label: "Great", value: "great", Icon: HappyEmotionIcon },
+  { label: "Good", value: "good", Icon: CalmEmotionIcon },
+  { label: "Okay", value: "okay", Icon: CalmEmotionIcon },
+  { label: "Low", value: "low", Icon: SadEmotionIcon },
+  { label: "Stressed", value: "stressed", Icon: WorriedEmotionIcon },
+  { label: "Tired", value: "tired", Icon: TiredEmotionIcon },
+  { label: "Frustrated", value: "frustrated", Icon: AngryEmotionIcon }
 ];
 
 const COMPLETED_CONGRATS = [
@@ -154,7 +165,7 @@ export default function MicroGoalsScreen() {
       await scheduleGoalRelative({ id: selectedGoal._id, offsetMinutes: minutes });
       setIsScheduleVisible(false);
       setSelectedGoal(null);
-      Alert.alert("Goal Scheduled! ⏰", `Goal set for relative reminder.`);
+      Alert.alert("Goal Scheduled", `Goal set for relative reminder.`);
     } catch (e: any) {
       Alert.alert("Scheduling Error", e.message || "Could not schedule goal.");
     } finally {
@@ -175,7 +186,7 @@ export default function MicroGoalsScreen() {
       await snoozeGoal({ id: selectedGoal._id, snoozeMinutes: minutes });
       setIsSnoozeVisible(false);
       setSelectedGoal(null);
-      Alert.alert("Goal Snoozed 😴", `Goal snoozed for ${minutes} minutes.`);
+      Alert.alert("Goal Snoozed", `Goal snoozed for ${minutes} minutes.`);
     } catch (e: any) {
       Alert.alert("Snooze Error", e.message || "Could not snooze goal.");
     } finally {
@@ -386,19 +397,21 @@ export default function MicroGoalsScreen() {
 
           <View style={styles.economyRow}>
             <View style={styles.ecoItem}>
-              <Text style={styles.ecoIcon}>🪙</Text>
+              <View style={{ marginBottom: 2 }}>
+                <CalmPointToken size={22} />
+              </View>
               <Text style={styles.ecoVal}>{coinsVal}</Text>
               <Text style={styles.ecoLbl}>Coins</Text>
             </View>
             <View style={styles.verticalDivider} />
             <View style={styles.ecoItem}>
-              <Text style={styles.ecoIcon}>🔥</Text>
+              <Ionicons name="flame" size={22} color="#EF4444" style={{ marginBottom: 2 }} />
               <Text style={styles.ecoVal}>{streakInfo?.currentStreak ?? 0} Days</Text>
               <Text style={styles.ecoLbl}>Active Streak</Text>
             </View>
             <View style={styles.verticalDivider} />
             <View style={styles.ecoItem}>
-              <Text style={styles.ecoIcon}>❄️</Text>
+              <Ionicons name="snow" size={22} color="#3B82F6" style={{ marginBottom: 2 }} />
               <Text style={styles.ecoVal}>{streakInfo?.frozen ? "Active" : "Ready"}</Text>
               <Text style={styles.ecoLbl}>Freeze Lock</Text>
             </View>
@@ -436,7 +449,7 @@ export default function MicroGoalsScreen() {
               {/* Morning checkin check */}
               {!todayCheckin ? (
                 <View style={styles.glassCard}>
-                  <Text style={styles.checkinTitle}>🌅 Morning Check-in</Text>
+                  <Text style={styles.checkinTitle}>Morning Check-in</Text>
                   <Text style={styles.checkinSubtitle}>How are you feeling today? Your choice will adapt today's wellness plan.</Text>
 
                   {isCheckinLoading ? (
@@ -543,7 +556,7 @@ export default function MicroGoalsScreen() {
           <View style={styles.tabSection}>
             {/* Weekly Missions */}
             <View style={styles.glassCard}>
-              <Text style={styles.sectionTitle}>🗓️ Weekly Missions</Text>
+              <Text style={styles.sectionTitle}>Weekly Missions</Text>
               <Text style={styles.checkinSubtitle}>Resets every Monday. Complete all tracks to earn bonus rewards.</Text>
 
               {weeklyMission ? (
@@ -582,7 +595,7 @@ export default function MicroGoalsScreen() {
                   </View>
 
                   <View style={styles.missionRewardFooter}>
-                    <Text style={styles.rewardText}>Reward: 💰 100 Coins | ⭐ 500 XP</Text>
+                    <Text style={styles.rewardText}>Reward: 100 Coins | 500 XP</Text>
                     {weeklyMission.completed && (
                       <View style={styles.completedMissionTag}>
                         <Text style={styles.completedTagText}>CLAIMED</Text>
@@ -597,7 +610,7 @@ export default function MicroGoalsScreen() {
 
             {/* Monthly Challenge */}
             <View style={styles.glassCard}>
-              <Text style={styles.sectionTitle}>🏆 Monthly Challenge</Text>
+              <Text style={styles.sectionTitle}>Monthly Challenge</Text>
               {monthlyChallenge ? (
                 <View style={{ gap: 12, marginTop: 10 }}>
                   <View style={styles.missionProgressBox}>
@@ -621,7 +634,7 @@ export default function MicroGoalsScreen() {
                   </View>
 
                   <View style={styles.monthlyRewardBox}>
-                    <Text style={styles.rewardText}>Exclusive Reward: 🏅 {monthlyChallenge.badgeRewardName} Badge</Text>
+                    <Text style={styles.rewardText}>Exclusive Reward: {monthlyChallenge.badgeRewardName} Badge</Text>
                     {monthlyChallenge.completed && (
                       <View style={[styles.completedMissionTag, { backgroundColor: '#8B5CF6' }]}>
                         <Text style={styles.completedTagText}>UNLOCKED</Text>
@@ -636,7 +649,7 @@ export default function MicroGoalsScreen() {
 
             {/* Badges Cabinet */}
             <View style={styles.glassCard}>
-              <Text style={styles.sectionTitle}>🏅 Badge Cabinet</Text>
+              <Text style={styles.sectionTitle}>Badge Cabinet</Text>
               <View style={styles.badgesGrid}>
                 {BADGES_DEFINITIONS.map(badge => {
                   const isEarned = badgesEarned.some(b => b.badgeId === badge.id);
@@ -662,7 +675,7 @@ export default function MicroGoalsScreen() {
           <View style={styles.tabSection}>
             {/* Short Stats Summary */}
             <View style={styles.glassCard}>
-              <Text style={styles.sectionTitle}>📊 Wellbeing Impact Analytics</Text>
+              <Text style={styles.sectionTitle}>Wellbeing Impact Analytics</Text>
               <View style={styles.analyticsRow}>
                 <View style={styles.analyticBlock}>
                   <Text style={styles.analyticVal}>{(weeklySummary as any)?.completionRate ? `${Math.round((weeklySummary as any).completionRate)}%` : "0%"}</Text>
@@ -678,22 +691,30 @@ export default function MicroGoalsScreen() {
 
             {/* Mood Before vs After completion logs */}
             <View style={styles.glassCard}>
-              <Text style={styles.sectionTitle}>🧠 Feeling Shifts (After vs Before)</Text>
+              <Text style={styles.sectionTitle}>Feeling Shifts (After vs Before)</Text>
               {goalHistory.filter(g => g.completed && g.feelingAfter).length === 0 ? (
                 <Text style={styles.emptyText}>Complete goals and track your feelings to view dynamic shifts here.</Text>
               ) : (
                 <View style={{ gap: 8, marginTop: 10 }}>
                   {goalHistory.filter(g => g.completed && g.feelingAfter).slice(0, 5).map(g => {
-                    let feelIcon = "😐";
-                    if (g.feelingAfter === "better") feelIcon = "😊 Better";
-                    if (g.feelingAfter === "worse") feelIcon = "☹ Worse";
-                    if (g.feelingAfter === "same") feelIcon = "😐 Same";
+                    let feelLabel = "Same";
+                    let badgeBg = "#F1F5F9";
+                    let badgeColor = "#64748B";
+                    if (g.feelingAfter === "better") {
+                      feelLabel = "Better";
+                      badgeBg = "#D1FAE5";
+                      badgeColor = "#065F46";
+                    } else if (g.feelingAfter === "worse") {
+                      feelLabel = "Worse";
+                      badgeBg = "#FEE2E2";
+                      badgeColor = "#991B1B";
+                    }
 
                     return (
                       <View key={g._id} style={styles.historyRowItem}>
-                        <Text style={styles.historyRowTitle}>🎯 {g.goalTitle}</Text>
-                        <View style={styles.feelingBadge}>
-                          <Text style={styles.feelingBadgeText}>{feelIcon}</Text>
+                        <Text style={styles.historyRowTitle}>{g.goalTitle}</Text>
+                        <View style={[styles.feelingBadge, { backgroundColor: badgeBg }]}>
+                          <Text style={[styles.feelingBadgeText, { color: badgeColor, fontWeight: '700' }]}>{feelLabel}</Text>
                         </View>
                       </View>
                     );
@@ -704,7 +725,7 @@ export default function MicroGoalsScreen() {
 
             {/* Completed Logs Timeline */}
             <View style={styles.glassCard}>
-              <Text style={styles.sectionTitle}>📝 History Timeline</Text>
+              <Text style={styles.sectionTitle}>History Timeline</Text>
               {goalHistory.length === 0 ? (
                 <Text style={styles.emptyText}>Your goal timeline is empty. Start today!</Text>
               ) : (
@@ -746,7 +767,7 @@ export default function MicroGoalsScreen() {
                   </TouchableOpacity>
                 </View>
 
-                <Text style={styles.detailsTitle}>🎯 {selectedGoal.goalTitle}</Text>
+                <Text style={styles.detailsTitle}>{selectedGoal.goalTitle}</Text>
                 <Text style={styles.detailsDesc}>{selectedGoal.goalDescription}</Text>
 
                 <View style={styles.detailCard}>
@@ -767,7 +788,7 @@ export default function MicroGoalsScreen() {
 
                 <View style={styles.modalActions}>
                   <Button
-                    title="Schedule Reminder ⏰"
+                    title="Schedule Reminder"
                     onPress={handleOpenRelativeScheduling}
                     style={styles.actionBtn}
                     variant="primary"
@@ -803,12 +824,12 @@ export default function MicroGoalsScreen() {
 
             <View style={styles.relativeGrid}>
               {[
-                { label: "⚡ Start Now", min: 1 },
-                { label: "⏰ In 10 Minutes", min: 10 },
-                { label: "⏰ In 30 Minutes", min: 30 },
-                { label: "⏰ In 1 Hour", min: 60 },
-                { label: "🌅 This Evening", min: 180 },
-                { label: "🌙 Before Bed", min: 300 }
+                { label: "Start Now", min: 1 },
+                { label: "In 10 Minutes", min: 10 },
+                { label: "In 30 Minutes", min: 30 },
+                { label: "In 1 Hour", min: 60 },
+                { label: "This Evening", min: 180 },
+                { label: "Before Bed", min: 300 }
               ].map(opt => (
                 <TouchableOpacity
                   key={opt.label}
@@ -864,9 +885,9 @@ export default function MicroGoalsScreen() {
 
             <View style={styles.feelingActionRow}>
               {[
-                { label: "😊 Better", val: "better" },
-                { label: "😐 Same", val: "same" },
-                { label: "☹ Worse", val: "worse" }
+                { label: "Better", val: "better" },
+                { label: "Same", val: "same" },
+                { label: "Worse", val: "worse" }
               ].map(opt => (
                 <TouchableOpacity
                   key={opt.val}
@@ -885,8 +906,10 @@ export default function MicroGoalsScreen() {
       <Modal visible={isCelebrationVisible} transparent animationType="slide">
         <View style={styles.modalOverlay}>
           <View style={styles.celebrationContent}>
-            <Ionicons name="sparkles" size={60} color="#F59E0B" style={{ marginBottom: 12 }} />
-            <Text style={styles.celebrationTitle}>Brilliant Job! 🎉</Text>
+            <View style={{ alignItems: 'center', marginBottom: 12 }}>
+              <MitraAvatar state="celebrating" size="md" />
+            </View>
+            <Text style={styles.celebrationTitle}>Brilliant Job!</Text>
             <Text style={styles.celebrationMessage}>
               You earned <Text style={{ fontWeight: 'bold', color: Colors.primary }}>+{rewardData?.xp} XP</Text> and <Text style={{ fontWeight: 'bold', color: '#D97706' }}>+{rewardData?.coins} Coins</Text>!
             </Text>

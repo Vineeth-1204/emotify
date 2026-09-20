@@ -284,7 +284,7 @@ export const generateAIResponse = action({
     // Check message count limit (20 per day)
     const todayCount = await ctx.runQuery(api.companion.getTodayMessageCount);
     if (todayCount >= 20) {
-      throw new ConvexError("You have reached your daily limit of 20 messages. Please chat with Emoty again tomorrow! 🌟");
+      throw new ConvexError("You have reached your daily limit of 20 messages. Please chat with Mitra again tomorrow.");
     }
 
     // 1. Save user message first (immediate visual feedback on query)

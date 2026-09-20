@@ -10,6 +10,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { CalmPointToken } from "@/components/svg/system";
 
 const { width } = Dimensions.get("window");
 
@@ -149,13 +150,17 @@ export default function RecoveryPlanScreen() {
           {/* Gamified Rewards */}
           <View style={styles.rewardCard}>
             <View style={styles.rewardSubCard}>
-              <Text style={styles.rewardIcon}>🪙</Text>
+              <View style={{ marginBottom: 4 }}>
+                <CalmPointToken size={26} />
+              </View>
               <Text style={styles.rewardVal}>+50 Points</Text>
               <Text style={styles.rewardLbl}>Activation Reward</Text>
             </View>
             <View style={styles.verticalDivider} />
             <View style={styles.rewardSubCard}>
-              <Text style={styles.rewardIcon}>🔥</Text>
+              <View style={{ marginBottom: 4 }}>
+                <Ionicons name="flame" size={26} color="#EF4444" />
+              </View>
               <Text style={styles.rewardVal}>{(streakInfo?.currentStreak ?? 0) + 1} Days</Text>
               <Text style={styles.rewardLbl}>Recovery Streak</Text>
             </View>
@@ -256,9 +261,12 @@ export default function RecoveryPlanScreen() {
 
                 {/* AI Rationale box */}
                 <View style={[styles.rationaleBox, isSelected && styles.rationaleBoxSelected]}>
-                  <Text style={[styles.rationaleText, isSelected && { color: "#6D28D9" }]}>
-                    💡 {item.aiReason || `Targeting ${item.targetEmotion} / ${item.targetBehaviour}`}
-                  </Text>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                    <Ionicons name="bulb-outline" size={14} color={isSelected ? "#6D28D9" : "#64748B"} />
+                    <Text style={[styles.rationaleText, isSelected && { color: "#6D28D9" }]}>
+                      {item.aiReason || `Targeting ${item.targetEmotion} / ${item.targetBehaviour}`}
+                    </Text>
+                  </View>
                 </View>
               </TouchableOpacity>
             );

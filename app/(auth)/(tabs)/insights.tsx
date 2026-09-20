@@ -159,7 +159,8 @@ function StatCard({ icon, color, value, label, styles }: any) {
   );
 }
 
-const stylesFactory = (colors: any) => ({
+function stylesFactory(colors: any) {
+  return {
   container: {
     flex: 1,
     backgroundColor: colors.background,
@@ -329,4 +330,6 @@ const stylesFactory = (colors: any) => ({
     marginTop: 2,
     textTransform: 'uppercase',
   } as TextStyle,
-});
+  };
+}
+

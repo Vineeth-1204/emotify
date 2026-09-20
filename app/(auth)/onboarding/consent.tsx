@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Colors } from "@/constants/Colors";
@@ -63,7 +64,7 @@ export default function ConsentScreen() {
         activeOpacity={0.7}
       >
         <View style={[styles.checkbox, agreed && styles.checkboxChecked]}>
-          {agreed && <Text style={styles.checkmark}>✓</Text>}
+          {agreed && <Ionicons name="checkmark" size={16} color={Colors.white} />}
         </View>
         <Text style={styles.checkboxLabel}>
           I have read and agree to the above terms

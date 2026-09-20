@@ -102,7 +102,8 @@ export const THINKING_TRAPS = [
 export interface EmotionCatalogItem {
   id: string;
   code: string;
-  emoji: string;
+  emoji?: string; // legacy backward compatibility
+  iconKey: string;
   label: string;
   simpleMeaning: string;
   commonFeelings: string[];
@@ -114,7 +115,8 @@ export const EMOTIONS: EmotionCatalogItem[] = [
   {
     id: 'happy',
     code: 'E01',
-    emoji: '😊',
+    emoji: '',
+    iconKey: 'happy',
     label: 'Happy',
     simpleMeaning: 'I feel good or something nice happened.',
     commonFeelings: ['Excited', 'Joyful', 'Proud'],
@@ -124,7 +126,8 @@ export const EMOTIONS: EmotionCatalogItem[] = [
   {
     id: 'calm',
     code: 'E02',
-    emoji: '😌',
+    emoji: '',
+    iconKey: 'calm',
     label: 'Calm',
     simpleMeaning: 'I feel safe, relaxed, and okay.',
     commonFeelings: ['Peaceful', 'Comfortable'],
@@ -134,7 +137,8 @@ export const EMOTIONS: EmotionCatalogItem[] = [
   {
     id: 'sad',
     code: 'E03',
-    emoji: '😔',
+    emoji: '',
+    iconKey: 'sad',
     label: 'Sad',
     simpleMeaning: 'Something hurts me or I feel low.',
     commonFeelings: ['Lonely', 'Disappointed', 'Hurt'],
@@ -144,7 +148,8 @@ export const EMOTIONS: EmotionCatalogItem[] = [
   {
     id: 'worried',
     code: 'E04',
-    emoji: '😟',
+    emoji: '',
+    iconKey: 'worried',
     label: 'Worried / Scared',
     simpleMeaning: 'I think something bad might happen.',
     commonFeelings: ['Fear', 'Nervous', 'Anxious'],
@@ -154,7 +159,8 @@ export const EMOTIONS: EmotionCatalogItem[] = [
   {
     id: 'angry',
     code: 'E05',
-    emoji: '😡',
+    emoji: '',
+    iconKey: 'angry',
     label: 'Angry / Upset',
     simpleMeaning: 'I feel hurt, annoyed, or treated badly.',
     commonFeelings: ['Frustrated', 'Irritated', 'Insulted'],
@@ -164,7 +170,8 @@ export const EMOTIONS: EmotionCatalogItem[] = [
   {
     id: 'embarrassed',
     code: 'E06',
-    emoji: '😳',
+    emoji: '',
+    iconKey: 'embarrassed',
     label: 'Embarrassed / Ashamed',
     simpleMeaning: 'I feel bad or uncomfortable about myself or what happened.',
     commonFeelings: ['Shame', 'Awkwardness'],
@@ -174,7 +181,8 @@ export const EMOTIONS: EmotionCatalogItem[] = [
   {
     id: 'guilty',
     code: 'E07',
-    emoji: '😞',
+    emoji: '',
+    iconKey: 'guilty',
     label: 'Guilty / Regretful',
     simpleMeaning: 'I feel bad about something I did or wish I had done differently.',
     commonFeelings: ['Guilt', 'Regret'],
@@ -184,7 +192,8 @@ export const EMOTIONS: EmotionCatalogItem[] = [
   {
     id: 'tired',
     code: 'E08',
-    emoji: '😴',
+    emoji: '',
+    iconKey: 'tired',
     label: 'Tired / Drained',
     simpleMeaning: 'I feel like I have little energy left.',
     commonFeelings: ['Exhausted', 'Overwhelmed'],
@@ -202,59 +211,59 @@ export const INTERVENTION_RECOMMENDATIONS: Record<string, {
 }> = {
   worried: {
     activity: 'Mindfulness of Breath',
-    studentFacingName: '🌬️ Calm My Mind',
+    studentFacingName: 'Calm My Mind',
     recommendedDuration: '5–10 min',
     directResource: 'Mindfulness / breathing meditation resources',
-    rating: '⭐⭐⭐⭐⭐',
+    rating: 'Highly Recommended',
   },
   angry: {
     activity: 'JPMR / Pause & Relax / CBT',
-    studentFacingName: '🧘 Pause & Unwind',
+    studentFacingName: 'Pause & Unwind',
     recommendedDuration: '5–10 min',
     directResource: 'Progressive muscle relaxation & CBT pause tool',
-    rating: '⭐⭐⭐⭐⭐',
+    rating: 'Highly Recommended',
   },
   embarrassed: {
     activity: 'Loving-Kindness / Self-Compassion',
-    studentFacingName: '❤️ Be Kind to Myself',
+    studentFacingName: 'Be Kind to Myself',
     recommendedDuration: '10 min',
     directResource: '10-Minute Loving-Kindness Meditation – Self-Compassion',
-    rating: '⭐⭐⭐⭐⭐',
+    rating: 'Highly Recommended',
   },
   guilty: {
     activity: 'Loving-Kindness / Self-Compassion',
-    studentFacingName: '❤️ Be Kind to Myself',
+    studentFacingName: 'Be Kind to Myself',
     recommendedDuration: '10 min',
     directResource: '10-Minute Self-Compassion & Loving-Kindness Meditation',
-    rating: '⭐⭐⭐⭐⭐',
+    rating: 'Highly Recommended',
   },
   sad: {
     activity: 'Loving-Kindness / Self-Compassion',
-    studentFacingName: '❤️ Be Kind to Myself',
+    studentFacingName: 'Be Kind to Myself',
     recommendedDuration: '10 min',
     directResource: '10-Minute Loving-Kindness Meditation – Sharon Salzberg',
-    rating: '⭐⭐⭐⭐⭐',
+    rating: 'Highly Recommended',
   },
   tired: {
     activity: 'Gentle mindfulness / restorative meditation',
-    studentFacingName: '🌿 Rest & Recharge',
+    studentFacingName: 'Rest & Recharge',
     recommendedDuration: '5–10 min',
     directResource: 'Guided mindfulness/meditation library',
-    rating: '⭐⭐⭐',
+    rating: 'Recommended',
   },
   happy: {
     activity: 'Gratitude Meditation',
-    studentFacingName: '🌸 Notice the Good',
+    studentFacingName: 'Notice the Good',
     recommendedDuration: '10 min',
     directResource: '10-Minute Gratitude Meditation',
-    rating: '⭐⭐⭐⭐⭐',
+    rating: 'Highly Recommended',
   },
   calm: {
     activity: 'Breathing-paced calming music',
-    studentFacingName: '🌿 Stay in the Calm',
+    studentFacingName: 'Stay in the Calm',
     recommendedDuration: '3–10 min',
     directResource: 'Breathing Cycles – calming breathing music',
-    rating: '⭐⭐⭐⭐⭐',
+    rating: 'Highly Recommended',
   },
 };
 

@@ -55,5 +55,15 @@ export function useStyles<T extends StyleSheet.NamedStyles<T>>(
   styleFactory: (colors: ThemeColorsType) => T
 ): T {
   const colors = useThemeColors();
-  return useMemo(() => StyleSheet.create(styleFactory(colors)), [colors, styleFactory]);
+  return useMemo(() => {
+    if (typeof styleFactory === 'function') {
+      try {
+        return StyleSheet.create(styleFactory(colors));
+      } catch (e) {
+        console.warn('useStyles error:', e);
+      }
+    }
+    return {} as T;
+  }, [colors, styleFactory]);
 }
+

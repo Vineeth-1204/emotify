@@ -24,6 +24,26 @@ import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useAvatar } from "@/context/AvatarContext";
+import { MitraAvatar } from "@/components/avatar/MitraAvatar";
+import { CounsellorBadgeIcon, CalmPointToken } from "@/components/svg/system";
+import {
+  SightSensoryIcon,
+  TouchSensoryIcon,
+  SoundSensoryIcon,
+  SmellSensoryIcon,
+  TasteSensoryIcon,
+} from "@/components/svg/activities/SensoryIcons";
+import {
+  HappyEmotionIcon,
+  CalmEmotionIcon,
+  SadEmotionIcon,
+  WorriedEmotionIcon,
+  AngryEmotionIcon,
+  EmbarrassedEmotionIcon,
+  GuiltyEmotionIcon,
+  TiredEmotionIcon,
+} from "@/components/svg/emotions";
 
 const { width } = Dimensions.get("window");
 
@@ -533,9 +553,12 @@ export default function ReframeScreen() {
               <Text style={styles.helplineVal}>Crisis Text Line: Text HOME to 741741</Text>
             </View>
 
-            <Text style={styles.safetyAlertDesc}>
-              🔔 A school counselor has been alerted to reach out to you within the application to provide follow-up care.
-            </Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 14 }}>
+              <CounsellorBadgeIcon size={20} color={Colors.severe} />
+              <Text style={[styles.safetyAlertDesc, { flex: 1, marginTop: 0 }]}>
+                A school counselor has been alerted to reach out to you within the application to provide follow-up care.
+              </Text>
+            </View>
           </View>
 
           <Button
@@ -614,12 +637,27 @@ export default function ReframeScreen() {
               )}
 
               {supportTab === "grounding" && (
-                <View style={{ paddingVertical: 10 }}>
-                  <Text style={styles.groundingStep}>🖐️ 5 things you can SEE around you.</Text>
-                  <Text style={styles.groundingStep}>👉 4 things you can TOUCH physically.</Text>
-                  <Text style={styles.groundingStep}>👂 3 things you can HEAR in the environment.</Text>
-                  <Text style={styles.groundingStep}>🌸 2 things you can SMELL.</Text>
-                  <Text style={styles.groundingStep}>👅 1 thing you can TASTE.</Text>
+                <View style={{ paddingVertical: 10, gap: 12 }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                    <SightSensoryIcon size={24} color="#16A34A" />
+                    <Text style={[styles.groundingStep, { flex: 1 }]}>5 things you can SEE around you.</Text>
+                  </View>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                    <TouchSensoryIcon size={24} color="#16A34A" />
+                    <Text style={[styles.groundingStep, { flex: 1 }]}>4 things you can TOUCH physically.</Text>
+                  </View>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                    <SoundSensoryIcon size={24} color="#16A34A" />
+                    <Text style={[styles.groundingStep, { flex: 1 }]}>3 things you can HEAR in the environment.</Text>
+                  </View>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                    <SmellSensoryIcon size={24} color="#16A34A" />
+                    <Text style={[styles.groundingStep, { flex: 1 }]}>2 things you can SMELL.</Text>
+                  </View>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                    <TasteSensoryIcon size={24} color="#16A34A" />
+                    <Text style={[styles.groundingStep, { flex: 1 }]}>1 thing you can TASTE.</Text>
+                  </View>
                   <Text style={styles.breathTip}>Take your time to focus on each sense slowly.</Text>
                 </View>
               )}
@@ -686,8 +724,8 @@ export default function ReframeScreen() {
             <Text style={styles.goalFeedbackTitle}>Behavioural Goal Scheduled</Text>
             <Text style={styles.goalFeedbackText}>
               {activeSession.goalCompletion
-                ? `🎯 "${activeSession.recommendedGoal?.title}" has been added to your daily win-list. Check it off when you complete it!`
-                : "🕊️ You skipped scheduling a micro-goal today, which is totally okay. Be gentle with yourself."}
+                ? `"${activeSession.recommendedGoal?.title}" has been added to your daily win-list. Check it off when you complete it!`
+                : "You skipped scheduling a micro-goal today, which is totally okay. Be gentle with yourself."}
             </Text>
           </View>
 
@@ -878,9 +916,9 @@ export default function ReframeScreen() {
           >
             <View style={styles.glassCard}>
               <View style={{ alignItems: "center", marginVertical: 20 }}>
-                <Ionicons name="checkmark-done-circle" size={80} color={Colors.success} />
+                <MitraAvatar state="celebrating" size="md" />
               </View>
-              <Text style={styles.stepTitle}>Reflection Completed! 🎉</Text>
+              <Text style={styles.stepTitle}>Reflection Completed!</Text>
               <Text style={styles.stepSub}>
                 Great work! You have successfully completed today's cognitive reframing reflection.
               </Text>

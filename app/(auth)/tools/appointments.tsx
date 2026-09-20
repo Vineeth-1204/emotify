@@ -8,6 +8,7 @@ import { useAppAuth } from "@/utils/auth";
 import { Ionicons } from "@expo/vector-icons";
 import { useThemeColors } from "@/context/MoodThemeContext";
 import { Calendar } from "react-native-calendars";
+import { MitraAvatar } from "@/components/avatar/MitraAvatar";
 
 const HOURS = Array.from({ length: 12 }, (_, i) => (i + 1).toString().padStart(2, '0'));
 const MINUTES = Array.from({ length: 60 }, (_, i) => i.toString().padStart(2, '0'));
@@ -378,7 +379,9 @@ export default function AppointmentsScreen() {
       {celebrating && (
         <View style={[StyleSheet.absoluteFill, { zIndex: 9999, justifyContent: 'center', alignItems: 'center', backgroundColor: colors.background + 'EE' }]}>
            <Animated.View style={{ transform: [{ scale: scaleAnim }], alignItems: 'center', backgroundColor: colors.surface, padding: 32, borderRadius: 24, shadowOpacity: 0.2, shadowRadius: 20, elevation: 10 }}>
-             <Text style={{ fontSize: 72, marginBottom: 16 }}>🎉</Text>
+             <View style={{ marginBottom: 16 }}>
+               <MitraAvatar state="celebrating" size="md" />
+             </View>
              <Text style={{ fontSize: 28, fontWeight: 'bold', color: colors.primary, marginBottom: 20 }}>Confirmed!</Text>
              {selectedAppt && (
                <View style={{ alignItems: 'center', backgroundColor: colors.background, padding: 16, borderRadius: 12, width: '100%' }}>

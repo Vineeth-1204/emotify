@@ -9,6 +9,10 @@ import { useAppAuth } from "@/utils/auth";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 
+import { MitraAvatar } from "@/components/avatar/MitraAvatar";
+import { MindfulnessActivityIcon, DeepBreathingActivityIcon } from "@/components/svg/activities";
+import { CounsellorBadgeIcon, PlantProgress, ReminderIcon } from "@/components/svg/system";
+
 export default function WelcomeScreen() {
   const router = useRouter();
   const { user } = useAppAuth();
@@ -37,15 +41,20 @@ export default function WelcomeScreen() {
       showsVerticalScrollIndicator={false}
     >
       <View style={styles.hero}>
-        <Text style={styles.emoji}>🌱</Text>
+        <View style={{ marginBottom: Theme.spacing.md }}>
+          <MitraAvatar state="neutral" size="lg" />
+        </View>
         <Text style={styles.title}>Welcome to Emotify</Text>
         <Text style={styles.subtitle}>
-          A safe space for your mental wellbeing
+          Meet Mitra, your companion for emotional wellbeing
         </Text>
       </View>
 
       <View style={styles.card}>
-        <Text style={styles.cardTitle}>📋 Before we begin</Text>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: Theme.spacing.sm }}>
+          <ReminderIcon size={20} color={Colors.warning} />
+          <Text style={styles.cardTitle}>Before we begin</Text>
+        </View>
         <Text style={styles.disclaimer}>
           This app is <Text style={styles.bold}>not a diagnosis tool</Text> and
           does not replace professional mental health care. It is designed to
@@ -63,10 +72,22 @@ export default function WelcomeScreen() {
       </View>
 
       <View style={styles.features}>
-        <FeatureItem emoji="🧠" text="Understand your emotions better" />
-        <FeatureItem emoji="📊" text="Track your wellbeing over time" />
-        <FeatureItem emoji="🛠️" text="Access helpful coping tools" />
-        <FeatureItem emoji="🤝" text="Get connected to support when needed" />
+        <FeatureItem 
+          icon={<MindfulnessActivityIcon size={24} color={Colors.primary} />} 
+          text="Understand your emotions better" 
+        />
+        <FeatureItem 
+          icon={<PlantProgress stage="sprout" size={24} />} 
+          text="Track your wellbeing over time" 
+        />
+        <FeatureItem 
+          icon={<DeepBreathingActivityIcon size={24} color={Colors.primary} />} 
+          text="Access helpful coping tools" 
+        />
+        <FeatureItem 
+          icon={<CounsellorBadgeIcon size={24} color={Colors.primary} />} 
+          text="Get connected to support when needed" 
+        />
       </View>
 
       <Button
@@ -79,10 +100,10 @@ export default function WelcomeScreen() {
   );
 }
 
-function FeatureItem({ emoji, text }: { emoji: string; text: string }) {
+function FeatureItem({ icon, text }: { icon: React.ReactNode; text: string }) {
   return (
     <View style={styles.featureRow}>
-      <Text style={styles.featureEmoji}>{emoji}</Text>
+      <View style={styles.iconContainer}>{icon}</View>
       <Text style={styles.featureText}>{text}</Text>
     </View>
   );
@@ -151,8 +172,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: Theme.spacing.md,
   },
-  featureEmoji: {
-    fontSize: 24,
+  iconContainer: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: Colors.surface,
+    alignItems: "center",
+    justifyContent: "center",
   },
   featureText: {
     fontFamily: Theme.fontFamily.regular,

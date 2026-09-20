@@ -15,6 +15,9 @@ import Svg, { Circle, Path, G } from "react-native-svg";
 import * as SecureStore from "expo-secure-store";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useVideoPlayer, VideoView } from "expo-video";
+import { useAvatar } from "@/context/AvatarContext";
+import { MitraAvatar } from "@/components/avatar/MitraAvatar";
+import { CalmPointToken } from "@/components/svg/system";
 
 const { width } = Dimensions.get('window');
 
@@ -238,6 +241,7 @@ type PlayState = 'SPEAK_TENSE' | 'TENSE_WAITING' | 'TENSE_COUNTDOWN' | 'SPEAK_RE
 export default function JPMRScreen() {
   const router = useRouter();
   const { user } = useAppAuth();
+  const { setAvatarState } = useAvatar();
 
   const [step, setStep] = useState(1);
   const [preIntensity, setPreIntensity] = useState(5);
@@ -647,6 +651,9 @@ export default function JPMRScreen() {
         {step === 1 && (
           <View style={styles.stepContent}>
             <Text style={styles.title}>Guided JPMR Relaxation</Text>
+            <View style={{ alignItems: "center", marginVertical: 14 }}>
+              <MitraAvatar state="breathing" size="lg" />
+            </View>
             <Text style={styles.subtitle}>
               This is a guided relaxation to release muscle tension. Find a comfortable seat or lie down. It takes about 12 minutes. Press Start when ready.
             </Text>
@@ -793,6 +800,13 @@ export default function JPMRScreen() {
         {step === 4 && (
           <View style={styles.stepContent}>
             <Text style={styles.title}>Session Summary</Text>
+            <View style={{ alignItems: "center", marginVertical: 12 }}>
+              <MitraAvatar state={improvement > 0 ? "celebrating" : "calm"} size="md" />
+            </View>
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, marginBottom: 8 }}>
+              <CalmPointToken size={20} />
+              <Text style={{ fontFamily: Theme.fontFamily.bold, color: Colors.primary, fontSize: 14 }}>+35 Calm Points Awarded</Text>
+            </View>
             <Text style={styles.subtitle}>Every moment of relaxation strengthens your mind.</Text>
 
             <View style={styles.summaryResultCard}>

@@ -108,6 +108,34 @@ export const startSession = mutation({
   },
 });
 
+/** Update front-half session context (situation, automatic thought, emotion, intensity before). */
+export const updateSessionContext = mutation({
+  args: {
+    sessionId: v.id("cbtSessions"),
+    situation: v.optional(v.string()),
+    automaticThought: v.optional(v.string()),
+    emotion: v.optional(v.string()),
+    emotionBefore: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const userId = identity.subject;
+
+    const session = await ctx.db.get(args.sessionId);
+    if (!session || session.userId !== userId) throw new Error("Unauthorized or not found");
+
+    const patch: any = {};
+    if (args.situation !== undefined) patch.situation = sanitizeInput(args.situation);
+    if (args.automaticThought !== undefined) patch.automaticThought = sanitizeInput(args.automaticThought);
+    if (args.emotion !== undefined) patch.emotion = args.emotion;
+    if (args.emotionBefore !== undefined) patch.emotionBefore = args.emotionBefore;
+
+    await ctx.db.patch(args.sessionId, patch);
+    return { success: true };
+  },
+});
+
 /** Select and store the student's chosen/edited balanced thought. */
 export const selectBalancedThought = mutation({
   args: { sessionId: v.id("cbtSessions"), thought: v.string() },

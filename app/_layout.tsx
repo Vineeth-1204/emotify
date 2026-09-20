@@ -8,10 +8,12 @@ import {
 } from "@expo-google-fonts/dm-sans";
 import * as SplashScreen from "expo-splash-screen";
 import React, { useEffect } from "react";
+import { View, ActivityIndicator } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { AuthProvider, useAppAuth } from "@/utils/auth";
 import { api } from "@/convex/_generated/api";
 import { MoodThemeProvider } from "@/context/MoodThemeContext";
+import { AvatarProvider } from "@/context/AvatarContext";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -64,9 +66,19 @@ function InitialLayout() {
     if (!authLoading && fontsLoaded) {
       SplashScreen.hideAsync().catch(() => { });
     }
+    const timer = setTimeout(() => {
+      SplashScreen.hideAsync().catch(() => { });
+    }, 2500);
+    return () => clearTimeout(timer);
   }, [authLoading, fontsLoaded]);
 
-  if (authLoading || !fontsLoaded) return null;
+  if (authLoading || !fontsLoaded) {
+    return (
+      <View style={{ flex: 1, backgroundColor: "#0F0F1A", justifyContent: "center", alignItems: "center" }}>
+        <ActivityIndicator size="large" color="#6366F1" />
+      </View>
+    );
+  }
 
   return (
     <>
@@ -102,7 +114,9 @@ function ConvexAuthWrapper() {
   return (
     <ConvexProviderWithAuth client={convex} useAuth={useAuth}>
       <MoodThemeProvider>
-        <InitialLayout />
+        <AvatarProvider>
+          <InitialLayout />
+        </AvatarProvider>
       </MoodThemeProvider>
     </ConvexProviderWithAuth>
   );

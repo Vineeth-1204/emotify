@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
   View,
   Text,
@@ -17,30 +17,54 @@ import {
   Clipboard,
   Share,
   ScrollView,
-  Image,
+  Linking,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useAppAuth } from "@/utils/auth";
 import { Theme } from "@/constants/Theme";
-import { useThemeColors, useStyles, useActiveEmotion } from "@/context/MoodThemeContext";
+import { useThemeColors, useActiveEmotion } from "@/context/MoodThemeContext";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import * as Speech from "expo-speech";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BlurView } from "expo-blur";
+import { useAvatar } from "@/context/AvatarContext";
+import { MitraAvatar, AvatarState } from "@/components/avatar/MitraAvatar";
+import { ShieldSafetyIcon } from "@/components/svg/system";
 
 const { width } = Dimensions.get("window");
-const emotyBoyAvatar = require("@/assets/emoty_boy_avatar.jpg");
 
-// Starter prompts
+// Starter prompts with vector icons
 const STARTER_PROMPTS = [
-  { id: "stressed", text: "I'm feeling stressed.", emoji: "😰" },
-  { id: "day", text: "How was my day?", emoji: "📅" },
-  { id: "motivate", text: "Motivate me.", emoji: "🔥" },
-  { id: "talk", text: "Let's talk.", emoji: "💬" },
+  { id: "stressed", text: "I'm feeling stressed.", icon: "leaf-outline" },
+  { id: "day", text: "How was my day?", icon: "calendar-outline" },
+  { id: "motivate", text: "Motivate me.", icon: "sparkles-outline" },
+  { id: "talk", text: "Let's talk.", icon: "chatbubble-ellipses-outline" },
+];
+
+// Vector reaction types replacing Unicode emoji reactions
+const REACTION_TYPES = [
+  { id: "heart", icon: "heart", color: "#EF4444" },
+  { id: "like", icon: "thumbs-up", color: "#3B82F6" },
+  { id: "spark", icon: "sparkles", color: "#F59E0B" },
+  { id: "care", icon: "happy", color: "#10B981" },
+  { id: "saved", icon: "bookmark", color: "#8B5CF6" },
+];
+
+// Crisis patterns for Priority 1 Safety invariant
+const CRISIS_PATTERNS = [
+  "suicide",
+  "kill myself",
+  "want to die",
+  "end my life",
+  "ending it all",
+  "cut myself",
+  "self harm",
+  "hurt myself",
+  "better off dead",
 ];
 
 // Helper to format timestamps
@@ -50,23 +74,23 @@ function formatTime(timestamp: number) {
   const minutes = date.getMinutes();
   const ampm = hours >= 12 ? "PM" : "AM";
   hours = hours % 12;
-  hours = hours ? hours : 12; // the hour '0' should be '12'
+  hours = hours ? hours : 12;
   const minutesStr = minutes < 10 ? "0" + minutes : minutes;
   return `${hours}:${minutesStr} ${ampm}`;
 }
 
 const getContextualSuggestions = (messages: any[]) => {
-  const defaultChips = ["🫂 Tell me more", "🌿 Breathe", "💭 Reflect", "🙏 Gratitude"];
+  const defaultChips = ["Tell me more", "Breathe", "Reflect", "Gratitude"];
   if (!messages || messages.length === 0) return defaultChips;
   const lastMsg = messages[messages.length - 1]?.content?.toLowerCase() || "";
   if (lastMsg.includes("stress") || lastMsg.includes("anxious") || lastMsg.includes("panic")) {
-    return ["🌿 Breathe", "🫂 Tell me more", "💭 Reflect"];
+    return ["Breathe", "Tell me more", "Reflect"];
   }
   if (lastMsg.includes("sad") || lastMsg.includes("lonely") || lastMsg.includes("cry")) {
-    return ["🫂 Tell me more", "🎵 Calm Music", "🙏 Gratitude"];
+    return ["Tell me more", "Calm Music", "Gratitude"];
   }
   if (lastMsg.includes("happy") || lastMsg.includes("good") || lastMsg.includes("great")) {
-    return ["🙏 Gratitude", "✨ Motivate me", "💭 Reflect"];
+    return ["Gratitude", "Motivate me", "Reflect"];
   }
   return defaultChips;
 };
@@ -117,7 +141,7 @@ function TypingIndicator() {
     <View style={styles.typingContainer}>
       <View style={styles.typingBubble}>
         <Text style={[styles.typingText, { color: colors.textSecondary }]}>
-          Companion is typing...
+          Mitra is thinking...
         </Text>
         <View style={styles.dotRow}>
           <Animated.View
@@ -144,23 +168,23 @@ function TypingIndicator() {
   );
 }
 
-// Helper to get active emotion details
+// Helper to get active emotion details without emojis
 function getMoodLabel(moodId: string | null | undefined) {
-  if (!moodId) return "😌 Calm";
+  if (!moodId) return "Calm";
   const map: Record<string, string> = {
-    calm: "😌 Calm",
-    happy: "😊 Happy",
-    sad: "😢 Sad",
-    stressed: "😰 Stressed",
-    anger: "😡 Anger",
-    excitement: "🤪 Excited",
-    creative: "🎨 Creative",
-    love: "❤️ Loved",
-    fearful: "😰 Anxious",
-    peaceful: "🕊️ Peaceful",
-    disgusted: "🤢 Disgusted",
+    calm: "Calm",
+    happy: "Happy",
+    sad: "Sad",
+    stressed: "Stressed",
+    anger: "Anger",
+    excitement: "Excited",
+    creative: "Creative",
+    love: "Loved",
+    fearful: "Anxious",
+    peaceful: "Peaceful",
+    disgusted: "Disgusted",
   };
-  return map[moodId] || "😌 Calm";
+  return map[moodId] || "Calm";
 }
 
 export default function AICompanionScreen() {
@@ -170,11 +194,23 @@ export default function AICompanionScreen() {
   const activeEmotion = useActiveEmotion();
   const { user } = useAppAuth();
 
+  const {
+    avatarState,
+    setAvatarState,
+    triggerSafetyState,
+    isSafetyActive,
+    ageGroup,
+  } = useAvatar();
+
   const flatListRef = useRef<FlatList>(null);
   const inputRef = useRef<TextInput>(null);
+  const recognitionRef = useRef<any>(null);
 
   const [inputVal, setInputVal] = useState("");
   const [isAiLoading, setIsAiLoading] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [showSafetyBanner, setShowSafetyBanner] = useState(false);
 
   // Custom states for redesign features
   const [selectedMessage, setSelectedMessage] = useState<any>(null);
@@ -187,6 +223,15 @@ export default function AICompanionScreen() {
   const clearHistory = useMutation(api.companion.clearConversation);
   const generateAIResponse = useAction(api.companion.generateAIResponse);
   const createEmotionLog = useMutation(api.emotionLogs.create);
+
+  // Dynamic Mitra Avatar state computation
+  const currentMitraState: AvatarState = useMemo(() => {
+    if (isSafetyActive || showSafetyBanner) return "supportive";
+    if (isListening) return "listening";
+    if (isSpeaking) return "encouraging";
+    if (isAiLoading) return "thinking";
+    return avatarState || "calm";
+  }, [isSafetyActive, showSafetyBanner, isListening, isSpeaking, isAiLoading, avatarState]);
 
   // Auto scroll to end when messages list updates or keyboard shows
   useEffect(() => {
@@ -211,9 +256,95 @@ export default function AICompanionScreen() {
     };
   }, []);
 
+  // Voice recognition toggle (STT)
+  const toggleVoiceInput = () => {
+    if (Platform.OS === "web" && typeof window !== "undefined") {
+      const SpeechRecognition =
+        (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (SpeechRecognition) {
+        if (isListening) {
+          recognitionRef.current?.stop();
+          setIsListening(false);
+        } else {
+          try {
+            const recognition = new SpeechRecognition();
+            recognition.continuous = false;
+            recognition.interimResults = true;
+            recognition.lang = "en-US";
+
+            recognition.onstart = () => {
+              setIsListening(true);
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+            };
+
+            recognition.onresult = (event: any) => {
+              const transcript = Array.from(event.results)
+                .map((res: any) => res[0].transcript)
+                .join("");
+              setInputVal(transcript);
+            };
+
+            recognition.onerror = (event: any) => {
+              console.log("Speech recognition error", event.error);
+              setIsListening(false);
+            };
+
+            recognition.onend = () => {
+              setIsListening(false);
+            };
+
+            recognitionRef.current = recognition;
+            recognition.start();
+          } catch (e) {
+            console.error(e);
+            setIsListening(false);
+          }
+        }
+        return;
+      }
+    }
+
+    // Native fallback or unsupported browser: guidance to use keyboard mic
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    Alert.alert(
+      "Voice Input",
+      "You can dictate by tapping the microphone key on your device keyboard, or type your message directly.",
+      [{ text: "Got it", onPress: () => inputRef.current?.focus() }]
+    );
+  };
+
+  // Text-to-Speech (TTS)
+  const handleReadAloud = (textToRead?: string) => {
+    const content = textToRead || selectedMessage?.content;
+    if (!content) return;
+    setShowActionsSheet(false);
+
+    if (isSpeaking) {
+      Speech.stop();
+      setIsSpeaking(false);
+      return;
+    }
+
+    setIsSpeaking(true);
+    Speech.speak(content, {
+      rate: 0.9,
+      pitch: 1.0,
+      onDone: () => setIsSpeaking(false),
+      onStopped: () => setIsSpeaking(false),
+      onError: () => setIsSpeaking(false),
+    });
+  };
+
   const handleSend = async (textToSend: string) => {
     const cleanedText = textToSend.trim();
     if (!cleanedText || isAiLoading) return;
+
+    // Check for crisis patterns
+    const isCrisis = CRISIS_PATTERNS.some((p) => cleanedText.toLowerCase().includes(p));
+    if (isCrisis) {
+      triggerSafetyState();
+      setShowSafetyBanner(true);
+    }
 
     setInputVal("");
     setIsAiLoading(true);
@@ -224,7 +355,6 @@ export default function AICompanionScreen() {
     const aiMessageId = Math.random().toString(36).slice(2, 11);
 
     try {
-      // Trigger the action to save user message, fetch history, call Gemini, and save AI response
       await generateAIResponse({
         userMessageId,
         aiMessageId,
@@ -233,23 +363,16 @@ export default function AICompanionScreen() {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
     } catch (err: any) {
       console.error(err);
-      
-      // Extract descriptive error message if thrown as ConvexError
-      let errorMsg = "Could not reach your companion. Please try again.";
+      let errorMsg = "Could not reach Mitra right now. Please try again.";
       if (err?.message) {
         errorMsg = err.message
           .replace("ConvexError: ", "")
           .replace("Uncaught Error: ", "")
           .trim();
       }
-
-      Alert.alert(
-        "Companion Connection Error",
-        errorMsg
-      );
+      Alert.alert("Mitra Connection Error", errorMsg);
     } finally {
       setIsAiLoading(false);
-      // Auto focus input back
       inputRef.current?.focus();
     }
   };
@@ -257,7 +380,7 @@ export default function AICompanionScreen() {
   const handleClearChat = () => {
     Alert.alert(
       "Clear Chat History",
-      "Are you sure you want to clear your conversation with Emoty?",
+      "Are you sure you want to clear your conversation with Mitra?",
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -284,14 +407,15 @@ export default function AICompanionScreen() {
   const renderMessageItem = ({ item, index }: { item: any; index: number }) => {
     const isUser = item.role === "user";
     const nextMsg = messages?.[index + 1];
-    
-    // Group messages: check if sender changes or if there is a gap of more than 5 minutes
+
     const isGroupEnd =
       !nextMsg ||
       nextMsg.role !== item.role ||
       nextMsg.createdAt - item.createdAt > 5 * 60 * 1000;
 
     const showAiAvatar = !isUser;
+    const activeReaction = reactions[item.messageId];
+    const reactionDef = REACTION_TYPES.find((r) => r.id === activeReaction);
 
     return (
       <View
@@ -304,9 +428,10 @@ export default function AICompanionScreen() {
         {!isUser && (
           <View style={styles.bubbleAvatarContainer}>
             {showAiAvatar ? (
-              <View style={[styles.miniAvatar, { backgroundColor: colors.primary + "15" }]}>
-                <Image source={emotyBoyAvatar} style={styles.miniAvatarImage} />
-              </View>
+              <MitraAvatar
+                state={isAiLoading && index === (messages?.length ?? 0) - 1 ? "thinking" : "calm"}
+                size="xs"
+              />
             ) : (
               <View style={styles.miniAvatarSpacer} />
             )}
@@ -328,12 +453,10 @@ export default function AICompanionScreen() {
               end={{ x: 1, y: 1 }}
               style={[styles.bubble, styles.userBubble]}
             >
-              <Text style={[styles.bubbleText, styles.userText]}>
-                {item.content}
-              </Text>
-              {reactions[item.messageId] && (
+              <Text style={[styles.bubbleText, styles.userText]}>{item.content}</Text>
+              {reactionDef && (
                 <View style={styles.reactionBadge}>
-                  <Text style={styles.reactionText}>{reactions[item.messageId]}</Text>
+                  <Ionicons name={reactionDef.icon as any} size={11} color={reactionDef.color} />
                 </View>
               )}
               <Text style={[styles.timestamp, styles.userTimestamp]}>
@@ -342,17 +465,24 @@ export default function AICompanionScreen() {
             </LinearGradient>
           ) : (
             <View style={[styles.bubble, styles.aiBubble, { backgroundColor: colors.white }]}>
-              <Text style={[styles.bubbleText, styles.aiText]}>
-                {item.content}
-              </Text>
-              {reactions[item.messageId] && (
+              <Text style={[styles.bubbleText, styles.aiText]}>{item.content}</Text>
+              {reactionDef && (
                 <View style={styles.reactionBadge}>
-                  <Text style={styles.reactionText}>{reactions[item.messageId]}</Text>
+                  <Ionicons name={reactionDef.icon as any} size={11} color={reactionDef.color} />
                 </View>
               )}
-              <Text style={[styles.timestamp, { color: colors.textMuted }]}>
-                {formatTime(item.createdAt)}
-              </Text>
+              <View style={styles.bubbleFooter}>
+                <TouchableOpacity
+                  onPress={() => handleReadAloud(item.content)}
+                  hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                  style={{ marginRight: 6 }}
+                >
+                  <Ionicons name="volume-medium-outline" size={13} color={colors.textMuted} />
+                </TouchableOpacity>
+                <Text style={[styles.timestamp, { color: colors.textMuted }]}>
+                  {formatTime(item.createdAt)}
+                </Text>
+              </View>
             </View>
           )}
         </TouchableOpacity>
@@ -376,11 +506,11 @@ export default function AICompanionScreen() {
     setShowActionsSheet(true);
   };
 
-  const handleReactToMessage = (emoji: string) => {
+  const handleReactToMessage = (reactionId: string) => {
     if (!selectedMessage) return;
-    setReactions(prev => ({
+    setReactions((prev) => ({
       ...prev,
-      [selectedMessage.messageId]: emoji,
+      [selectedMessage.messageId]: reactionId,
     }));
     setShowActionsSheet(false);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
@@ -391,14 +521,7 @@ export default function AICompanionScreen() {
     Clipboard.setString(selectedMessage.content);
     setShowActionsSheet(false);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-    Alert.alert("Copied 📋", "Message copied to clipboard!");
-  };
-
-  const handleReadAloud = () => {
-    if (!selectedMessage) return;
-    setShowActionsSheet(false);
-    Speech.stop();
-    Speech.speak(selectedMessage.content, { rate: 0.9 });
+    Alert.alert("Copied", "Message copied to clipboard.");
   };
 
   const handleShareMessage = async () => {
@@ -431,7 +554,7 @@ export default function AICompanionScreen() {
       });
       setDailyMoodSubmitted(true);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-      Alert.alert("Mood Logged! 🌟", `You logged that you are feeling ${mood}. Emoty will update to reflect your mood.`);
+      Alert.alert("Mood Logged", `You logged that you are feeling ${mood}. Mitra will tailor support to you.`);
     } catch (e) {
       console.error("Failed to log emotion:", e);
     }
@@ -441,34 +564,76 @@ export default function AICompanionScreen() {
     if (!messages || messages.length === 0) return null;
     const text = messages.map((m: any) => m.content.toLowerCase()).join(" ");
     if (text.includes("exam") || text.includes("test") || text.includes("study")) {
-      return "I remember you mentioned your exams recently. How are they going? ❤️";
+      return "I remember you mentioned your exams recently. How are they going?";
     }
     if (text.includes("sleep") || text.includes("insomnia") || text.includes("tired")) {
-      return "I remember you mentioned having trouble sleeping. Have you slept better? 😴";
+      return "I remember you mentioned having trouble sleeping. Have you slept better?";
     }
     if (text.includes("stressed") || text.includes("stress") || text.includes("work")) {
-      return "I remember you mentioned feeling stressed at work/studies. Remember to take a break! 🌿";
+      return "I remember you mentioned feeling stressed at work or studies. Remember to take a break.";
     }
     return null;
   }, [messages]);
 
+  // Age cohort nuances
+  const isYounger = ageGroup === "13-18";
+  const emptyTitle = isYounger ? "Hey, I'm Mitra!" : "Mitra";
+  const emptySubtitle = isYounger
+    ? "I'm always here to listen, cheer you on, or help you figure things out."
+    : "A calm space to reflect, decompress, or talk through whatever is on your mind.";
+
   const renderChatHeader = () => {
     return (
       <View style={{ paddingBottom: 8 }}>
+        {/* Safety Alert Banner (Priority 1 Invariant) */}
+        {(isSafetyActive || showSafetyBanner) && (
+          <View style={[styles.safetyBanner, { borderColor: colors.error }]}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 4 }}>
+              <ShieldSafetyIcon size={20} color={colors.error} />
+              <Text style={[styles.safetyBannerTitle, { color: colors.error }]}>
+                Immediate Support Available
+              </Text>
+            </View>
+            <Text style={styles.safetyBannerText}>
+              Mitra is an AI companion and cannot replace emergency help. If you feel overwhelmed, free confidential help is open 24/7.
+            </Text>
+            <View style={styles.safetyBtnRow}>
+              <TouchableOpacity
+                style={[styles.safetyCallBtn, { backgroundColor: colors.error }]}
+                onPress={() => Linking.openURL("tel:14416")}
+              >
+                <Ionicons name="call" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
+                <Text style={styles.safetyCallText}>Call Tele-MANAS (14416)</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.safetySupportBtn}
+                onPress={() => router.push("/(auth)/onboarding/emergency")}
+              >
+                <Text style={[styles.safetySupportText, { color: colors.error }]}>Crisis Hub</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
         {!hasChattedToday && !dailyMoodSubmitted && (
           <View style={[styles.checkInCard, { borderColor: colors.primary + "15" }]}>
-            <Text style={[styles.checkInTitle, { color: colors.text }]}>How are you feeling today? 🌟</Text>
-            <Text style={[styles.checkInSub, { color: colors.textSecondary }]}>Tap to log your mood and update Emotify's theme.</Text>
+            <Text style={[styles.checkInTitle, { color: colors.text }]}>How are you feeling today?</Text>
+            <Text style={[styles.checkInSub, { color: colors.textSecondary }]}>
+              Tap to log your mood and update Mitra's reflections.
+            </Text>
             <View style={styles.checkInRow}>
               {[
-                { id: "calm", label: "😌 Great" },
-                { id: "happy", label: "🙂 Okay" },
-                { id: "sad", label: "😔 Low" },
-                { id: "stressed", label: "😰 Stressed" },
+                { id: "calm", label: "Great" },
+                { id: "happy", label: "Okay" },
+                { id: "sad", label: "Low" },
+                { id: "stressed", label: "Stressed" },
               ].map((item) => (
                 <TouchableOpacity
                   key={item.id}
-                  style={[styles.checkInBtn, { backgroundColor: colors.primary + "08", borderColor: colors.primary + "15" }]}
+                  style={[
+                    styles.checkInBtn,
+                    { backgroundColor: colors.primary + "08", borderColor: colors.primary + "15" },
+                  ]}
                   onPress={() => handleDailyMoodSelect(item.id)}
                 >
                   <Text style={[styles.checkInBtnText, { color: colors.primary }]}>{item.label}</Text>
@@ -477,12 +642,16 @@ export default function AICompanionScreen() {
             </View>
           </View>
         )}
+
         {memoryHint && (
-          <View style={[styles.memoryCard, { backgroundColor: colors.white, borderColor: colors.primary + "15" }]}>
+          <View
+            style={[
+              styles.memoryCard,
+              { backgroundColor: colors.white, borderColor: colors.primary + "15" },
+            ]}
+          >
             <Ionicons name="bookmark" size={16} color={colors.primary} style={{ marginRight: 8 }} />
-            <Text style={[styles.memoryText, { color: colors.textSecondary }]}>
-              {memoryHint}
-            </Text>
+            <Text style={[styles.memoryText, { color: colors.textSecondary }]}>{memoryHint}</Text>
           </View>
         )}
       </View>
@@ -493,7 +662,12 @@ export default function AICompanionScreen() {
 
   if (messages === undefined) {
     return (
-      <View style={[styles.container, { backgroundColor: colors.background, justifyContent: "center", alignItems: "center" }]}>
+      <View
+        style={[
+          styles.container,
+          { backgroundColor: colors.background, justifyContent: "center", alignItems: "center" },
+        ]}
+      >
         <ActivityIndicator size="large" color={colors.primary} />
       </View>
     );
@@ -502,7 +676,7 @@ export default function AICompanionScreen() {
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <LinearGradient
-        colors={['#FFF8F2', '#FFF3E6', '#FDF7F3'] as any}
+        colors={["#FFF8F2", "#FFF3E6", "#FDF7F3"] as any}
         style={StyleSheet.absoluteFill}
       />
 
@@ -532,36 +706,76 @@ export default function AICompanionScreen() {
               <Ionicons name="chevron-back" size={24} color={colors.text} />
             </TouchableOpacity>
 
-            <View style={[styles.avatarBox, { backgroundColor: colors.primary + "15" }]}>
-              <Image source={emotyBoyAvatar} style={styles.avatarImage} />
+            <View style={styles.avatarBox}>
+              <MitraAvatar state={currentMitraState} size="xs" />
               <View style={[styles.statusDot, { backgroundColor: colors.success }]} />
             </View>
 
             <View style={styles.headerText}>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                <Text style={[styles.headerTitle, { color: colors.text }]}>Emoty</Text>
+                <Text style={[styles.headerTitle, { color: colors.text }]}>Mitra</Text>
                 <View style={[styles.headerMoodBadge, { backgroundColor: colors.primary + "10" }]}>
-                  <Text style={[styles.headerMoodText, { color: colors.primary }]}>{getMoodLabel(activeEmotion)}</Text>
+                  <Text style={[styles.headerMoodText, { color: colors.primary }]}>
+                    {getMoodLabel(activeEmotion)}
+                  </Text>
                 </View>
               </View>
               <Text style={[styles.headerSub, { color: colors.textSecondary }]}>
-                {isAiLoading ? "typing..." : "Online"}
+                {isListening
+                  ? "Listening..."
+                  : isSpeaking
+                  ? "Speaking..."
+                  : isAiLoading
+                  ? "Thinking..."
+                  : "Online"}
               </Text>
             </View>
           </View>
 
+          <View style={styles.headerRight}>
+            {isSpeaking && (
+              <TouchableOpacity
+                onPress={() => {
+                  Speech.stop();
+                  setIsSpeaking(false);
+                }}
+                style={styles.headerIconBtn}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Ionicons name="volume-mute-outline" size={20} color={colors.primary} />
+              </TouchableOpacity>
+            )}
+
+            <TouchableOpacity
+              onPress={() => router.push("/(auth)/onboarding/emergency")}
+              style={styles.headerIconBtn}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityLabel="Emergency Safety Resources"
+            >
+              <ShieldSafetyIcon size={20} color={colors.error} />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={handleClearChat}
+              style={styles.headerIconBtn}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityLabel="Clear chat"
+            >
+              <Ionicons name="trash-outline" size={19} color={colors.textMuted} />
+            </TouchableOpacity>
+          </View>
         </BlurView>
 
         {messages.length === 0 ? (
           /* Empty Welcoming Screen */
           <View style={styles.emptyStateContainer}>
             <View style={styles.emptyCard}>
-              <Image source={emotyBoyAvatar} style={styles.emptyAvatarImage} />
-              <Text style={[styles.emptyTitle, { color: colors.text }]}>
-                Hi, I'm Emoty
-              </Text>
+              <View style={{ marginBottom: 16 }}>
+                <MitraAvatar state={currentMitraState} size="lg" />
+              </View>
+              <Text style={[styles.emptyTitle, { color: colors.text }]}>{emptyTitle}</Text>
               <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
-                "I'm here whenever you need someone to talk to."
+                {emptySubtitle}
               </Text>
               <Text style={[styles.starterTitle, { color: colors.primary }]}>
                 Tap a suggestion to start chatting:
@@ -584,10 +798,13 @@ export default function AICompanionScreen() {
                     ]}
                     activeOpacity={0.8}
                   >
-                    <Text style={styles.promptEmoji}>{prompt.emoji}</Text>
-                    <Text style={[styles.promptText, { color: colors.text }]}>
-                      {prompt.text}
-                    </Text>
+                    <Ionicons
+                      name={prompt.icon as any}
+                      size={16}
+                      color={colors.primary}
+                      style={{ marginRight: 6 }}
+                    />
+                    <Text style={[styles.promptText, { color: colors.text }]}>{prompt.text}</Text>
                   </TouchableOpacity>
                 ))}
               </ScrollView>
@@ -631,9 +848,7 @@ export default function AICompanionScreen() {
                 ]}
                 onPress={() => handleSuggestionPress(sug)}
               >
-                <Text style={[styles.suggestionChipText, { color: colors.primary }]}>
-                  {sug}
-                </Text>
+                <Text style={[styles.suggestionChipText, { color: colors.primary }]}>{sug}</Text>
               </TouchableOpacity>
             ))}
           </ScrollView>
@@ -651,6 +866,26 @@ export default function AICompanionScreen() {
           ]}
         >
           <View style={styles.inputRow}>
+            {/* Voice Dictation Mic Button */}
+            <TouchableOpacity
+              onPress={toggleVoiceInput}
+              activeOpacity={0.8}
+              style={[
+                styles.voiceBtn,
+                {
+                  backgroundColor: isListening ? colors.error : colors.background,
+                  borderColor: isListening ? colors.error : colors.border || "rgba(0,0,0,0.08)",
+                },
+              ]}
+              accessibilityLabel={isListening ? "Stop listening" : "Start voice dictation"}
+            >
+              <Ionicons
+                name={isListening ? "mic" : "mic-outline"}
+                size={18}
+                color={isListening ? "#FFFFFF" : colors.primary}
+              />
+            </TouchableOpacity>
+
             <TextInput
               ref={inputRef}
               style={[
@@ -662,8 +897,8 @@ export default function AICompanionScreen() {
               ]}
               value={inputVal}
               onChangeText={setInputVal}
-              placeholder="Message..."
-              placeholderTextColor={colors.textMuted}
+              placeholder={isListening ? "Listening to your voice..." : "Message Mitra..."}
+              placeholderTextColor={isListening ? colors.primary : colors.textMuted}
               multiline
               blurOnSubmit={false}
               onFocus={() => {
@@ -671,10 +906,8 @@ export default function AICompanionScreen() {
                   flatListRef.current?.scrollToEnd({ animated: true });
                 }, 200);
               }}
-              onSubmitEditing={(e) => {
-                if (Platform.OS === "web") {
-                  // Standard web overrides handled by keyboard events
-                } else {
+              onSubmitEditing={() => {
+                if (Platform.OS !== "web") {
                   handleSend(inputVal);
                 }
               }}
@@ -724,40 +957,48 @@ export default function AICompanionScreen() {
               <View style={styles.sheetHandle} />
             </View>
             <Text style={[styles.sheetTitle, { color: colors.text }]}>Message Actions</Text>
-            
+
             <View style={styles.sheetOptionRow}>
-              {["❤️", "👍", "😮", "😢", "🙏"].map((emoji) => (
+              {REACTION_TYPES.map((reaction) => (
                 <TouchableOpacity
-                  key={emoji}
+                  key={reaction.id}
                   style={styles.reactionBtn}
-                  onPress={() => handleReactToMessage(emoji)}
+                  onPress={() => handleReactToMessage(reaction.id)}
                 >
-                  <Text style={styles.reactionEmoji}>{emoji}</Text>
+                  <View style={[styles.reactionCircle, { backgroundColor: reaction.color + "15" }]}>
+                    <Ionicons name={reaction.icon as any} size={20} color={reaction.color} />
+                  </View>
                 </TouchableOpacity>
               ))}
             </View>
 
-            <TouchableOpacity
-              style={styles.sheetActionItem}
-              onPress={handleCopyMessage}
-            >
-              <Ionicons name="copy-outline" size={22} color={colors.text} style={{ marginRight: 12 }} />
+            <TouchableOpacity style={styles.sheetActionItem} onPress={handleCopyMessage}>
+              <Ionicons
+                name="copy-outline"
+                size={20}
+                color={colors.text}
+                style={{ marginRight: 12 }}
+              />
               <Text style={[styles.sheetActionText, { color: colors.text }]}>Copy Text</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity
-              style={styles.sheetActionItem}
-              onPress={handleReadAloud}
-            >
-              <Ionicons name="volume-medium-outline" size={22} color={colors.text} style={{ marginRight: 12 }} />
+            <TouchableOpacity style={styles.sheetActionItem} onPress={() => handleReadAloud()}>
+              <Ionicons
+                name="volume-medium-outline"
+                size={20}
+                color={colors.text}
+                style={{ marginRight: 12 }}
+              />
               <Text style={[styles.sheetActionText, { color: colors.text }]}>Read Aloud</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity
-              style={styles.sheetActionItem}
-              onPress={handleShareMessage}
-            >
-              <Ionicons name="share-outline" size={22} color={colors.text} style={{ marginRight: 12 }} />
+            <TouchableOpacity style={styles.sheetActionItem} onPress={handleShareMessage}>
+              <Ionicons
+                name="share-outline"
+                size={20}
+                color={colors.text}
+                style={{ marginRight: 12 }}
+              />
               <Text style={[styles.sheetActionText, { color: colors.text }]}>Share Message</Text>
             </TouchableOpacity>
 
@@ -765,8 +1006,15 @@ export default function AICompanionScreen() {
               style={[styles.sheetActionItem, { borderBottomWidth: 0 }]}
               onPress={() => setShowActionsSheet(false)}
             >
-              <Ionicons name="close-circle-outline" size={22} color={colors.error || "#EF4444"} style={{ marginRight: 12 }} />
-              <Text style={[styles.sheetActionText, { color: colors.error || "#EF4444" }]}>Cancel</Text>
+              <Ionicons
+                name="close-circle-outline"
+                size={20}
+                color={colors.error || "#EF4444"}
+                style={{ marginRight: 12 }}
+              />
+              <Text style={[styles.sheetActionText, { color: colors.error || "#EF4444" }]}>
+                Cancel
+              </Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -792,40 +1040,42 @@ const styles = StyleSheet.create({
   headerLeft: {
     flexDirection: "row",
     alignItems: "center",
+    flex: 1,
+  },
+  headerRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  headerIconBtn: {
+    padding: 6,
+    borderRadius: 8,
   },
   backBtn: {
     padding: 4,
     marginRight: 6,
   },
   avatarBox: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 36,
+    height: 36,
     justifyContent: "center",
     alignItems: "center",
     marginRight: 10,
     position: "relative",
   },
-  avatarImage: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-  },
-  avatarEmoji: {
-    fontSize: 20,
-  },
   statusDot: {
     position: "absolute",
-    right: -1,
-    bottom: -1,
-    width: 10,
-    height: 10,
+    right: -2,
+    bottom: -2,
+    width: 9,
+    height: 9,
     borderRadius: 5,
-    borderWidth: 2,
+    borderWidth: 1.5,
     borderColor: "#FFFFFF",
   },
   headerText: {
     justifyContent: "center",
+    flex: 1,
   },
   headerTitle: {
     fontFamily: Theme.fontFamily.bold,
@@ -847,9 +1097,6 @@ const styles = StyleSheet.create({
   headerMoodText: {
     fontFamily: Theme.fontFamily.bold,
     fontSize: 10,
-  },
-  headerAction: {
-    padding: 6,
   },
   keyboardView: {
     flex: 1,
@@ -878,24 +1125,9 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  miniAvatar: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  miniAvatarImage: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-  },
-  miniAvatarText: {
-    fontSize: 12,
-  },
   miniAvatarSpacer: {
-    width: 24,
-    height: 24,
+    width: 28,
+    height: 28,
   },
   bubbleContainer: {
     maxWidth: "75%",
@@ -930,30 +1162,80 @@ const styles = StyleSheet.create({
   aiText: {
     color: "#1E293B",
   },
+  bubbleFooter: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    marginTop: 4,
+  },
   reactionBadge: {
     position: "absolute",
-    bottom: -10,
-    right: 10,
+    bottom: -8,
+    right: 8,
     backgroundColor: "#FFFFFF",
     borderRadius: 10,
-    paddingHorizontal: 4,
-    paddingVertical: 2,
+    paddingHorizontal: 5,
+    paddingVertical: 3,
     borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.05)",
+    borderColor: "rgba(0,0,0,0.06)",
     zIndex: 10,
     ...Theme.shadows.tertiary,
-  },
-  reactionText: {
-    fontSize: 11,
   },
   timestamp: {
     fontFamily: Theme.fontFamily.regular,
     fontSize: 9,
     alignSelf: "flex-end",
-    marginTop: 4,
   },
   userTimestamp: {
     color: "rgba(255,255,255,0.7)",
+  },
+  safetyBanner: {
+    backgroundColor: "#FEF2F2",
+    borderRadius: 16,
+    padding: 14,
+    marginHorizontal: Theme.spacing.md,
+    marginBottom: 12,
+    borderWidth: 1.5,
+    ...Theme.shadows.tertiary,
+  },
+  safetyBannerTitle: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: 14,
+  },
+  safetyBannerText: {
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: 12,
+    color: "#7F1D1D",
+    lineHeight: 17,
+    marginBottom: 10,
+  },
+  safetyBtnRow: {
+    flexDirection: "row",
+    gap: 8,
+    alignItems: "center",
+  },
+  safetyCallBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 8,
+  },
+  safetyCallText: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: 12,
+    color: "#FFFFFF",
+  },
+  safetySupportBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#EF4444",
+  },
+  safetySupportText: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: 12,
   },
   emptyStateContainer: {
     flex: 1,
@@ -970,16 +1252,6 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: "rgba(255, 255, 255, 0.7)",
     ...Theme.shadows.secondary,
-  },
-  emptyAvatarImage: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    marginBottom: 16,
-  },
-  waveHand: {
-    fontSize: 48,
-    marginBottom: 12,
   },
   emptyTitle: {
     fontFamily: Theme.fontFamily.bold,
@@ -1014,10 +1286,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     marginRight: 8,
     ...Theme.shadows.tertiary,
-  },
-  promptEmoji: {
-    fontSize: 16,
-    marginRight: 6,
   },
   promptText: {
     fontFamily: Theme.fontFamily.bold,
@@ -1104,6 +1372,15 @@ const styles = StyleSheet.create({
     alignItems: "flex-end",
     gap: 8,
   },
+  voiceBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    justifyContent: "center",
+    alignItems: "center",
+    borderWidth: 1,
+    marginBottom: 2,
+  },
   input: {
     flex: 1,
     borderRadius: 22,
@@ -1116,9 +1393,9 @@ const styles = StyleSheet.create({
     borderWidth: 0,
   },
   sendBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     justifyContent: "center",
     alignItems: "center",
   },
@@ -1187,10 +1464,14 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   reactionBtn: {
-    padding: 8,
+    padding: 6,
   },
-  reactionEmoji: {
-    fontSize: 28,
+  reactionCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    justifyContent: "center",
+    alignItems: "center",
   },
   sheetActionItem: {
     flexDirection: "row",

@@ -174,7 +174,7 @@ export default function ProfileScreen() {
           </View>
           <Text style={styles.nameText}>{dbUser.alias || "User"}</Text>
           <Text style={styles.emailText}>{email}</Text>
-          <Text style={[styles.headerMessage, { color: colors.primary }]}>You’re doing great — keep going 🌱</Text>
+          <Text style={[styles.headerMessage, { color: colors.primary }]}>You’re doing great — keep going</Text>
         </View>
 
         {/* Wellness Identity Section */}
@@ -369,7 +369,8 @@ function DetailRow({ icon, label, value, colors, styles }: { icon: any; label: s
   );
 }
 
-const stylesFactory = (colors: any) => ({
+function stylesFactory(colors: any) {
+  return {
   container: {
     flex: 1,
     backgroundColor: colors.background,
@@ -605,4 +606,6 @@ const stylesFactory = (colors: any) => ({
     fontSize: 12,
     color: '#FFFFFF',
   } as TextStyle,
-});
+  };
+}
+

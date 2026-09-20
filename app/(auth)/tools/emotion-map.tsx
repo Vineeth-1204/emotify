@@ -12,18 +12,29 @@ import { LinearGradient } from "expo-linear-gradient";
 import { BlurView } from "expo-blur";
 import * as Haptics from "expo-haptics";
 import Svg, { Path, Circle } from "react-native-svg";
+import {
+  HappyEmotionIcon,
+  CalmEmotionIcon,
+  SadEmotionIcon,
+  WorriedEmotionIcon,
+  AngryEmotionIcon,
+  EmbarrassedEmotionIcon,
+  TiredEmotionIcon,
+} from "@/components/svg/emotions";
+import { DeepBreathingActivityIcon, MuscleRelaxActivityIcon, HabitMicrogoalIcon } from "@/components/svg/activities";
+import { MitraAvatar } from "@/components/avatar/MitraAvatar";
 
 const { width } = Dimensions.get('window');
 
 const FEATURE_EMOTIONS = [
-  { id: "anxiety", label: "😰 Anxiety" },
-  { id: "sadness", label: "😢 Sadness" },
-  { id: "anger", label: "😡 Anger" },
-  { id: "calm", label: "🍃 Calm" },
-  { id: "tired", label: "🥱 Tired" },
-  { id: "confused", label: "❓ Confused" },
-  { id: "happy", label: "☀️ Happy" },
-  { id: "numb", label: "🫥 Numb" },
+  { id: "anxiety", label: "Anxiety", Icon: WorriedEmotionIcon },
+  { id: "sadness", label: "Sadness", Icon: SadEmotionIcon },
+  { id: "anger", label: "Anger", Icon: AngryEmotionIcon },
+  { id: "calm", label: "Calm", Icon: CalmEmotionIcon },
+  { id: "tired", label: "Tired", Icon: TiredEmotionIcon },
+  { id: "confused", label: "Confused", Icon: EmbarrassedEmotionIcon },
+  { id: "happy", label: "Happy", Icon: HappyEmotionIcon },
+  { id: "numb", label: "Numb", Icon: SadEmotionIcon },
 ];
 
 const getIntensityLabel = (value: number) => {
@@ -270,12 +281,12 @@ export default function EmotionMapScreen() {
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
       let msg = "Your emotion map and body scan have been recorded.";
-      if (wsas_total > 10) {
+      if ((latestScreening?.wsas_total ?? 0) > 10) {
         msg = "Your daily life seems affected right now. Consider setting a small MicroGoal today.";
       }
       
       Alert.alert(
-        "Journal Saved! 📔",
+        "Journal Saved!",
         msg,
         [
           {
@@ -389,6 +400,7 @@ export default function EmotionMapScreen() {
                         ]}
                         onPress={() => setSelectedEmotion(emotion.label)}
                       >
+                        <emotion.Icon size={20} color={isSelected ? Colors.primary : Colors.textSecondary} />
                         <Text
                           style={[
                             styles.emotionText,
@@ -633,7 +645,9 @@ export default function EmotionMapScreen() {
                     style={styles.actionCard} 
                     onPress={() => setShowBreathingModal(true)}
                   >
-                    <Text style={styles.actionEmoji}>🫁</Text>
+                    <View style={styles.actionIconWrapper}>
+                      <DeepBreathingActivityIcon size={24} color={Colors.primary} />
+                    </View>
                     <View style={styles.actionInfo}>
                       <Text style={styles.actionTitle}>Breathe Now</Text>
                       <Text style={styles.actionDesc}>Take a 3-minute guided breathing break</Text>
@@ -645,7 +659,9 @@ export default function EmotionMapScreen() {
                     style={styles.actionCard} 
                     onPress={() => saveLogAndNavigate("JPMR")}
                   >
-                    <Text style={styles.actionEmoji}>🧘</Text>
+                    <View style={styles.actionIconWrapper}>
+                      <MuscleRelaxActivityIcon size={24} color={Colors.primary} />
+                    </View>
                     <View style={styles.actionInfo}>
                       <Text style={styles.actionTitle}>Relax Now</Text>
                       <Text style={styles.actionDesc}>Open JPMR relaxation module</Text>
@@ -657,7 +673,9 @@ export default function EmotionMapScreen() {
                     style={styles.actionCard} 
                     onPress={() => saveLogAndNavigate("MicroGoals")}
                   >
-                    <Text style={styles.actionEmoji}>🎯</Text>
+                    <View style={styles.actionIconWrapper}>
+                      <HabitMicrogoalIcon size={24} color={Colors.primary} />
+                    </View>
                     <View style={styles.actionInfo}>
                       <Text style={styles.actionTitle}>Set a MicroGoal</Text>
                       <Text style={styles.actionDesc}>Create a small achievable daily goal</Text>
@@ -669,7 +687,9 @@ export default function EmotionMapScreen() {
                     style={[styles.actionCard, { borderColor: '#E2E8F0', backgroundColor: '#F8FAFC' }]} 
                     onPress={() => saveLogAndNavigate("None")}
                   >
-                    <Text style={styles.actionEmoji}>⏰</Text>
+                    <View style={styles.actionIconWrapper}>
+                      <Ionicons name="time-outline" size={24} color={Colors.textSecondary} />
+                    </View>
                     <View style={styles.actionInfo}>
                       <Text style={[styles.actionTitle, { color: Colors.textSecondary }]}>Maybe Later</Text>
                       <Text style={styles.actionDesc}>Save this scan and return to dashboard</Text>
@@ -723,7 +743,10 @@ export default function EmotionMapScreen() {
               <View style={{ gap: Theme.spacing.xl, width: '100%' }}>
                 {/* Insights Card */}
                 <View style={styles.insightsCard}>
-                  <Text style={styles.insightsHeader}>WELLNESS INSIGHTS 💡</Text>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 12 }}>
+                    <Ionicons name="bulb-outline" size={16} color={Colors.primary} />
+                    <Text style={styles.insightsHeader}>WELLNESS INSIGHTS</Text>
+                  </View>
                   
                   {mostFrequentEmotion && (
                     <View style={styles.insightItemRow}>
@@ -826,7 +849,7 @@ export default function EmotionMapScreen() {
           <BlurView intensity={95} tint="dark" style={StyleSheet.absoluteFill} />
           
           <View style={styles.breathingContainer}>
-            <Text style={styles.breathingTitle}>Guided Breathing 🫁</Text>
+            <Text style={styles.breathingTitle}>Guided Breathing</Text>
             <Text style={styles.breathingSubtitle}>Follow the circle animation. Inhale, hold, exhale.</Text>
 
             <View style={styles.breathingAnimationWrapper}>
@@ -1197,6 +1220,14 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: Colors.primary + '20',
     gap: 14,
+  },
+  actionIconWrapper: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: '#EEF2FF',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   actionEmoji: {
     fontSize: 28,

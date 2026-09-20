@@ -151,7 +151,7 @@ export default function ScreeningCentre() {
               </button>
             ))}
           </div>
-        </div>     </div>
+        </div>
 
         {isLoading ? (
           <div style={{ height: 280, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-secondary)" }}>

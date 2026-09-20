@@ -14,6 +14,11 @@ import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
 import * as SecureStore from "expo-secure-store";
+import { useAvatar } from "@/context/AvatarContext";
+import { MitraAvatar } from "@/components/avatar/MitraAvatar";
+import { CalmPointToken, PlantProgress } from "@/components/svg/system";
+import { HappyEmotionIcon, CalmEmotionIcon, SadEmotionIcon, WorriedEmotionIcon, renderEmotionIcon } from "@/components/svg/emotions";
+import { MindfulnessActivityIcon, MuscleRelaxActivityIcon, JournalActivityIcon, HabitMicrogoalIcon } from "@/components/svg/activities";
 
 const { width } = Dimensions.get('window');
 
@@ -174,7 +179,7 @@ function ToolCard({
               { backgroundColor: '#FFFFFF' },
               isFullWidth && { marginBottom: 0, width: 52, height: 52 }
             ]}>
-              <Text style={[styles.toolEmoji, isFullWidth && { fontSize: 26 }]}>{tool.icon}</Text>
+              {tool.renderIcon ? tool.renderIcon(toolColor.accent) : <Ionicons name="apps-outline" size={24} color={toolColor.accent} />}
               {tool.locked && (
                 <View style={styles.lockOverlay}>
                   <Ionicons name="lock-closed" size={12} color="#475569" />
@@ -206,10 +211,13 @@ export default function DashboardScreen() {
   const [overallProgress, setOverallProgress] = React.useState(0);
   const colors = useThemeColors();
   const styles = useStyles(stylesFactory as any) as any;
+  const { avatarState, setAvatarState, ageCohort, getDialogue } = useAvatar();
 
   const [hasCheckedInToday, setHasCheckedInToday] = React.useState(true);
   const [showCheckInModal, setShowCheckInModal] = React.useState(false);
   const [selectedEmotionId, setSelectedEmotionId] = React.useState<string | null>(null);
+  const [selectedHomeCard, setSelectedHomeCard] = React.useState<string | null>(null);
+  const [selectedIntensity, setSelectedIntensity] = React.useState<number>(5);
   const [isSubmittingCheckIn, setIsSubmittingCheckIn] = React.useState(false);
   const createLog = useMutation(api.emotionLogs.create);
 
@@ -274,6 +282,8 @@ export default function DashboardScreen() {
   } : "skip");
 
   const appointments = useQuery(api.appointments.getTwoWayAppointmentsForPatient, user?.id ? { userId: user.id } : "skip");
+  const streakInfo = useQuery(api.microGoals.getStreak, user?.id ? { userId: user.id } : "skip");
+  const gamification = useQuery(api.microGoals.getGamificationStats);
 
   const updateWellness = useMutation(api.wellness.updateProfile);
 
@@ -398,10 +408,39 @@ export default function DashboardScreen() {
   const activeEmotionObj = EMOTIONS.find(e => e.id === activeEmotion);
 
   const tools = [
-    { id: 'emotion-map', title: 'Quick Check', sub: 'Body Scan', icon: '🗺️', route: '/(auth)/tools/emotion-map', locked: !isScreeningComplete },
-    { id: 'jpmr', title: 'Relax Now', sub: 'Relaxation', icon: '🧘', route: '/(auth)/tools/jpmr', locked: !isScreeningComplete },
-    { id: 'reframe', title: 'Reframe Now', sub: 'Thoughts', icon: '🧠', route: '/(auth)/tools/reframe', restricted: isSevere, locked: !isScreeningComplete },
-    { id: 'microgoals', title: 'MicroGoals', sub: 'Habits', icon: '🎯', route: '/(auth)/tools/microgoals', locked: !isScreeningComplete }
+    { 
+      id: 'emotion-map', 
+      title: 'Quick Check', 
+      sub: 'Body Scan', 
+      renderIcon: (c: string) => <MindfulnessActivityIcon size={24} color={c} />, 
+      route: '/(auth)/tools/emotion-map', 
+      locked: !isScreeningComplete 
+    },
+    { 
+      id: 'jpmr', 
+      title: 'Relax Now', 
+      sub: 'Relaxation', 
+      renderIcon: (c: string) => <MuscleRelaxActivityIcon size={24} color={c} />, 
+      route: '/(auth)/tools/jpmr', 
+      locked: !isScreeningComplete 
+    },
+    { 
+      id: 'reframe', 
+      title: 'Reframe Now', 
+      sub: 'Thoughts', 
+      renderIcon: (c: string) => <JournalActivityIcon size={24} color={c} />, 
+      route: '/(auth)/tools/reframe', 
+      restricted: isSevere, 
+      locked: !isScreeningComplete 
+    },
+    { 
+      id: 'microgoals', 
+      title: 'MicroGoals', 
+      sub: 'Habits', 
+      renderIcon: (c: string) => <HabitMicrogoalIcon size={24} color={c} />, 
+      route: '/(auth)/tools/microgoals', 
+      locked: !isScreeningComplete 
+    }
   ];
 
   const handlePressIn = () => {
@@ -426,14 +465,21 @@ export default function DashboardScreen() {
         userId: user.id,
         emotion: selectedEmotionId,
         bodyRegions: [],
-        preIntensity: 5,
-        postIntensity: 5,
+        preIntensity: selectedIntensity,
+        postIntensity: selectedIntensity,
       });
+
+      // Update Mitra Avatar state to reflect the emotional tone
+      if (selectedEmotionId === "happy") setAvatarState("happy");
+      else if (selectedEmotionId === "calm") setAvatarState("calm");
+      else if (selectedIntensity >= 7) setAvatarState("breathing");
+      else setAvatarState("listening");
+
       const todayStr = new Date().toISOString().split('T')[0];
       await SecureStore.setItemAsync(`last_checkin_date_${user.id}`, todayStr);
       setShowCheckInModal(false);
       setHasCheckedInToday(true);
-      Alert.alert("Mood Logged! 🌟", "Your application theme has updated to reflect your mood.");
+      Alert.alert("Mood Logged!", "Mitra and your dashboard have updated to support you.");
     } catch (e) {
       console.error(e);
       Alert.alert("Error", "Could not save your check-in. Please try again.");
@@ -442,7 +488,7 @@ export default function DashboardScreen() {
     }
   };
 
-  const handleInlineCheckIn = async (emotionId: string) => {
+  const handleInlineCheckIn = async (emotionId: string, intensity: number = 5) => {
     if (!user?.id) return;
     setIsSubmittingCheckIn(true);
     try {
@@ -450,13 +496,20 @@ export default function DashboardScreen() {
         userId: user.id,
         emotion: emotionId,
         bodyRegions: [],
-        preIntensity: 5,
-        postIntensity: 5,
+        preIntensity: intensity,
+        postIntensity: intensity,
       });
+
+      // Update Mitra Avatar state
+      if (emotionId === "happy") setAvatarState("happy");
+      else if (emotionId === "calm") setAvatarState("calm");
+      else if (intensity >= 7) setAvatarState("breathing");
+      else setAvatarState("listening");
+
       const todayStr = new Date().toISOString().split('T')[0];
       await SecureStore.setItemAsync(`last_checkin_date_${user.id}`, todayStr);
       setHasCheckedInToday(true);
-      Alert.alert("Mood Logged! 🌟", "Your application theme has updated to reflect your mood.");
+      Alert.alert("Mood Logged!", "Mitra and your dashboard have updated to support you.");
     } catch (e) {
       console.error(e);
       Alert.alert("Error", "Could not save your check-in. Please try again.");
@@ -488,17 +541,16 @@ export default function DashboardScreen() {
         <View style={styles.header}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
             <View style={{ flex: 1, marginRight: 8 }}>
-              <Text style={styles.greeting}>{getGreeting()}, {alias} 👋</Text>
+              <Text style={styles.greeting}>{getGreeting()}, {alias}</Text>
               <Text style={styles.date}>{new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</Text>
             </View>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-              {activeEmotionObj && (
-                <View style={[styles.moodStatusBadge, { backgroundColor: colors.primary + '15', borderColor: colors.primary + '30' }]}>
-                  <Text style={[styles.moodStatusText, { color: colors.primary }]}>
-                    {activeEmotionObj.label.split(' ')[0]}
-                  </Text>
-                </View>
-              )}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <View style={[styles.pointsBadge, { backgroundColor: colors.surface, borderColor: '#E2E8F0', borderWidth: 1 }]}>
+                <CalmPointToken size={18} />
+                <Text style={[styles.pointsBadgeText, { color: colors.text }]}>
+                  {gamification?.coins ?? (appUser?.coins ?? 0)}
+                </Text>
+              </View>
               <View style={[styles.avatarCircle, { backgroundColor: colors.primary }]}>
                 <Text style={styles.avatarText}>
                   {alias.substring(0, 2).toUpperCase()}
@@ -508,7 +560,49 @@ export default function DashboardScreen() {
           </View>
         </View>
 
-        {/* Inline Mood Selector */}
+        {/* Mitra Interactive Hero Card */}
+        <View style={styles.mitraHeroCard}>
+          <LinearGradient
+            colors={['#FFFFFF', '#F8FAFC'] as any}
+            style={StyleSheet.absoluteFill}
+          />
+          <View style={styles.mitraHeroContent}>
+            <View style={styles.mitraAvatarCol}>
+              <MitraAvatar 
+                state={avatarState} 
+                size={ageCohort === "13-18" ? "md" : "sm"} 
+              />
+            </View>
+            <View style={styles.mitraBubbleCol}>
+              <View style={styles.mitraSpeechBubble}>
+                <Text style={styles.mitraSpeechText}>
+                  {hasCheckedInToday
+                    ? (activeEmotionObj ? `You logged feeling ${activeEmotionObj.label.toLowerCase()} today. I'm right here with you.` : getDialogue("checkinPrompt"))
+                    : getDialogue("greeting")}
+                </Text>
+              </View>
+              <View style={styles.growthRow}>
+                <PlantProgress 
+                  stage={
+                    !streakInfo?.currentStreak || streakInfo.currentStreak <= 1
+                      ? "seed"
+                      : streakInfo.currentStreak <= 3
+                      ? "sprout"
+                      : streakInfo.currentStreak <= 7
+                      ? "plant"
+                      : "garden"
+                  } 
+                  size={20} 
+                />
+                <Text style={styles.growthText}>
+                  {streakInfo?.currentStreak ? `${streakInfo.currentStreak} day streak` : "Start your wellness streak"}
+                </Text>
+              </View>
+            </View>
+          </View>
+        </View>
+
+        {/* 4-Card Illustrated Mood Check-in */}
         {isScreeningComplete && !hasCheckedInToday && (
           <View style={styles.inlineCheckInContainer}>
             <LinearGradient
@@ -521,33 +615,114 @@ export default function DashboardScreen() {
                 <Text style={styles.sparkleBadgeText}>DAILY MOOD CHECK-IN</Text>
               </View>
             </View>
-            <Text style={styles.inlineCheckInTitle}>How was your day, {alias}? 🌟</Text>
-            <Text style={styles.inlineCheckInSubtitle}>Tap your current mood to personalize your therapeutic tools.</Text>
+            <Text style={styles.inlineCheckInTitle}>How are you feeling right now, {alias}?</Text>
+            <Text style={styles.inlineCheckInSubtitle}>Tap the card that best captures your state:</Text>
 
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.inlineMoodScroll}
-            >
-              {EMOTIONS.map((emotion) => {
+            {/* 4 Cards Grid */}
+            <View style={styles.homeCardsGrid}>
+              {[
+                { 
+                  id: "good", 
+                  title: "Good", 
+                  sub: "Energized, joyful", 
+                  backendCode: "happy", 
+                  color: "#F59E0B",
+                  Icon: HappyEmotionIcon 
+                },
+                { 
+                  id: "calm", 
+                  title: "Calm", 
+                  sub: "Peaceful, centered", 
+                  backendCode: "calm", 
+                  color: "#10B981",
+                  Icon: CalmEmotionIcon 
+                },
+                { 
+                  id: "low", 
+                  title: "Low", 
+                  sub: "Down, tired, drained", 
+                  backendCode: "sad", 
+                  color: "#3B82F6",
+                  Icon: SadEmotionIcon 
+                },
+                { 
+                  id: "heavy", 
+                  title: "Heavy", 
+                  sub: "Worried, tense, angry", 
+                  backendCode: "worried", 
+                  color: "#8B5CF6",
+                  Icon: WorriedEmotionIcon 
+                },
+              ].map((card) => {
+                const isSelected = selectedHomeCard === card.id;
                 return (
                   <TouchableOpacity
-                    key={emotion.id}
-                    onPress={() => handleInlineCheckIn(emotion.id)}
+                    key={card.id}
+                    onPress={() => {
+                      setSelectedHomeCard(card.id);
+                      setSelectedEmotionId(card.backendCode);
+                      if (card.backendCode === "happy") setAvatarState("happy");
+                      else if (card.backendCode === "calm") setAvatarState("calm");
+                      else setAvatarState("listening");
+                    }}
                     style={[
-                      styles.inlineMoodCard,
-                      { backgroundColor: emotion.color + '12', borderColor: emotion.color + '35' }
+                      styles.homeMoodCard,
+                      { backgroundColor: card.color + '0E', borderColor: isSelected ? card.color : card.color + '28' },
+                      isSelected && { borderWidth: 2, backgroundColor: card.color + '22' }
                     ]}
                     activeOpacity={0.8}
                   >
-                    <View style={[styles.inlineEmojiBubble, { backgroundColor: emotion.color + '22' }]}>
-                      <Text style={styles.inlineMoodEmoji}>{emotion.emoji}</Text>
+                    <View style={[styles.homeMoodIconBox, { backgroundColor: card.color + '20' }]}>
+                      <card.Icon size={32} />
                     </View>
-                    <Text style={[styles.inlineMoodText, { color: '#0F172A' }]}>{emotion.label}</Text>
+                    <Text style={[styles.homeMoodTitle, { color: card.color }]}>{card.title}</Text>
+                    <Text style={styles.homeMoodSub}>{card.sub}</Text>
                   </TouchableOpacity>
                 );
               })}
-            </ScrollView>
+            </View>
+
+            {/* 4-Pill Intensity Selector */}
+            {selectedHomeCard && (
+              <View style={styles.intensityContainer}>
+                <Text style={styles.intensityHeader}>Intensity Level:</Text>
+                <View style={styles.intensityPillsRow}>
+                  {[
+                    { label: "A little", val: 2 },
+                    { label: "Some", val: 5 },
+                    { label: "A lot", val: 7 },
+                    { label: "Overwhelming", val: 9 },
+                  ].map((p) => {
+                    const isPillSelected = selectedIntensity === p.val;
+                    return (
+                      <TouchableOpacity
+                        key={p.val}
+                        onPress={() => setSelectedIntensity(p.val)}
+                        style={[
+                          styles.intensityPill,
+                          isPillSelected && { backgroundColor: colors.primary, borderColor: colors.primary }
+                        ]}
+                      >
+                        <Text style={[styles.intensityPillText, isPillSelected && { color: "#FFFFFF" }]}>
+                          {p.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                <Button
+                  title="Confirm Check-In"
+                  onPress={() => {
+                    if (selectedEmotionId) {
+                      handleInlineCheckIn(selectedEmotionId, selectedIntensity);
+                    }
+                  }}
+                  loading={isSubmittingCheckIn}
+                  style={{ marginTop: 14 }}
+                />
+              </View>
+            )}
           </View>
         )}
 
@@ -807,7 +982,7 @@ export default function DashboardScreen() {
         <View style={styles.modalOverlay}>
           <BlurView intensity={90} tint="light" style={StyleSheet.absoluteFill} />
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Daily Check-In 🌟</Text>
+            <Text style={styles.modalTitle}>Daily Check-In</Text>
             <Text style={styles.modalSubtitle}>How are you feeling right now? We'll tailor your experience today.</Text>
 
             <ScrollView contentContainerStyle={styles.modalGrid} showsVerticalScrollIndicator={false}>
@@ -823,9 +998,9 @@ export default function DashboardScreen() {
                       isSelected && { borderColor: emotion.color, backgroundColor: emotion.color + '22', borderWidth: 2 }
                     ]}
                   >
-                    <Text style={[styles.modalOptionEmoji, isSelected && { transform: [{ scale: 1.15 }] }]}>
-                      {emotion.emoji}
-                    </Text>
+                    <View style={[{ marginBottom: 6 }, isSelected && { transform: [{ scale: 1.1 }] }]}>
+                      {renderEmotionIcon(emotion.id, 32)}
+                    </View>
                     <Text style={[styles.modalOptionText, isSelected && { color: emotion.color, fontFamily: Theme.fontFamily.bold }]}>
                       {emotion.label}
                     </Text>
@@ -898,7 +1073,9 @@ export default function DashboardScreen() {
       {thankYou && (
         <View style={[StyleSheet.absoluteFill, { zIndex: 10000, justifyContent: 'center', alignItems: 'center', backgroundColor: colors.background + 'EE' }]}>
           <Animated.View style={{ transform: [{ scale: scaleAnim }], alignItems: 'center', backgroundColor: '#FFFFFF', padding: 32, borderRadius: 24 }}>
-            <Text style={{ fontSize: 72, marginBottom: 16 }}>🙏</Text>
+            <View style={{ marginBottom: 16 }}>
+              <MitraAvatar state="celebrating" size="md" />
+            </View>
             <Text style={{ fontSize: 28, fontFamily: Theme.fontFamily.bold, color: colors.primary }}>Thank You!</Text>
           </Animated.View>
         </View>
@@ -908,7 +1085,8 @@ export default function DashboardScreen() {
   );
 }
 
-const stylesFactory = (colors: any) => ({
+function stylesFactory(colors: any) {
+  return {
   container: {
     flex: 1,
     backgroundColor: colors.background,
@@ -969,6 +1147,131 @@ const stylesFactory = (colors: any) => ({
   moodStatusText: {
     fontFamily: Theme.fontFamily.bold,
     fontSize: 12,
+  },
+  pointsBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 20,
+    ...Theme.shadows.tertiary,
+  } as const,
+  pointsBadgeText: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: 13,
+  },
+  mitraHeroCard: {
+    borderRadius: 20,
+    padding: Theme.spacing.md,
+    marginBottom: Theme.spacing.lg,
+    overflow: 'hidden',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+    ...Theme.shadows.primary,
+  } as const,
+  mitraHeroContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+  } as const,
+  mitraAvatarCol: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as const,
+  mitraBubbleCol: {
+    flex: 1,
+  } as const,
+  mitraSpeechBubble: {
+    backgroundColor: colors.surface,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginBottom: 6,
+  } as const,
+  mitraSpeechText: {
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: 13,
+    color: colors.text,
+    lineHeight: 18,
+  },
+  growthRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  } as const,
+  growthText: {
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: 11,
+    color: colors.textSecondary,
+  },
+  homeCardsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    justifyContent: 'space-between',
+  } as const,
+  homeMoodCard: {
+    width: '48%',
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    ...Theme.shadows.tertiary,
+  } as const,
+  homeMoodIconBox: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  } as const,
+  homeMoodTitle: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: 15,
+    marginBottom: 2,
+  },
+  homeMoodSub: {
+    fontFamily: Theme.fontFamily.regular,
+    fontSize: 11,
+    color: colors.textSecondary,
+    textAlign: 'center',
+  },
+  intensityContainer: {
+    marginTop: 14,
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+  } as const,
+  intensityHeader: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: 12,
+    color: colors.textSecondary,
+    marginBottom: 8,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  intensityPillsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    flexWrap: 'wrap',
+  } as const,
+  intensityPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  } as const,
+  intensityPillText: {
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: 12,
+    color: colors.text,
   },
   // Inline mood checkin styles
   inlineCheckInContainer: {
@@ -1503,6 +1806,8 @@ const stylesFactory = (colors: any) => ({
     gap: 12,
     marginTop: 20,
   } as const,
-});
+  };
+}
+
 
 

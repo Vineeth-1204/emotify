@@ -5,6 +5,9 @@ import { useThemeColors, useStyles } from "@/context/MoodThemeContext";
 import { Theme } from "@/constants/Theme";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
+import { MitraAvatar } from "@/components/avatar/MitraAvatar";
+import { MindfulnessActivityIcon, MuscleRelaxActivityIcon, JournalActivityIcon, HabitMicrogoalIcon } from "@/components/svg/activities";
+import { CounsellorBadgeIcon } from "@/components/svg/system";
 
 const { width } = Dimensions.get('window');
 
@@ -58,7 +61,7 @@ function ToolHubCard({
         onPress={onPress}
       >
         <View style={[styles.iconBox, { backgroundColor: tool.color + '12' }]}>
-          <Text style={styles.emoji}>{tool.emoji}</Text>
+          {tool.renderIcon ? tool.renderIcon(tool.color) : <Ionicons name="apps-outline" size={24} color={tool.color} />}
         </View>
         <View style={styles.textContainer}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 }}>
@@ -88,7 +91,7 @@ export default function ToolsScreen() {
       id: "emotion-map",
       title: "Emotion Map",
       description: "Map your feelings to body regions.",
-      emoji: "🗺️",
+      renderIcon: (color: string) => <MindfulnessActivityIcon size={26} color={color} />,
       route: "/(auth)/tools/emotion-map" as const,
       color: colors.primary,
       category: "mindfulness",
@@ -98,7 +101,7 @@ export default function ToolsScreen() {
       id: "companion",
       title: "AI Companion",
       description: "Chat with your supportive AI companion.",
-      emoji: "🧑",
+      renderIcon: () => <MitraAvatar state="neutral" size="sm" />,
       route: "/(auth)/tools/companion" as const,
       color: colors.primary,
       category: "mindfulness",
@@ -108,7 +111,7 @@ export default function ToolsScreen() {
       id: "jpmr",
       title: "Relax Now",
       description: "Guided deep physical relaxation.",
-      emoji: "🧘",
+      renderIcon: (color: string) => <MuscleRelaxActivityIcon size={26} color={color} />,
       route: "/(auth)/tools/jpmr" as const,
       color: colors.secondary,
       category: "relaxation",
@@ -118,7 +121,7 @@ export default function ToolsScreen() {
       id: "reframe",
       title: "Reframe",
       description: "Balance negative thinking patterns.",
-      emoji: "🧠",
+      renderIcon: (color: string) => <JournalActivityIcon size={26} color={color} />,
       route: "/(auth)/tools/reframe" as const,
       color: colors.accent || "#FFB6C1",
       category: "cognitive",
@@ -128,7 +131,7 @@ export default function ToolsScreen() {
       id: "microgoals",
       title: "MicroGoals",
       description: "Daily habits for small wins.",
-      emoji: "🎯",
+      renderIcon: (color: string) => <HabitMicrogoalIcon size={26} color={color} />,
       route: "/(auth)/tools/microgoals" as const,
       color: colors.warning || "#F59E0B",
       category: "habits",
@@ -138,7 +141,7 @@ export default function ToolsScreen() {
       id: "appointments",
       title: "Appointments",
       description: "Manage clinical sessions and requests.",
-      emoji: "📅",
+      renderIcon: (color: string) => <CounsellorBadgeIcon size={26} color={color} />,
       route: "/(auth)/tools/appointments" as const,
       color: colors.success || "#10b981",
       category: "sessions",
@@ -212,7 +215,7 @@ export default function ToolsScreen() {
           {filteredTools.length === 0 && (
             <View style={styles.emptyState}>
               <Ionicons name="search-outline" size={48} color={colors.textMuted} style={{ opacity: 0.5, marginBottom: 16 }} />
-              <Text style={styles.emptyText}>No tools in this category yet 🌱</Text>
+              <Text style={styles.emptyText}>No tools in this category yet</Text>
             </View>
           )}
         </View>
@@ -223,7 +226,8 @@ export default function ToolsScreen() {
   );
 }
 
-const stylesFactory = (colors: any) => ({
+function stylesFactory(colors: any) {
+  return {
   container: {
     flex: 1,
     backgroundColor: colors.background,
@@ -337,4 +341,6 @@ const stylesFactory = (colors: any) => ({
     color: colors.textMuted,
     textAlign: 'center',
   } as TextStyle,
-});
+  };
+}
+

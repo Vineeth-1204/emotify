@@ -11,6 +11,8 @@ import { Button } from "@/components/ui/Button";
 import { BlurView } from "expo-blur";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { ShieldSafetyIcon } from "@/components/svg/system";
+
 export default function TabLayout() {
   const { user, logout } = useAppAuth();
   const router = useRouter();
@@ -52,7 +54,9 @@ export default function TabLayout() {
         >
           <Ionicons name="close" size={28} color={colors.textSecondary} />
         </TouchableOpacity>
-        <Text style={{ fontSize: 60, textAlign: 'center', marginBottom: 20 }}>⚠️</Text>
+        <View style={{ alignItems: 'center', marginBottom: 20 }}>
+          <ShieldSafetyIcon size={64} color={colors.error} />
+        </View>
         <Text style={[styles.emergencyTitle, { color: colors.error, textAlign: 'center' }]}>Safety Priority</Text>
         <Text style={[styles.emergencyText, { color: colors.text, textAlign: 'center', marginVertical: Theme.spacing.xl, fontSize: 18 }]}>
           We're concerned for your safety. If you're in danger now, please call emergency services immediately.

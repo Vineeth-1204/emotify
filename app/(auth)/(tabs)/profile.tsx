@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { View, Text, StyleSheet, ScrollView, ActivityIndicator, Alert, TouchableOpacity, Dimensions, ViewStyle, TextStyle, Switch, Linking } from "react-native";
+import { View, Text, StyleSheet, ScrollView, ActivityIndicator, Alert, TouchableOpacity, Dimensions, ViewStyle, TextStyle, Switch, Linking, TextInput, Modal } from "react-native";
 import { useAppAuth } from "@/utils/auth";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
@@ -13,6 +13,8 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import * as SecureStore from "expo-secure-store";
 import * as LocalAuthentication from "expo-local-authentication";
+import { useAvatar } from "@/context/AvatarContext";
+import { MitraAvatar } from "@/components/avatar/MitraAvatar";
 
 const { width } = Dimensions.get('window');
 
@@ -26,7 +28,20 @@ export default function ProfileScreen() {
   const dbUser = useQuery(api.users.getByClerkId, userId ? { clerkId: userId } : "skip");
   const exportData = useQuery(api.insights.getDailyStats, userId ? { userId: userId } : "skip");
 
+  const { avatarName, setAvatarName } = useAvatar();
+  const [showRenameModal, setShowRenameModal] = useState(false);
+  const [newCompanionName, setNewCompanionName] = useState(avatarName);
   const [isExporting, setIsExporting] = useState(false);
+
+  const handleSaveCompanionName = async () => {
+    if (newCompanionName.trim().length === 0) {
+      Alert.alert("Name Required", "Please enter a name for your companion.");
+      return;
+    }
+    await setAvatarName(newCompanionName.trim());
+    setShowRenameModal(false);
+    Alert.alert("Updated!", `Your companion is now named ${newCompanionName.trim()}.`);
+  };
 
   const wellnessProfile = useQuery(api.wellness.getProfile, { userId: userId ?? "" });
   const updateWellness = useMutation(api.wellness.updateProfile);
@@ -220,6 +235,51 @@ export default function ProfileScreen() {
           </View>
         </View>
 
+        {/* Companion Customization Section */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>YOUR COMPANION</Text>
+          <View style={[styles.premiumCard, { padding: Theme.spacing.md }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
+                <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: colors.primary + '15', justifyContent: 'center', alignItems: 'center', flexShrink: 0 }}>
+                  <MitraAvatar state="happy" size="sm" />
+                </View>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={{ fontFamily: Theme.fontFamily.bold, fontSize: 16, color: colors.text }} numberOfLines={1}>
+                    {avatarName}
+                  </Text>
+                  <Text style={{ fontFamily: Theme.fontFamily.medium, fontSize: 12, color: colors.textSecondary, marginTop: 2 }} numberOfLines={1}>
+                    Your supportive AI companion
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                onPress={() => {
+                  setNewCompanionName(avatarName);
+                  setShowRenameModal(true);
+                }}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 6,
+                  paddingHorizontal: 14,
+                  paddingVertical: 8,
+                  backgroundColor: colors.primary + '14',
+                  borderRadius: 12,
+                  flexShrink: 0,
+                }}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="pencil" size={13} color={colors.primary} />
+                <Text style={{ fontFamily: Theme.fontFamily.bold, fontSize: 13, color: colors.primary }}>
+                  Rename
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+
         {/* Account Details Section */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>ACCOUNT DETAILS</Text>
@@ -306,6 +366,7 @@ export default function ProfileScreen() {
               title={isExporting ? "Generating CSV..." : "Export Logs (CSV)"}
               onPress={handleExportData}
               variant="outline"
+              size="sm"
               disabled={isExporting}
               icon={<Ionicons name="download-outline" size={16} color={colors.primary} />}
               style={styles.exportBtn}
@@ -326,6 +387,52 @@ export default function ProfileScreen() {
 
         <View style={{ height: 120 }} />
       </ScrollView>
+
+      {/* RENAME COMPANION MODAL */}
+      <Modal
+        visible={showRenameModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowRenameModal(false)}
+      >
+        <View style={styles.renameModalOverlay}>
+          <View style={styles.renameModalCard}>
+            <View style={{ alignItems: 'center', marginBottom: 16 }}>
+              <MitraAvatar state="thinking" size="md" />
+            </View>
+            <Text style={styles.renameModalTitle}>Name Your Companion</Text>
+            <Text style={styles.renameModalSubtitle}>
+              Give your companion a custom name that feels comforting and personal to you.
+            </Text>
+
+            <TextInput
+              style={[styles.renameInput, { borderColor: colors.primary + '40', color: colors.text }]}
+              value={newCompanionName}
+              onChangeText={setNewCompanionName}
+              placeholder="Companion Name (e.g. Mitra, Leo, Aria)"
+              placeholderTextColor={colors.textSecondary}
+              maxLength={20}
+              autoFocus
+            />
+
+            <View style={styles.renameBtnRow}>
+              <TouchableOpacity
+                style={[styles.renameCancelBtn, { borderColor: '#E2E8F0' }]}
+                onPress={() => setShowRenameModal(false)}
+              >
+                <Text style={[styles.renameCancelBtnText, { color: colors.textSecondary }]}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.renameSaveBtn, { backgroundColor: colors.primary }]}
+                onPress={handleSaveCompanionName}
+              >
+                <Text style={styles.renameSaveBtnText}>Save Name</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -521,9 +628,11 @@ function stylesFactory(colors: any) {
   } as TextStyle,
   exportBtn: {
     marginTop: Theme.spacing.md,
+    width: '100%',
     borderRadius: Theme.borderRadius.md,
     borderColor: colors.primary + '30',
-    height: 40,
+    minHeight: 48,
+    paddingVertical: 12,
   } as ViewStyle,
   row: {
     flexDirection: "row",
@@ -604,6 +713,76 @@ function stylesFactory(colors: any) {
   crisisButtonText: {
     fontFamily: Theme.fontFamily.bold,
     fontSize: 12,
+    color: '#FFFFFF',
+  } as TextStyle,
+  // Rename Modal Styles
+  renameModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.55)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: Theme.spacing.xl,
+  } as ViewStyle,
+  renameModalCard: {
+    width: '100%',
+    maxWidth: 380,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 24,
+    ...Theme.shadows.primary,
+  } as ViewStyle,
+  renameModalTitle: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: 20,
+    color: colors.text,
+    textAlign: 'center',
+    marginBottom: 6,
+  } as TextStyle,
+  renameModalSubtitle: {
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: 13,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 18,
+    marginBottom: 20,
+    paddingHorizontal: 8,
+  } as TextStyle,
+  renameInput: {
+    borderWidth: 1.5,
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    fontSize: 15,
+    fontFamily: Theme.fontFamily.medium,
+    backgroundColor: '#F8FAFC',
+    marginBottom: 20,
+  } as TextStyle,
+  renameBtnRow: {
+    flexDirection: 'row',
+    gap: 12,
+  } as ViewStyle,
+  renameCancelBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+  renameCancelBtnText: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: 14,
+  } as TextStyle,
+  renameSaveBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+  renameSaveBtnText: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: 14,
     color: '#FFFFFF',
   } as TextStyle,
   };

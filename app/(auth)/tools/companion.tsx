@@ -97,6 +97,7 @@ const getContextualSuggestions = (messages: any[]) => {
 
 // Bouncing typing indicator dots
 function TypingIndicator() {
+  const { avatarName } = useAvatar();
   const dot1 = useRef(new Animated.Value(0)).current;
   const dot2 = useRef(new Animated.Value(0)).current;
   const dot3 = useRef(new Animated.Value(0)).current;
@@ -141,7 +142,7 @@ function TypingIndicator() {
     <View style={styles.typingContainer}>
       <View style={styles.typingBubble}>
         <Text style={[styles.typingText, { color: colors.textSecondary }]}>
-          Mitra is thinking...
+          {avatarName} is thinking...
         </Text>
         <View style={styles.dotRow}>
           <Animated.View
@@ -200,6 +201,7 @@ export default function AICompanionScreen() {
     triggerSafetyState,
     isSafetyActive,
     ageGroup,
+    avatarName,
   } = useAvatar();
 
   const flatListRef = useRef<FlatList>(null);
@@ -363,14 +365,14 @@ export default function AICompanionScreen() {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
     } catch (err: any) {
       console.error(err);
-      let errorMsg = "Could not reach Mitra right now. Please try again.";
+      let errorMsg = `Could not reach ${avatarName} right now. Please try again.`;
       if (err?.message) {
         errorMsg = err.message
           .replace("ConvexError: ", "")
           .replace("Uncaught Error: ", "")
           .trim();
       }
-      Alert.alert("Mitra Connection Error", errorMsg);
+      Alert.alert(`${avatarName} Connection Error`, errorMsg);
     } finally {
       setIsAiLoading(false);
       inputRef.current?.focus();
@@ -380,7 +382,7 @@ export default function AICompanionScreen() {
   const handleClearChat = () => {
     Alert.alert(
       "Clear Chat History",
-      "Are you sure you want to clear your conversation with Mitra?",
+      `Are you sure you want to clear your conversation with ${avatarName}?`,
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -554,7 +556,7 @@ export default function AICompanionScreen() {
       });
       setDailyMoodSubmitted(true);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-      Alert.alert("Mood Logged", `You logged that you are feeling ${mood}. Mitra will tailor support to you.`);
+      Alert.alert("Mood Logged", `You logged that you are feeling ${mood}. ${avatarName} will tailor support to you.`);
     } catch (e) {
       console.error("Failed to log emotion:", e);
     }
@@ -577,7 +579,7 @@ export default function AICompanionScreen() {
 
   // Age cohort nuances
   const isYounger = ageGroup === "13-18";
-  const emptyTitle = isYounger ? "Hey, I'm Mitra!" : "Mitra";
+  const emptyTitle = isYounger ? `Hey, I'm ${avatarName}!` : avatarName;
   const emptySubtitle = isYounger
     ? "I'm always here to listen, cheer you on, or help you figure things out."
     : "A calm space to reflect, decompress, or talk through whatever is on your mind.";
@@ -595,7 +597,7 @@ export default function AICompanionScreen() {
               </Text>
             </View>
             <Text style={styles.safetyBannerText}>
-              Mitra is an AI companion and cannot replace emergency help. If you feel overwhelmed, free confidential help is open 24/7.
+              {avatarName} is an AI companion and cannot replace emergency help. If you feel overwhelmed, free confidential help is open 24/7.
             </Text>
             <View style={styles.safetyBtnRow}>
               <TouchableOpacity
@@ -619,7 +621,7 @@ export default function AICompanionScreen() {
           <View style={[styles.checkInCard, { borderColor: colors.primary + "15" }]}>
             <Text style={[styles.checkInTitle, { color: colors.text }]}>How are you feeling today?</Text>
             <Text style={[styles.checkInSub, { color: colors.textSecondary }]}>
-              Tap to log your mood and update Mitra's reflections.
+              Tap to log your mood and update {avatarName}'s reflections.
             </Text>
             <View style={styles.checkInRow}>
               {[
@@ -713,7 +715,7 @@ export default function AICompanionScreen() {
 
             <View style={styles.headerText}>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                <Text style={[styles.headerTitle, { color: colors.text }]}>Mitra</Text>
+                <Text style={[styles.headerTitle, { color: colors.text }]}>{avatarName}</Text>
                 <View style={[styles.headerMoodBadge, { backgroundColor: colors.primary + "10" }]}>
                   <Text style={[styles.headerMoodText, { color: colors.primary }]}>
                     {getMoodLabel(activeEmotion)}
@@ -897,7 +899,7 @@ export default function AICompanionScreen() {
               ]}
               value={inputVal}
               onChangeText={setInputVal}
-              placeholder={isListening ? "Listening to your voice..." : "Message Mitra..."}
+              placeholder={isListening ? "Listening to your voice..." : `Message ${avatarName}...`}
               placeholderTextColor={isListening ? colors.primary : colors.textMuted}
               multiline
               blurOnSubmit={false}

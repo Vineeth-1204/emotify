@@ -211,7 +211,7 @@ export default function DashboardScreen() {
   const [overallProgress, setOverallProgress] = React.useState(0);
   const colors = useThemeColors();
   const styles = useStyles(stylesFactory as any) as any;
-  const { avatarState, setAvatarState, ageCohort, getDialogue } = useAvatar();
+  const { avatarState, setAvatarState, ageCohort, getDialogue, avatarName } = useAvatar();
 
   const [hasCheckedInToday, setHasCheckedInToday] = React.useState(true);
   const [showCheckInModal, setShowCheckInModal] = React.useState(false);
@@ -219,6 +219,13 @@ export default function DashboardScreen() {
   const [selectedHomeCard, setSelectedHomeCard] = React.useState<string | null>(null);
   const [selectedIntensity, setSelectedIntensity] = React.useState<number>(5);
   const [isSubmittingCheckIn, setIsSubmittingCheckIn] = React.useState(false);
+  const [themedMoodAlert, setThemedMoodAlert] = React.useState<{
+    visible: boolean;
+    title: string;
+    message: string;
+    emotionId: string;
+    color: string;
+  } | null>(null);
   const createLog = useMutation(api.emotionLogs.create);
 
   // Form State - Attendance Auto-prompt
@@ -479,7 +486,15 @@ export default function DashboardScreen() {
       await SecureStore.setItemAsync(`last_checkin_date_${user.id}`, todayStr);
       setShowCheckInModal(false);
       setHasCheckedInToday(true);
-      Alert.alert("Mood Logged!", "Mitra and your dashboard have updated to support you.");
+
+      const cardColor = selectedHomeCard === 'good' ? '#F59E0B' : selectedHomeCard === 'calm' ? '#10B981' : selectedHomeCard === 'low' ? '#3B82F6' : '#8B5CF6';
+      setThemedMoodAlert({
+        visible: true,
+        title: "Mood Logged!",
+        message: `${avatarName} and your dashboard have updated to support you.`,
+        emotionId: selectedEmotionId,
+        color: cardColor,
+      });
     } catch (e) {
       console.error(e);
       Alert.alert("Error", "Could not save your check-in. Please try again.");
@@ -509,7 +524,15 @@ export default function DashboardScreen() {
       const todayStr = new Date().toISOString().split('T')[0];
       await SecureStore.setItemAsync(`last_checkin_date_${user.id}`, todayStr);
       setHasCheckedInToday(true);
-      Alert.alert("Mood Logged!", "Mitra and your dashboard have updated to support you.");
+
+      const cardColor = emotionId === 'happy' ? '#F59E0B' : emotionId === 'calm' ? '#10B981' : emotionId === 'sad' ? '#3B82F6' : '#8B5CF6';
+      setThemedMoodAlert({
+        visible: true,
+        title: "Mood Logged!",
+        message: `${avatarName} and your dashboard have updated to support you.`,
+        emotionId: emotionId,
+        color: cardColor,
+      });
     } catch (e) {
       console.error(e);
       Alert.alert("Error", "Could not save your check-in. Please try again.");
@@ -561,7 +584,11 @@ export default function DashboardScreen() {
         </View>
 
         {/* Mitra Interactive Hero Card */}
-        <View style={styles.mitraHeroCard}>
+        <TouchableOpacity
+          style={styles.mitraHeroCard}
+          activeOpacity={0.88}
+          onPress={() => router.push('/(auth)/tools/companion' as any)}
+        >
           <LinearGradient
             colors={['#FFFFFF', '#F8FAFC'] as any}
             style={StyleSheet.absoluteFill}
@@ -572,6 +599,9 @@ export default function DashboardScreen() {
                 state={avatarState} 
                 size={ageCohort === "13-18" ? "md" : "sm"} 
               />
+              <View style={[styles.avatarNameBadge, { backgroundColor: colors.primary + '15' }]}>
+                <Text style={[styles.avatarNameBadgeText, { color: colors.primary }]}>{avatarName}</Text>
+              </View>
             </View>
             <View style={styles.mitraBubbleCol}>
               <View style={styles.mitraSpeechBubble}>
@@ -580,6 +610,15 @@ export default function DashboardScreen() {
                     ? (activeEmotionObj ? `You logged feeling ${activeEmotionObj.label.toLowerCase()} today. I'm right here with you.` : getDialogue("checkinPrompt"))
                     : getDialogue("greeting")}
                 </Text>
+
+                {/* Instant Action CTA Pill */}
+                <View style={[styles.chatCtaPill, { backgroundColor: colors.primary + '12' }]}>
+                  <Ionicons name="chatbubble-ellipses" size={13} color={colors.primary} />
+                  <Text style={[styles.chatCtaText, { color: colors.primary }]}>
+                    Talk with {avatarName}
+                  </Text>
+                  <Ionicons name="chevron-forward" size={13} color={colors.primary} />
+                </View>
               </View>
               <View style={styles.growthRow}>
                 <PlantProgress 
@@ -600,7 +639,7 @@ export default function DashboardScreen() {
               </View>
             </View>
           </View>
-        </View>
+        </TouchableOpacity>
 
         {/* 4-Card Illustrated Mood Check-in */}
         {isScreeningComplete && !hasCheckedInToday && (
@@ -627,6 +666,7 @@ export default function DashboardScreen() {
                   sub: "Energized, joyful", 
                   backendCode: "happy", 
                   color: "#F59E0B",
+                  bgSelected: "#FFFBEB",
                   Icon: HappyEmotionIcon 
                 },
                 { 
@@ -635,6 +675,7 @@ export default function DashboardScreen() {
                   sub: "Peaceful, centered", 
                   backendCode: "calm", 
                   color: "#10B981",
+                  bgSelected: "#F0FDF4",
                   Icon: CalmEmotionIcon 
                 },
                 { 
@@ -643,6 +684,7 @@ export default function DashboardScreen() {
                   sub: "Down, tired, drained", 
                   backendCode: "sad", 
                   color: "#3B82F6",
+                  bgSelected: "#EFF6FF",
                   Icon: SadEmotionIcon 
                 },
                 { 
@@ -651,6 +693,7 @@ export default function DashboardScreen() {
                   sub: "Worried, tense, angry", 
                   backendCode: "worried", 
                   color: "#8B5CF6",
+                  bgSelected: "#FAF5FF",
                   Icon: WorriedEmotionIcon 
                 },
               ].map((card) => {
@@ -667,13 +710,16 @@ export default function DashboardScreen() {
                     }}
                     style={[
                       styles.homeMoodCard,
-                      { backgroundColor: card.color + '0E', borderColor: isSelected ? card.color : card.color + '28' },
-                      isSelected && { borderWidth: 2, backgroundColor: card.color + '22' }
+                      {
+                        backgroundColor: isSelected ? card.bgSelected : '#FFFFFF',
+                        borderColor: isSelected ? card.color : '#E2E8F0',
+                        borderWidth: isSelected ? 2 : 1,
+                      }
                     ]}
                     activeOpacity={0.8}
                   >
-                    <View style={[styles.homeMoodIconBox, { backgroundColor: card.color + '20' }]}>
-                      <card.Icon size={32} />
+                    <View style={[styles.homeMoodIconBox, { backgroundColor: isSelected ? card.color + '25' : card.color + '12' }]}>
+                      <card.Icon size={30} />
                     </View>
                     <Text style={[styles.homeMoodTitle, { color: card.color }]}>{card.title}</Text>
                     <Text style={styles.homeMoodSub}>{card.sub}</Text>
@@ -809,10 +855,10 @@ export default function DashboardScreen() {
           </View>
         )}
 
-        {/* Visual Clinical Metrics (PHQ-9 & GAD-7) */}
+        {/* Visual Wellbeing Metrics (Humanized, Student-Friendly) */}
         {isScreeningComplete && (
           <View style={styles.scoreRow}>
-            {/* PHQ-9 Depression card */}
+            {/* Emotional Balance card */}
             <View style={styles.scoreCard}>
               <View style={styles.scoreHeaderRow}>
                 <View style={[styles.iconCircle, { backgroundColor: colors.primary + '15' }]}>
@@ -820,12 +866,12 @@ export default function DashboardScreen() {
                 </View>
                 <View style={styles.scoreBadgeMini}>
                   <Text style={[styles.scoreBadgeMiniText, { color: phq9Score >= 10 ? colors.error : colors.success }]}>
-                    {phq9Score <= 4 ? "Minimal" : phq9Score <= 9 ? "Mild" : phq9Score <= 14 ? "Moderate" : "Severe"}
+                    {phq9Score <= 4 ? "Optimal" : phq9Score <= 9 ? "Good" : phq9Score <= 14 ? "Balanced" : "Needs Care"}
                   </Text>
                 </View>
               </View>
               <Text style={styles.scoreValue}>{phq9Score}<Text style={styles.scoreMax}>/27</Text></Text>
-              <Text style={styles.scoreLabel}>PHQ-9 DEPRESSION</Text>
+              <Text style={styles.scoreLabel}>EMOTIONAL BALANCE</Text>
 
               <View style={styles.metricTrack}>
                 <View
@@ -838,10 +884,10 @@ export default function DashboardScreen() {
                   ]}
                 />
               </View>
-              <Text style={styles.metricDesc}>Lower score = better mood</Text>
+              <Text style={styles.metricDesc}>Mood vitality & energy</Text>
             </View>
 
-            {/* GAD-7 Anxiety card */}
+            {/* Mind Calmness card */}
             <View style={styles.scoreCard}>
               <View style={styles.scoreHeaderRow}>
                 <View style={[styles.iconCircle, { backgroundColor: colors.secondary + '15' }]}>
@@ -849,12 +895,12 @@ export default function DashboardScreen() {
                 </View>
                 <View style={styles.scoreBadgeMini}>
                   <Text style={[styles.scoreBadgeMiniText, { color: gad7Score >= 10 ? colors.error : colors.success }]}>
-                    {gad7Score <= 4 ? "Minimal" : gad7Score <= 9 ? "Mild" : gad7Score <= 14 ? "Moderate" : "Severe"}
+                    {gad7Score <= 4 ? "Serene" : gad7Score <= 9 ? "Calm" : gad7Score <= 14 ? "Mild Tension" : "Needs Care"}
                   </Text>
                 </View>
               </View>
               <Text style={styles.scoreValue}>{gad7Score}<Text style={styles.scoreMax}>/21</Text></Text>
-              <Text style={styles.scoreLabel}>GAD-7 ANXIETY</Text>
+              <Text style={styles.scoreLabel}>MIND CALMNESS</Text>
 
               <View style={styles.metricTrack}>
                 <View
@@ -862,12 +908,12 @@ export default function DashboardScreen() {
                     styles.metricFill,
                     {
                       width: `${Math.min((gad7Score / 21) * 100, 100)}%`,
-                      backgroundColor: gad7Score <= 9 ? colors.success : gad7Score <= 14 ? colors.warning : colors.error
+                      backgroundColor: gad7Score <= 7 ? colors.success : gad7Score <= 12 ? colors.warning : colors.error
                     }
                   ]}
                 />
               </View>
-              <Text style={styles.metricDesc}>Lower score = calmer mind</Text>
+              <Text style={styles.metricDesc}>Inner peace & clarity</Text>
             </View>
           </View>
         )}
@@ -1081,6 +1127,64 @@ export default function DashboardScreen() {
         </View>
       )}
 
+      {/* THEMED MOOD CHECK-IN ALERT MODAL */}
+      <Modal
+        visible={!!themedMoodAlert?.visible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setThemedMoodAlert(null)}
+      >
+        <View style={styles.themedAlertOverlay}>
+          <View style={[styles.themedAlertCard, { borderColor: (themedMoodAlert?.color || colors.primary) + '40' }]}>
+            <LinearGradient
+              colors={['#FFFFFF', (themedMoodAlert?.color || colors.primary) + '12'] as any}
+              style={StyleSheet.absoluteFill}
+            />
+            <View style={styles.themedAlertAvatarRow}>
+              <MitraAvatar state={avatarState} size="md" />
+            </View>
+
+            <Text style={[styles.themedAlertTitle, { color: colors.text }]}>
+              {themedMoodAlert?.title || "Mood Logged!"}
+            </Text>
+            <Text style={styles.themedAlertMessage}>
+              {themedMoodAlert?.message}
+            </Text>
+
+            <View style={[styles.themedAlertRewardBadge, { backgroundColor: (themedMoodAlert?.color || colors.primary) + '18' }]}>
+              <CalmPointToken size={18} />
+              <Text style={[styles.themedAlertRewardText, { color: colors.text }]}>
+                +5 Calm Points Earned
+              </Text>
+            </View>
+
+            <View style={styles.themedAlertBtnRow}>
+              <TouchableOpacity
+                style={[styles.themedAlertPrimaryBtn, { backgroundColor: themedMoodAlert?.color || colors.primary }]}
+                onPress={() => {
+                  setThemedMoodAlert(null);
+                  router.push('/(auth)/tools/companion' as any);
+                }}
+                activeOpacity={0.85}
+              >
+                <Ionicons name="chatbubble-ellipses" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+                <Text style={styles.themedAlertPrimaryBtnText}>Talk with {avatarName}</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.themedAlertSecondaryBtn}
+                onPress={() => setThemedMoodAlert(null)}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.themedAlertSecondaryBtnText, { color: colors.textSecondary }]}>
+                  Continue to Dashboard
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
     </View>
   );
 }
@@ -1180,6 +1284,30 @@ function stylesFactory(colors: any) {
     alignItems: 'center',
     justifyContent: 'center',
   } as const,
+  avatarNameBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 8,
+    marginTop: 6,
+  } as const,
+  avatarNameBadgeText: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: 11,
+  },
+  chatCtaPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    marginTop: 8,
+    alignSelf: 'flex-start',
+  } as const,
+  chatCtaText: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: 11,
+  },
   mitraBubbleCol: {
     flex: 1,
   } as const,
@@ -1216,16 +1344,17 @@ function stylesFactory(colors: any) {
   } as const,
   homeMoodCard: {
     width: '48%',
-    borderRadius: 16,
-    padding: 14,
-    borderWidth: 1.5,
+    borderRadius: 18,
+    paddingVertical: 16,
+    paddingHorizontal: 10,
     alignItems: 'center',
-    ...Theme.shadows.tertiary,
+    elevation: 0,
+    shadowOpacity: 0,
   } as const,
   homeMoodIconBox: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 8,
@@ -1240,6 +1369,7 @@ function stylesFactory(colors: any) {
     fontSize: 11,
     color: colors.textSecondary,
     textAlign: 'center',
+    lineHeight: 15,
   },
   intensityContainer: {
     marginTop: 14,
@@ -1806,6 +1936,85 @@ function stylesFactory(colors: any) {
     gap: 12,
     marginTop: 20,
   } as const,
+  // Themed Alert Modal Styles
+  themedAlertOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.55)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: Theme.spacing.xl,
+  } as const,
+  themedAlertCard: {
+    width: '100%',
+    maxWidth: 380,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 24,
+    alignItems: 'center',
+    borderWidth: 1.5,
+    overflow: 'hidden',
+    ...Theme.shadows.primary,
+  } as const,
+  themedAlertAvatarRow: {
+    marginBottom: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as const,
+  themedAlertTitle: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: 22,
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  themedAlertMessage: {
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: 14,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 16,
+    paddingHorizontal: 8,
+  },
+  themedAlertRewardBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    marginBottom: 20,
+  } as const,
+  themedAlertRewardText: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: 13,
+  },
+  themedAlertBtnRow: {
+    width: '100%',
+    gap: 10,
+  } as const,
+  themedAlertPrimaryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    borderRadius: 14,
+    width: '100%',
+  } as const,
+  themedAlertPrimaryBtnText: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: 15,
+    color: '#FFFFFF',
+  },
+  themedAlertSecondaryBtn: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    width: '100%',
+  } as const,
+  themedAlertSecondaryBtnText: {
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: 14,
+  },
   };
 }
 

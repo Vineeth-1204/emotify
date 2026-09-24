@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useQuery } from 'convex/react';
 import { api } from '@/convex/_generated/api';
 import { useAppAuth } from '@/utils/auth';
@@ -14,6 +15,8 @@ export interface EmotionResolution {
 }
 
 interface AvatarContextType {
+  avatarName: string;
+  setAvatarName: (name: string) => Promise<void>;
   avatarState: AvatarState;
   setAvatarState: (newState: AvatarState, priority?: number) => void;
   triggerSafetyState: () => void;
@@ -61,8 +64,33 @@ export const AvatarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const userGoals = useQuery(api.microGoals.getUserGoals, user?.id ? { userId: user.id } : 'skip');
 
   const [avatarState, setInternalAvatarState] = useState<AvatarState>('idle');
+  const [avatarName, setAvatarNameState] = useState<string>('Mitra');
   const [isSafetyActive, setIsSafetyActive] = useState(false);
   const [isCelebrating, setIsCelebrating] = useState(false);
+
+  useEffect(() => {
+    const loadAvatarName = async () => {
+      try {
+        const stored = await AsyncStorage.getItem('@emotify_avatar_name');
+        if (stored && stored.trim().length > 0) {
+          setAvatarNameState(stored.trim());
+        }
+      } catch (e) {
+        console.error('Failed to load avatar name:', e);
+      }
+    };
+    loadAvatarName();
+  }, []);
+
+  const setAvatarName = useCallback(async (name: string) => {
+    const cleanName = name.trim() || 'Mitra';
+    setAvatarNameState(cleanName);
+    try {
+      await AsyncStorage.setItem('@emotify_avatar_name', cleanName);
+    } catch (e) {
+      console.error('Failed to save avatar name:', e);
+    }
+  }, []);
 
   // Age Group detection: default to 13-18 if <=18 or undefined; 19-24 if >=19
   const ageGroup: '13-18' | '19-24' = useMemo(() => {
@@ -236,6 +264,8 @@ export const AvatarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   return (
     <AvatarContext.Provider
       value={{
+        avatarName,
+        setAvatarName,
         avatarState,
         setAvatarState,
         triggerSafetyState,

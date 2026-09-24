@@ -27,8 +27,8 @@ import { runTriage, TriageInput } from "@/utils/triage";
 const INSTRUMENTS = [
   {
     id: "phq9",
-    title: "PHQ-9 (Depression)",
-    desc: "Assess feelings of low mood, sleep, and energy levels.",
+    title: "Mood & Energy Check",
+    desc: "Reflect on feelings of low mood, sleep patterns, and daily vitality.",
     questions: PHQ9_QUESTIONS,
     options: PHQ9_OPTIONS,
     instruction: PHQ9_INSTRUCTION,
@@ -36,8 +36,8 @@ const INSTRUMENTS = [
   },
   {
     id: "gad7",
-    title: "GAD-7 (Anxiety)",
-    desc: "Evaluate levels of worry, tension, and nervousness.",
+    title: "Calm & Focus Check",
+    desc: "Reflect on feelings of worry, tension, and daily peace of mind.",
     questions: GAD7_QUESTIONS,
     options: GAD7_OPTIONS,
     instruction: GAD7_INSTRUCTION,
@@ -232,9 +232,9 @@ export default function ScreeningScreen() {
           </View>
         ) : (
           <>
-            <Text style={styles.headerTitle}>Clinical Screening</Text>
+            <Text style={styles.headerTitle}>Wellbeing Check</Text>
             <Text style={styles.headerSubtitle}>
-              Complete all assessments below to update your clinical dashboard and personalized insights.
+              Complete your wellness checks to personalize your daily coping tools and care path.
             </Text>
           </>
         )}

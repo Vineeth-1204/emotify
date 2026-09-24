@@ -8,6 +8,8 @@ import { Button } from "@/components/ui/Button";
 import { useAppAuth } from "@/utils/auth";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
+import { useLanguage } from "@/context/LanguageContext";
+import { useAvatar } from "@/context/AvatarContext";
 
 import { MitraAvatar } from "@/components/avatar/MitraAvatar";
 import { MindfulnessActivityIcon, DeepBreathingActivityIcon } from "@/components/svg/activities";
@@ -16,6 +18,8 @@ import { CounsellorBadgeIcon, PlantProgress, ReminderIcon } from "@/components/s
 export default function WelcomeScreen() {
   const router = useRouter();
   const { user } = useAppAuth();
+  const { t } = useLanguage();
+  const { avatarName } = useAvatar();
   const dbUser = useQuery(api.users.getByClerkId, user?.id ? { clerkId: user.id } : "skip");
 
   useEffect(() => {
@@ -44,54 +48,49 @@ export default function WelcomeScreen() {
         <View style={{ marginBottom: Theme.spacing.md }}>
           <MitraAvatar state="neutral" size="lg" />
         </View>
-        <Text style={styles.title}>Welcome to Emotify</Text>
+        <Text style={styles.title}>{t("onboarding.welcomeTitle")}</Text>
         <Text style={styles.subtitle}>
-          Meet Mitra, your companion for emotional wellbeing
+          {t("onboarding.welcomeSubtitle", { name: avatarName })}
         </Text>
       </View>
 
       <View style={styles.card}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: Theme.spacing.sm }}>
           <ReminderIcon size={20} color={Colors.warning} />
-          <Text style={styles.cardTitle}>Before we begin</Text>
+          <Text style={styles.cardTitle}>{t("onboarding.beforeWeBegin")}</Text>
         </View>
         <Text style={styles.disclaimer}>
-          This app is <Text style={styles.bold}>not a diagnosis tool</Text> and
-          does not replace professional mental health care. It is designed to
-          help you understand your emotional patterns and connect you with
-          support when needed.
+          {t("onboarding.disclaimerMedical")}
         </Text>
         <Text style={styles.disclaimer}>
-          All information you share is kept confidential and used only to
-          personalize your experience within the app.
+          {t("onboarding.disclaimerConfidential")}
         </Text>
         <Text style={styles.disclaimer}>
-          If you are in immediate danger or crisis, please contact your local
-          emergency services or a crisis helpline.
+          {t("onboarding.disclaimerCrisis")}
         </Text>
       </View>
 
       <View style={styles.features}>
         <FeatureItem 
           icon={<MindfulnessActivityIcon size={24} color={Colors.primary} />} 
-          text="Understand your emotions better" 
+          text={t("onboarding.featEmotions")} 
         />
         <FeatureItem 
           icon={<PlantProgress stage="sprout" size={24} />} 
-          text="Track your wellbeing over time" 
+          text={t("onboarding.featTrack")} 
         />
         <FeatureItem 
           icon={<DeepBreathingActivityIcon size={24} color={Colors.primary} />} 
-          text="Access helpful coping tools" 
+          text={t("onboarding.featTools")} 
         />
         <FeatureItem 
           icon={<CounsellorBadgeIcon size={24} color={Colors.primary} />} 
-          text="Get connected to support when needed" 
+          text={t("onboarding.featConnect")} 
         />
       </View>
 
       <Button
-        title="Get Started"
+        title={t("onboarding.getStarted")}
         onPress={() => router.push("/(auth)/onboarding/consent")}
         size="lg"
         style={{ marginTop: Theme.spacing.lg }}

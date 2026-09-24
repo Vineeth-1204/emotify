@@ -20,10 +20,14 @@ import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { useLanguage } from "@/context/LanguageContext";
+import { Modal } from "react-native";
+
 const { width } = Dimensions.get('window');
 
 export default function LoginScreen() {
   const { login, loginWithBiometrics, biometricsEnabled } = useAppAuth();
+  const { t, language, setLanguage, supportedLanguages, activeLanguageOption } = useLanguage();
   const router = useRouter();
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
@@ -31,6 +35,7 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const [biometricLoading, setBiometricLoading] = useState(false);
   const [error, setError] = useState("");
+  const [showLanguageModal, setShowLanguageModal] = useState(false);
 
   const fadeAnim = React.useRef(new Animated.Value(0)).current;
 
@@ -54,7 +59,7 @@ export default function LoginScreen() {
       }
     } catch (err: any) {
       console.error("Login error:", err);
-      setError(err.message || "Something went wrong. Try again.");
+      setError(err.message || t("auth.genericError"));
     } finally {
       setLoading(false);
     }
@@ -70,7 +75,7 @@ export default function LoginScreen() {
       }
     } catch (err: any) {
       console.error("Biometric login error:", err);
-      setError("Biometric authentication failed.");
+      setError(t("auth.genericError"));
     } finally {
       setBiometricLoading(false);
     }
@@ -107,10 +112,34 @@ export default function LoginScreen() {
           keyboardShouldPersistTaps="handled"
         >
           <Animated.View style={[styles.content, { opacity: fadeAnim }]}>
+            <View style={{ width: '100%', alignItems: 'flex-end', marginBottom: 8 }}>
+              <TouchableOpacity
+                onPress={() => setShowLanguageModal(true)}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 6,
+                  paddingHorizontal: 12,
+                  paddingVertical: 6,
+                  borderRadius: 16,
+                  backgroundColor: '#FFFFFF',
+                  borderWidth: 1,
+                  borderColor: '#E2E8F0',
+                  ...Theme.shadows.tertiary,
+                }}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="globe-outline" size={14} color="#64748B" />
+                <Text style={{ fontFamily: Theme.fontFamily.bold, fontSize: 12, color: '#1E293B' }}>
+                  {activeLanguageOption.nativeName}
+                </Text>
+              </TouchableOpacity>
+            </View>
+
             <View style={styles.hero}>
               <View style={styles.logoWrapper}>
                 <LinearGradient
-                  colors={['#A7F3D0', '#93C5FD'] as any} // Calm Sage and Soft Blue
+                  colors={['#A7F3D0', '#93C5FD'] as any}
                   start={{ x: 0, y: 0 }}
                   end={{ x: 1, y: 1 }}
                   style={styles.logoCircle}
@@ -118,12 +147,12 @@ export default function LoginScreen() {
                   <Ionicons name="leaf-outline" size={40} color="#1E293B" />
                 </LinearGradient>
               </View>
-              <Text style={styles.title}>Welcome to Emotify</Text>
-              <Text style={styles.subtitle}>A peaceful space for your mind.</Text>
+              <Text style={styles.title}>{t("onboarding.welcomeTitle")}</Text>
+              <Text style={styles.subtitle}>{t("auth.signInSubtitle")}</Text>
             </View>
 
             <View style={styles.card}>
-              <Text style={styles.cardHeader}>Sign In</Text>
+              <Text style={styles.cardHeader}>{t("auth.signIn")}</Text>
 
               <View style={styles.inputBox}>
                 <Ionicons name="call-outline" size={20} color="#64748B" style={styles.inputIcon} />
@@ -146,7 +175,7 @@ export default function LoginScreen() {
                   style={styles.textInput}
                   value={password}
                   onChangeText={setPassword}
-                  placeholder="Password"
+                  placeholder={t("auth.password")}
                   placeholderTextColor="#94A3B8"
                   secureTextEntry={!showPassword}
                   autoCapitalize="none"
@@ -171,7 +200,7 @@ export default function LoginScreen() {
                 {loading ? (
                   <ActivityIndicator color="#FAF9F5" />
                 ) : (
-                  <Text style={styles.primaryButtonText}>Sign In</Text>
+                  <Text style={styles.primaryButtonText}>{t("auth.signIn")}</Text>
                 )}
               </TouchableOpacity>
 
@@ -193,7 +222,7 @@ export default function LoginScreen() {
                     ) : (
                       <>
                         <Ionicons name="finger-print-outline" size={24} color="#1E293B" />
-                        <Text style={styles.biometricButtonText}>Login with Biometrics</Text>
+                        <Text style={styles.biometricButtonText}>{t("profile.biometricLogin")}</Text>
                       </>
                     )}
                   </TouchableOpacity>
@@ -208,6 +237,81 @@ export default function LoginScreen() {
           </Animated.View>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* LANGUAGE SELECTOR MODAL */}
+      <Modal
+        visible={showLanguageModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowLanguageModal(false)}
+      >
+        <View style={{ flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.55)', justifyContent: 'center', alignItems: 'center', padding: 24 }}>
+          <View style={{ width: '100%', maxWidth: 380, backgroundColor: '#FFFFFF', borderRadius: 24, padding: 24, ...Theme.shadows.primary }}>
+            <View style={{ alignItems: 'center', marginBottom: 12 }}>
+              <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: '#4F46E515', justifyContent: 'center', alignItems: 'center' }}>
+                <Ionicons name="globe" size={24} color="#4F46E5" />
+              </View>
+            </View>
+            <Text style={{ fontFamily: Theme.fontFamily.bold, fontSize: 20, color: '#1E293B', textAlign: 'center', marginBottom: 6 }}>
+              {t("profile.selectLanguage")}
+            </Text>
+            <Text style={{ fontFamily: Theme.fontFamily.medium, fontSize: 13, color: '#64748B', textAlign: 'center', marginBottom: 20 }}>
+              {t("profile.selectLanguageSubtitle")}
+            </Text>
+
+            <View style={{ gap: 8, marginBottom: 20 }}>
+              {supportedLanguages.map((lang) => {
+                const isSelected = lang.code === language;
+                return (
+                  <TouchableOpacity
+                    key={lang.code}
+                    onPress={async () => {
+                      await setLanguage(lang.code);
+                      setShowLanguageModal(false);
+                    }}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      paddingVertical: 12,
+                      paddingHorizontal: 16,
+                      borderRadius: 14,
+                      backgroundColor: isSelected ? '#4F46E512' : '#F8FAFC',
+                      borderWidth: 1.5,
+                      borderColor: isSelected ? '#4F46E5' : 'transparent',
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <View>
+                      <Text style={{ fontFamily: Theme.fontFamily.bold, fontSize: 15, color: '#1E293B' }}>
+                        {lang.nativeName}
+                      </Text>
+                      <Text style={{ fontFamily: Theme.fontFamily.medium, fontSize: 12, color: '#64748B' }}>
+                        {lang.name}
+                      </Text>
+                    </View>
+                    <Ionicons
+                      name={isSelected ? "checkmark-circle" : "ellipse-outline"}
+                      size={20}
+                      color={isSelected ? '#4F46E5' : '#94A3B8'}
+                    />
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <TouchableOpacity
+              onPress={() => setShowLanguageModal(false)}
+              style={{ paddingVertical: 12, borderRadius: 14, borderWidth: 1, borderColor: '#E2E8F0', alignItems: 'center' }}
+              activeOpacity={0.8}
+            >
+              <Text style={{ fontFamily: Theme.fontFamily.bold, fontSize: 14, color: '#64748B' }}>
+                {t("common.close")}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }

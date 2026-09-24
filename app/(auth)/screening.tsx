@@ -10,6 +10,7 @@ import { Questionnaire } from "@/components/screening/Questionnaire";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import * as SecureStore from "expo-secure-store";
+import { useLanguage } from "@/context/LanguageContext";
 import {
   PHQ9_QUESTIONS,
   PHQ9_OPTIONS,
@@ -52,6 +53,7 @@ const SCREENING_STORE_KEY = "screening_progress";
 export default function ScreeningScreen() {
   const router = useRouter();
   const { user } = useAppAuth();
+  const { t } = useLanguage();
   const [selectedInstrument, setSelectedInstrument] = useState<string | null>(null);
   const [answers, setAnswers] = useState<ScreeningState>({
     phq9: new Array(PHQ9_QUESTIONS.length).fill(null),
@@ -232,9 +234,9 @@ export default function ScreeningScreen() {
           </View>
         ) : (
           <>
-            <Text style={styles.headerTitle}>Wellbeing Check</Text>
+            <Text style={styles.headerTitle}>{t("screening.title")}</Text>
             <Text style={styles.headerSubtitle}>
-              Complete your wellness checks to personalize your daily coping tools and care path.
+              {t("screening.subtitle")}
             </Text>
           </>
         )}
@@ -246,6 +248,8 @@ export default function ScreeningScreen() {
             const { answered, percent } = getProgress(inst.id, inst.questions.length);
             const isFinished = percent === 100;
             const isStarted = percent > 0;
+            const instTitle = inst.id === "phq9" ? t("screening.phq9Title") : t("screening.gad7Title");
+            const instDesc = inst.id === "phq9" ? t("screening.phq9Desc") : t("screening.gad7Desc");
 
             return (
               <TouchableOpacity
@@ -260,8 +264,8 @@ export default function ScreeningScreen() {
               >
                 <View style={styles.cardHeader}>
                   <View style={styles.cardInfo}>
-                    <Text style={styles.cardTitle}>{inst.title}</Text>
-                    <Text style={styles.cardDesc}>{inst.desc}</Text>
+                    <Text style={styles.cardTitle}>{instTitle}</Text>
+                    <Text style={styles.cardDesc}>{instDesc}</Text>
                   </View>
                   <View style={styles.statusIcon}>
                     {isFinished ? (
@@ -277,7 +281,7 @@ export default function ScreeningScreen() {
                 <View style={styles.progressContainer}>
                   <View style={styles.progressTextRow}>
                     <Text style={styles.progressLabel}>
-                      {isFinished ? "Completed" : isStarted ? "In Progress" : "Not Started"}
+                      {isFinished ? t("common.done") : isStarted ? "In Progress" : "Not Started"}
                     </Text>
                     <Text style={styles.progressPercent}>{percent}% ({answered}/{inst.questions.length})</Text>
                   </View>
@@ -297,7 +301,7 @@ export default function ScreeningScreen() {
           onPress={() => finishScreening()}
           disabled={!allCompleted}
         >
-          <Text style={styles.submitButtonText}>Submit Entire Assessment</Text>
+          <Text style={styles.submitButtonText}>{t("common.submit")}</Text>
           <Ionicons name="arrow-forward" size={20} color={Colors.white} />
         </TouchableOpacity>
       </View>

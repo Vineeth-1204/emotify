@@ -32,18 +32,12 @@ import * as Speech from "expo-speech";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BlurView } from "expo-blur";
 import { useAvatar } from "@/context/AvatarContext";
+import { useLanguage } from "@/context/LanguageContext";
+import { useVoice } from "@/context/VoiceContext";
 import { MitraAvatar, AvatarState } from "@/components/avatar/MitraAvatar";
 import { ShieldSafetyIcon } from "@/components/svg/system";
 
 const { width } = Dimensions.get("window");
-
-// Starter prompts with vector icons
-const STARTER_PROMPTS = [
-  { id: "stressed", text: "I'm feeling stressed.", icon: "leaf-outline" },
-  { id: "day", text: "How was my day?", icon: "calendar-outline" },
-  { id: "motivate", text: "Motivate me.", icon: "sparkles-outline" },
-  { id: "talk", text: "Let's talk.", icon: "chatbubble-ellipses-outline" },
-];
 
 // Vector reaction types replacing Unicode emoji reactions
 const REACTION_TYPES = [
@@ -98,6 +92,7 @@ const getContextualSuggestions = (messages: any[]) => {
 // Bouncing typing indicator dots
 function TypingIndicator() {
   const { avatarName } = useAvatar();
+  const { t } = useLanguage();
   const dot1 = useRef(new Animated.Value(0)).current;
   const dot2 = useRef(new Animated.Value(0)).current;
   const dot3 = useRef(new Animated.Value(0)).current;
@@ -142,7 +137,7 @@ function TypingIndicator() {
     <View style={styles.typingContainer}>
       <View style={styles.typingBubble}>
         <Text style={[styles.typingText, { color: colors.textSecondary }]}>
-          {avatarName} is thinking...
+          {t("companion.typing", { name: avatarName })}
         </Text>
         <View style={styles.dotRow}>
           <Animated.View
@@ -204,6 +199,18 @@ export default function AICompanionScreen() {
     avatarName,
   } = useAvatar();
 
+  const { t } = useLanguage();
+  const {
+    voiceEnabled,
+    setVoiceEnabled,
+    selectedVoice,
+    isPlaying: isVoicePlaying,
+    isLoadingVoice,
+    activeSpeakingMessageId,
+    speakText,
+    stopAudio,
+  } = useVoice();
+
   const flatListRef = useRef<FlatList>(null);
   const inputRef = useRef<TextInput>(null);
   const recognitionRef = useRef<any>(null);
@@ -220,6 +227,13 @@ export default function AICompanionScreen() {
   const [showActionsSheet, setShowActionsSheet] = useState(false);
   const [dailyMoodSubmitted, setDailyMoodSubmitted] = useState(false);
 
+  // Stop voice playback on unmount / navigation
+  useEffect(() => {
+    return () => {
+      stopAudio().catch(() => {});
+    };
+  }, [stopAudio]);
+
   // Convex integration
   const messages = useQuery(api.companion.getConversationHistory);
   const clearHistory = useMutation(api.companion.clearConversation);
@@ -230,10 +244,10 @@ export default function AICompanionScreen() {
   const currentMitraState: AvatarState = useMemo(() => {
     if (isSafetyActive || showSafetyBanner) return "supportive";
     if (isListening) return "listening";
-    if (isSpeaking) return "encouraging";
-    if (isAiLoading) return "thinking";
+    if (isSpeaking || isVoicePlaying) return "encouraging";
+    if (isAiLoading || isLoadingVoice) return "thinking";
     return avatarState || "calm";
-  }, [isSafetyActive, showSafetyBanner, isListening, isSpeaking, isAiLoading, avatarState]);
+  }, [isSafetyActive, showSafetyBanner, isListening, isSpeaking, isVoicePlaying, isAiLoading, isLoadingVoice, avatarState]);
 
   // Auto scroll to end when messages list updates or keyboard shows
   useEffect(() => {
@@ -315,25 +329,20 @@ export default function AICompanionScreen() {
     );
   };
 
-  // Text-to-Speech (TTS)
-  const handleReadAloud = (textToRead?: string) => {
+  // Text-to-Speech (TTS) using ElevenLabs
+  const handleReadAloud = (textToRead?: string, messageId?: string) => {
     const content = textToRead || selectedMessage?.content;
+    const msgId = messageId || selectedMessage?.messageId;
     if (!content) return;
     setShowActionsSheet(false);
 
-    if (isSpeaking) {
-      Speech.stop();
-      setIsSpeaking(false);
+    if (isVoicePlaying && (activeSpeakingMessageId === msgId || !msgId)) {
+      stopAudio();
       return;
     }
 
-    setIsSpeaking(true);
-    Speech.speak(content, {
-      rate: 0.9,
-      pitch: 1.0,
-      onDone: () => setIsSpeaking(false),
-      onStopped: () => setIsSpeaking(false),
-      onError: () => setIsSpeaking(false),
+    speakText(content, msgId).catch((err) => {
+      console.warn("Read aloud error:", err);
     });
   };
 
@@ -357,12 +366,19 @@ export default function AICompanionScreen() {
     const aiMessageId = Math.random().toString(36).slice(2, 11);
 
     try {
-      await generateAIResponse({
+      const aiResponseText = await generateAIResponse({
         userMessageId,
         aiMessageId,
         content: cleanedText,
       });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+
+      // Play synthesized voice in background if voice output is enabled
+      if (voiceEnabled && aiResponseText) {
+        speakText(aiResponseText, aiMessageId).catch((ttsErr) => {
+          console.warn("ElevenLabs voice generation fallback:", ttsErr);
+        });
+      }
     } catch (err: any) {
       console.error(err);
       let errorMsg = `Could not reach ${avatarName} right now. Please try again.`;
@@ -381,12 +397,12 @@ export default function AICompanionScreen() {
 
   const handleClearChat = () => {
     Alert.alert(
-      "Clear Chat History",
-      `Are you sure you want to clear your conversation with ${avatarName}?`,
+      t("companion.clearHistory"),
+      t("companion.clearHistoryConfirm", { name: avatarName }),
       [
-        { text: "Cancel", style: "cancel" },
+        { text: t("companion.clearHistoryCancel"), style: "cancel" },
         {
-          text: "Clear",
+          text: t("companion.clearHistoryAction"),
           style: "destructive",
           onPress: async () => {
             try {
@@ -394,7 +410,7 @@ export default function AICompanionScreen() {
               Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
             } catch (err) {
               console.error(err);
-              Alert.alert("Error", "Failed to clear conversation history.");
+              Alert.alert(t("common.error"), t("companion.clearHistoryError"));
             }
           },
         },
@@ -475,11 +491,28 @@ export default function AICompanionScreen() {
               )}
               <View style={styles.bubbleFooter}>
                 <TouchableOpacity
-                  onPress={() => handleReadAloud(item.content)}
+                  onPress={() => handleReadAloud(item.content, item.messageId)}
                   hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
                   style={{ marginRight: 6 }}
+                  accessibilityLabel={activeSpeakingMessageId === item.messageId && isVoicePlaying ? "Stop audio" : "Read aloud"}
                 >
-                  <Ionicons name="volume-medium-outline" size={13} color={colors.textMuted} />
+                  {isLoadingVoice && activeSpeakingMessageId === item.messageId ? (
+                    <ActivityIndicator size="small" color={colors.primary} style={{ transform: [{ scale: 0.7 }] }} />
+                  ) : (
+                    <Ionicons
+                      name={
+                        activeSpeakingMessageId === item.messageId && isVoicePlaying
+                          ? "volume-high"
+                          : "volume-medium-outline"
+                      }
+                      size={14}
+                      color={
+                        activeSpeakingMessageId === item.messageId && isVoicePlaying
+                          ? colors.primary
+                          : colors.textMuted
+                      }
+                    />
+                  )}
                 </TouchableOpacity>
                 <Text style={[styles.timestamp, { color: colors.textMuted }]}>
                   {formatTime(item.createdAt)}
@@ -581,8 +614,8 @@ export default function AICompanionScreen() {
   const isYounger = ageGroup === "13-18";
   const emptyTitle = isYounger ? `Hey, I'm ${avatarName}!` : avatarName;
   const emptySubtitle = isYounger
-    ? "I'm always here to listen, cheer you on, or help you figure things out."
-    : "A calm space to reflect, decompress, or talk through whatever is on your mind.";
+    ? t("companion.emptyYoungerSubtitle")
+    : t("companion.emptyAdultSubtitle");
 
   const renderChatHeader = () => {
     return (
@@ -593,11 +626,11 @@ export default function AICompanionScreen() {
             <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 4 }}>
               <ShieldSafetyIcon size={20} color={colors.error} />
               <Text style={[styles.safetyBannerTitle, { color: colors.error }]}>
-                Immediate Support Available
+                {t("companion.emergencyBannerTitle")}
               </Text>
             </View>
             <Text style={styles.safetyBannerText}>
-              {avatarName} is an AI companion and cannot replace emergency help. If you feel overwhelmed, free confidential help is open 24/7.
+              {t("companion.emergencyBannerDesc", { name: avatarName })}
             </Text>
             <View style={styles.safetyBtnRow}>
               <TouchableOpacity
@@ -724,29 +757,46 @@ export default function AICompanionScreen() {
               </View>
               <Text style={[styles.headerSub, { color: colors.textSecondary }]}>
                 {isListening
-                  ? "Listening..."
-                  : isSpeaking
-                  ? "Speaking..."
+                  ? t("companion.statusListening")
+                  : isSpeaking || isVoicePlaying
+                  ? t("companion.statusSpeaking")
                   : isAiLoading
-                  ? "Thinking..."
-                  : "Online"}
+                  ? t("companion.statusThinking")
+                  : isLoadingVoice
+                  ? t("voice.playing", { defaultValue: "Generating voice..." })
+                  : t("companion.statusOnline")}
               </Text>
             </View>
           </View>
 
           <View style={styles.headerRight}>
-            {isSpeaking && (
+            {(isVoicePlaying || isSpeaking) && (
               <TouchableOpacity
                 onPress={() => {
+                  stopAudio().catch(() => {});
                   Speech.stop();
                   setIsSpeaking(false);
                 }}
-                style={styles.headerIconBtn}
+                style={[styles.headerIconBtn, { backgroundColor: colors.primary + "15" }]}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessibilityLabel="Stop audio playback"
               >
-                <Ionicons name="volume-mute-outline" size={20} color={colors.primary} />
+                <Ionicons name="volume-mute" size={19} color={colors.primary} />
               </TouchableOpacity>
             )}
+
+            <TouchableOpacity
+              onPress={() => setVoiceEnabled(!voiceEnabled)}
+              style={styles.headerIconBtn}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityLabel={voiceEnabled ? "Mute AI Voice" : "Unmute AI Voice"}
+            >
+              <Ionicons
+                name={voiceEnabled ? "volume-high-outline" : "volume-mute-outline"}
+                size={19}
+                color={voiceEnabled ? colors.primary : colors.textMuted}
+              />
+            </TouchableOpacity>
 
             <TouchableOpacity
               onPress={() => router.push("/(auth)/onboarding/emergency")}
@@ -780,14 +830,19 @@ export default function AICompanionScreen() {
                 {emptySubtitle}
               </Text>
               <Text style={[styles.starterTitle, { color: colors.primary }]}>
-                Tap a suggestion to start chatting:
+                {t("companion.starterPromptTitle")}
               </Text>
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={styles.promptsScroll}
               >
-                {STARTER_PROMPTS.map((prompt) => (
+                {[
+                  { id: "stressed", text: t("companion.promptStressed"), icon: "leaf-outline" },
+                  { id: "day", text: t("companion.promptDay"), icon: "calendar-outline" },
+                  { id: "motivate", text: t("companion.promptMotivate"), icon: "sparkles-outline" },
+                  { id: "talk", text: t("companion.promptTalk"), icon: "chatbubble-ellipses-outline" },
+                ].map((prompt) => (
                   <TouchableOpacity
                     key={prompt.id}
                     onPress={() => handleStarterPromptPress(prompt.text)}
@@ -899,7 +954,7 @@ export default function AICompanionScreen() {
               ]}
               value={inputVal}
               onChangeText={setInputVal}
-              placeholder={isListening ? "Listening to your voice..." : `Message ${avatarName}...`}
+              placeholder={isListening ? t("companion.voiceActive") : t("companion.inputPlaceholder", { name: avatarName })}
               placeholderTextColor={isListening ? colors.primary : colors.textMuted}
               multiline
               blurOnSubmit={false}
@@ -958,7 +1013,7 @@ export default function AICompanionScreen() {
             <View style={styles.sheetHeader}>
               <View style={styles.sheetHandle} />
             </View>
-            <Text style={[styles.sheetTitle, { color: colors.text }]}>Message Actions</Text>
+            <Text style={[styles.sheetTitle, { color: colors.text }]}>{t("companion.messageActionsTitle")}</Text>
 
             <View style={styles.sheetOptionRow}>
               {REACTION_TYPES.map((reaction) => (
@@ -981,7 +1036,7 @@ export default function AICompanionScreen() {
                 color={colors.text}
                 style={{ marginRight: 12 }}
               />
-              <Text style={[styles.sheetActionText, { color: colors.text }]}>Copy Text</Text>
+              <Text style={[styles.sheetActionText, { color: colors.text }]}>{t("companion.copyText")}</Text>
             </TouchableOpacity>
 
             <TouchableOpacity style={styles.sheetActionItem} onPress={() => handleReadAloud()}>
@@ -991,7 +1046,7 @@ export default function AICompanionScreen() {
                 color={colors.text}
                 style={{ marginRight: 12 }}
               />
-              <Text style={[styles.sheetActionText, { color: colors.text }]}>Read Aloud</Text>
+              <Text style={[styles.sheetActionText, { color: colors.text }]}>{t("companion.readAloud")}</Text>
             </TouchableOpacity>
 
             <TouchableOpacity style={styles.sheetActionItem} onPress={handleShareMessage}>
@@ -1001,7 +1056,7 @@ export default function AICompanionScreen() {
                 color={colors.text}
                 style={{ marginRight: 12 }}
               />
-              <Text style={[styles.sheetActionText, { color: colors.text }]}>Share Message</Text>
+              <Text style={[styles.sheetActionText, { color: colors.text }]}>{t("companion.shareMessage")}</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -1015,7 +1070,7 @@ export default function AICompanionScreen() {
                 style={{ marginRight: 12 }}
               />
               <Text style={[styles.sheetActionText, { color: colors.error || "#EF4444" }]}>
-                Cancel
+                {t("companion.cancel")}
               </Text>
             </TouchableOpacity>
           </View>

@@ -13,12 +13,15 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ShieldSafetyIcon } from "@/components/svg/system";
 
+import { useLanguage } from "@/context/LanguageContext";
+
 export default function TabLayout() {
   const { user, logout } = useAppAuth();
   const router = useRouter();
   const [dismissedEmergency, setDismissedEmergency] = useState(false);
   const insets = useSafeAreaInsets();
   const colors = useThemeColors();
+  const { t } = useLanguage();
 
   const appUser = useQuery(api.users.getByClerkId, user?.id ? {
     clerkId: user.id,
@@ -122,7 +125,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          title: "Home",
+          title: t("nav.home"),
           tabBarIcon: ({ color, focused }) => (
             <Ionicons name={focused ? "home" : "home-outline"} size={24} color={color} />
           ),
@@ -131,7 +134,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="tools"
         options={{
-          title: "Tools",
+          title: t("nav.tools"),
           href: isScreeningComplete ? undefined : null,
           tabBarIcon: ({ color, focused }) => (
             <Ionicons name={focused ? "apps" : "apps-outline"} size={24} color={color} />
@@ -141,7 +144,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="insights"
         options={{
-          title: "Insights",
+          title: t("nav.insights"),
           href: isScreeningComplete ? undefined : null,
           tabBarIcon: ({ color, focused }) => (
             <Ionicons name={focused ? "stats-chart" : "stats-chart-outline"} size={24} color={color} />
@@ -151,7 +154,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="profile"
         options={{
-          title: "Profile",
+          title: t("nav.profile"),
           tabBarIcon: ({ color, focused }) => (
             <Ionicons name={focused ? "person" : "person-outline"} size={24} color={color} />
           ),

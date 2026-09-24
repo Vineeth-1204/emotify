@@ -15,6 +15,9 @@ import * as SecureStore from "expo-secure-store";
 import * as LocalAuthentication from "expo-local-authentication";
 import { useAvatar } from "@/context/AvatarContext";
 import { MitraAvatar } from "@/components/avatar/MitraAvatar";
+import { useLanguage } from "@/context/LanguageContext";
+import { useVoice } from "@/context/VoiceContext";
+import { VoiceSettingsModal } from "@/components/voice/VoiceSettingsModal";
 
 const { width } = Dimensions.get('window');
 
@@ -28,19 +31,23 @@ export default function ProfileScreen() {
   const dbUser = useQuery(api.users.getByClerkId, userId ? { clerkId: userId } : "skip");
   const exportData = useQuery(api.insights.getDailyStats, userId ? { userId: userId } : "skip");
 
+  const { t, language, setLanguage, supportedLanguages, activeLanguageOption } = useLanguage();
   const { avatarName, setAvatarName } = useAvatar();
+  const { voiceEnabled, setVoiceEnabled, selectedVoice } = useVoice();
   const [showRenameModal, setShowRenameModal] = useState(false);
+  const [showLanguageModal, setShowLanguageModal] = useState(false);
+  const [showVoiceModal, setShowVoiceModal] = useState(false);
   const [newCompanionName, setNewCompanionName] = useState(avatarName);
   const [isExporting, setIsExporting] = useState(false);
 
   const handleSaveCompanionName = async () => {
     if (newCompanionName.trim().length === 0) {
-      Alert.alert("Name Required", "Please enter a name for your companion.");
+      Alert.alert(t("common.error"), t("profile.renameErrorEmpty"));
       return;
     }
     await setAvatarName(newCompanionName.trim());
     setShowRenameModal(false);
-    Alert.alert("Updated!", `Your companion is now named ${newCompanionName.trim()}.`);
+    Alert.alert(t("common.success"), t("profile.renameSuccess"));
   };
 
   const wellnessProfile = useQuery(api.wellness.getProfile, { userId: userId ?? "" });
@@ -189,20 +196,20 @@ export default function ProfileScreen() {
           </View>
           <Text style={styles.nameText}>{dbUser.alias || "User"}</Text>
           <Text style={styles.emailText}>{email}</Text>
-          <Text style={[styles.headerMessage, { color: colors.primary }]}>You’re doing great — keep going</Text>
+          <Text style={[styles.headerMessage, { color: colors.primary }]}>{t("profile.headerStatus")}</Text>
         </View>
 
         {/* Wellness Identity Section */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>YOUR WELLNESS IDENTITY</Text>
-            <Text style={styles.sectionSubtitle}>Updated today based on your logs</Text>
+            <Text style={styles.sectionTitle}>{t("profile.wellnessIdentityTitle")}</Text>
+            <Text style={styles.sectionSubtitle}>{t("profile.wellnessIdentitySubtitle")}</Text>
           </View>
 
           <View style={styles.identityGrid}>
             <IdentityCard
               icon="leaf"
-              label="PERSONAL STYLE"
+              label={t("profile.personalStyle")}
               color={colors.primary}
               traits={wellnessProfile?.personality_traits}
               loading={!wellnessProfile}
@@ -210,7 +217,7 @@ export default function ProfileScreen() {
             />
             <IdentityCard
               icon="chatbubble"
-              label="MOOD PATTERN"
+              label={t("profile.moodPattern")}
               color={colors.secondary}
               value={wellnessProfile?.mood_pattern}
               loading={!wellnessProfile}
@@ -218,7 +225,7 @@ export default function ProfileScreen() {
             />
             <IdentityCard
               icon="flash"
-              label="ENERGY PATTERN"
+              label={t("profile.energyPattern")}
               color={colors.accent || "#FFB6C1"}
               value={wellnessProfile?.energy_pattern}
               loading={!wellnessProfile}
@@ -226,7 +233,7 @@ export default function ProfileScreen() {
             />
             <IdentityCard
               icon="checkmark-circle"
-              label="WELLNESS GOALS"
+              label={t("profile.wellnessGoals")}
               color={colors.warning || "#F59E0B"}
               traits={wellnessProfile?.wellness_goals}
               loading={!wellnessProfile}
@@ -237,7 +244,7 @@ export default function ProfileScreen() {
 
         {/* Companion Customization Section */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>YOUR COMPANION</Text>
+          <Text style={styles.sectionTitle}>{t("profile.companionTitle")}</Text>
           <View style={[styles.premiumCard, { padding: Theme.spacing.md }]}>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
@@ -249,7 +256,7 @@ export default function ProfileScreen() {
                     {avatarName}
                   </Text>
                   <Text style={{ fontFamily: Theme.fontFamily.medium, fontSize: 12, color: colors.textSecondary, marginTop: 2 }} numberOfLines={1}>
-                    Your supportive AI companion
+                    {t("profile.companionSubtitle")}
                   </Text>
                 </View>
               </View>
@@ -273,33 +280,79 @@ export default function ProfileScreen() {
               >
                 <Ionicons name="pencil" size={13} color={colors.primary} />
                 <Text style={{ fontFamily: Theme.fontFamily.bold, fontSize: 13, color: colors.primary }}>
-                  Rename
+                  {t("profile.renameCompanion")}
                 </Text>
               </TouchableOpacity>
             </View>
+
+            <View style={styles.divider} />
+
+            {/* AI Voice Toggle Row */}
+            <View style={[styles.row, { paddingVertical: 4 }]}>
+              <View style={[styles.rowLeft, { flex: 1 }]}>
+                <Ionicons name="volume-high-outline" size={18} color={colors.textSecondary} style={styles.icon} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.label}>{t("voice.enableVoice")}</Text>
+                  <Text style={{ fontFamily: Theme.fontFamily.medium, fontSize: 11, color: colors.textSecondary, marginTop: 1 }}>
+                    {t("voice.enableVoiceDesc")}
+                  </Text>
+                </View>
+              </View>
+              <Switch
+                value={voiceEnabled}
+                onValueChange={setVoiceEnabled}
+                trackColor={{ false: "#767577", true: colors.primary }}
+                thumbColor={voiceEnabled ? colors.white : "#f4f3f4"}
+              />
+            </View>
+
+            {/* Voice Selection Row */}
+            {voiceEnabled && (
+              <>
+                <View style={styles.divider} />
+                <TouchableOpacity
+                  style={[styles.row, { paddingVertical: 4 }]}
+                  onPress={() => setShowVoiceModal(true)}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.rowLeft}>
+                    <Ionicons name="mic-outline" size={18} color={colors.primary} style={styles.icon} />
+                    <Text style={styles.label}>{t("voice.selectVoice")}</Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <View style={{ backgroundColor: colors.primary + '14', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 }}>
+                      <Text style={{ fontFamily: Theme.fontFamily.bold, fontSize: 12, color: colors.primary }}>
+                        {t(`voice.${selectedVoice.id}`, { defaultValue: selectedVoice.displayName })}
+                      </Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
+                  </View>
+                </TouchableOpacity>
+              </>
+            )}
           </View>
         </View>
 
         {/* Account Details Section */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>ACCOUNT DETAILS</Text>
+          <Text style={styles.sectionTitle}>{t("profile.accountDetailsTitle")}</Text>
           <View style={styles.premiumCard}>
-            <DetailRow icon="person-outline" label="Age" value={dbUser.age?.toString() || "-"} colors={colors} styles={styles} />
+            <DetailRow icon="person-outline" label={t("profile.age")} value={dbUser.age?.toString() || "-"} colors={colors} styles={styles} />
             <View style={styles.divider} />
-            <DetailRow icon="school-outline" label="Campus" value={dbUser.campus || "-"} colors={colors} styles={styles} />
+            <DetailRow icon="school-outline" label={t("profile.campus")} value={dbUser.campus || "-"} colors={colors} styles={styles} />
             <View style={styles.divider} />
-            <DetailRow icon="business-outline" label="Department" value={dbUser.department || "-"} colors={colors} styles={styles} />
+            <DetailRow icon="business-outline" label={t("profile.department")} value={dbUser.department || "-"} colors={colors} styles={styles} />
           </View>
         </View>
 
         {/* Sessions Section */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>SESSIONS</Text>
+          <Text style={styles.sectionTitle}>{t("profile.sessionsTitle")}</Text>
           <View style={styles.premiumCard}>
             <DetailRow
               icon="time-outline"
-              label="Last Login"
-              value={dbUser.lastLoginAt ? new Date(dbUser.lastLoginAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : "Just now"}
+              label={t("profile.lastLogin")}
+              value={dbUser.lastLoginAt ? new Date(dbUser.lastLoginAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : t("profile.justNow")}
               colors={colors}
               styles={styles}
             />
@@ -308,12 +361,12 @@ export default function ProfileScreen() {
 
         {/* Settings & Security Section */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>SETTINGS & SECURITY</Text>
+          <Text style={styles.sectionTitle}>{t("profile.settingsTitle")}</Text>
           <View style={styles.premiumCard}>
             <View style={styles.row}>
               <View style={styles.rowLeft}>
                 <Ionicons name="finger-print-outline" size={18} color={colors.textSecondary} style={styles.icon} />
-                <Text style={styles.label}>Biometric Login</Text>
+                <Text style={styles.label}>{t("profile.biometricLogin")}</Text>
               </View>
               <Switch
                 value={biometricsEnabled}
@@ -322,12 +375,27 @@ export default function ProfileScreen() {
                 thumbColor={biometricsEnabled ? colors.white : "#f4f3f4"}
               />
             </View>
+            <View style={styles.divider} />
+            <TouchableOpacity
+              style={styles.row}
+              onPress={() => setShowLanguageModal(true)}
+              activeOpacity={0.7}
+            >
+              <View style={styles.rowLeft}>
+                <Ionicons name="globe-outline" size={18} color={colors.textSecondary} style={styles.icon} />
+                <Text style={styles.label}>{t("profile.language")}</Text>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Text style={styles.value}>{activeLanguageOption.nativeName}</Text>
+                <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
+              </View>
+            </TouchableOpacity>
           </View>
         </View>
 
         {/* Help & Support Section */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>HELP & SUPPORT</Text>
+          <Text style={styles.sectionTitle}>{t("profile.crisisTitle")}</Text>
           <TouchableOpacity
             style={styles.crisisCard}
             onPress={handleCrisisCall}
@@ -337,13 +405,13 @@ export default function ProfileScreen() {
               <View style={styles.crisisIconCircle}>
                 <Ionicons name="call" size={18} color={colors.error || "#EF4444"} />
               </View>
-              <Text style={styles.crisisTitle}>Crisis Support Helpline</Text>
+              <Text style={styles.crisisTitle}>{t("profile.crisisTitle")}</Text>
             </View>
             <Text style={styles.crisisDesc}>
-              Get immediate, confidential assistance during high distress. Tap to view campus support and emergency contact numbers.
+              {t("profile.crisisDesc")}
             </Text>
             <View style={styles.crisisButton}>
-              <Text style={styles.crisisButtonText}>Get Help Now</Text>
+              <Text style={styles.crisisButtonText}>{t("profile.getHelpNow")}</Text>
               <Ionicons name="arrow-forward" size={14} color="#FFFFFF" />
             </View>
           </TouchableOpacity>
@@ -351,19 +419,19 @@ export default function ProfileScreen() {
 
         {/* Data Management Export Section */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>DATA MANAGEMENT</Text>
+          <Text style={styles.sectionTitle}>{t("profile.dataManagementTitle")}</Text>
           <View style={[styles.premiumCard, { padding: Theme.spacing.md }]}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 }}>
               <View style={[styles.iconCircleMini, { backgroundColor: colors.primary + '12' }]}>
                 <Ionicons name="document-text-outline" size={16} color={colors.primary} />
               </View>
-              <Text style={styles.managementTitle}>Export Personal Data</Text>
+              <Text style={styles.managementTitle}>{t("profile.exportPersonalData")}</Text>
             </View>
             <Text style={styles.managementDesc}>
-              Download all your clinical check-ins and wellbeing questionnaire scores as a secure CSV spreadsheet.
+              {t("profile.exportDesc")}
             </Text>
             <Button
-              title={isExporting ? "Generating CSV..." : "Export Logs (CSV)"}
+              title={isExporting ? t("profile.exportingBtn") : t("profile.exportBtn")}
               onPress={handleExportData}
               variant="outline"
               size="sm"
@@ -377,7 +445,7 @@ export default function ProfileScreen() {
 
         <View style={{ height: 20 }} />
         <Button
-          title="Sign Out"
+          title={t("profile.signOutBtn")}
           onPress={handleSignOut}
           variant="outline"
           style={styles.signOutBtn}
@@ -400,16 +468,16 @@ export default function ProfileScreen() {
             <View style={{ alignItems: 'center', marginBottom: 16 }}>
               <MitraAvatar state="thinking" size="md" />
             </View>
-            <Text style={styles.renameModalTitle}>Name Your Companion</Text>
+            <Text style={styles.renameModalTitle}>{t("profile.renameModalTitle")}</Text>
             <Text style={styles.renameModalSubtitle}>
-              Give your companion a custom name that feels comforting and personal to you.
+              {t("profile.renameModalSubtitle")}
             </Text>
 
             <TextInput
               style={[styles.renameInput, { borderColor: colors.primary + '40', color: colors.text }]}
               value={newCompanionName}
               onChangeText={setNewCompanionName}
-              placeholder="Companion Name (e.g. Mitra, Leo, Aria)"
+              placeholder={t("profile.renameInputPlaceholder")}
               placeholderTextColor={colors.textSecondary}
               maxLength={20}
               autoFocus
@@ -420,19 +488,98 @@ export default function ProfileScreen() {
                 style={[styles.renameCancelBtn, { borderColor: '#E2E8F0' }]}
                 onPress={() => setShowRenameModal(false)}
               >
-                <Text style={[styles.renameCancelBtnText, { color: colors.textSecondary }]}>Cancel</Text>
+                <Text style={[styles.renameCancelBtnText, { color: colors.textSecondary }]}>{t("common.cancel")}</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
                 style={[styles.renameSaveBtn, { backgroundColor: colors.primary }]}
                 onPress={handleSaveCompanionName}
               >
-                <Text style={styles.renameSaveBtnText}>Save Name</Text>
+                <Text style={styles.renameSaveBtnText}>{t("profile.renameSave")}</Text>
               </TouchableOpacity>
             </View>
           </View>
         </View>
       </Modal>
+
+      {/* LANGUAGE SELECTOR MODAL */}
+      <Modal
+        visible={showLanguageModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowLanguageModal(false)}
+      >
+        <View style={styles.renameModalOverlay}>
+          <View style={styles.renameModalCard}>
+            <View style={{ alignItems: 'center', marginBottom: 12 }}>
+              <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: colors.primary + '15', justifyContent: 'center', alignItems: 'center' }}>
+                <Ionicons name="globe" size={24} color={colors.primary} />
+              </View>
+            </View>
+            <Text style={styles.renameModalTitle}>{t("profile.selectLanguage")}</Text>
+            <Text style={styles.renameModalSubtitle}>
+              {t("profile.selectLanguageSubtitle")}
+            </Text>
+
+            <View style={{ gap: 8, marginBottom: 20 }}>
+              {supportedLanguages.map((lang) => {
+                const isSelected = lang.code === language;
+                return (
+                  <TouchableOpacity
+                    key={lang.code}
+                    onPress={async () => {
+                      await setLanguage(lang.code);
+                      setShowLanguageModal(false);
+                    }}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      paddingVertical: 12,
+                      paddingHorizontal: 16,
+                      borderRadius: 14,
+                      backgroundColor: isSelected ? colors.primary + '12' : '#F8FAFC',
+                      borderWidth: 1.5,
+                      borderColor: isSelected ? colors.primary : 'transparent',
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <View>
+                      <Text style={{ fontFamily: Theme.fontFamily.bold, fontSize: 15, color: colors.text }}>
+                        {lang.nativeName}
+                      </Text>
+                      <Text style={{ fontFamily: Theme.fontFamily.medium, fontSize: 12, color: colors.textSecondary }}>
+                        {lang.name}
+                      </Text>
+                    </View>
+                    <Ionicons
+                      name={isSelected ? "checkmark-circle" : "ellipse-outline"}
+                      size={20}
+                      color={isSelected ? colors.primary : colors.textMuted}
+                    />
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <TouchableOpacity
+              onPress={() => setShowLanguageModal(false)}
+              style={[styles.renameCancelBtn, { borderColor: colors.primary + '30' }]}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.renameCancelBtnText, { color: colors.textSecondary }]}>
+                {t("common.close")}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* VOICE SETTINGS MODAL */}
+      <VoiceSettingsModal
+        visible={showVoiceModal}
+        onClose={() => setShowVoiceModal(false)}
+      />
     </View>
   );
 }

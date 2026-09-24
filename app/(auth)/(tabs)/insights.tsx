@@ -4,6 +4,7 @@ import { useAppAuth } from "@/utils/auth";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useThemeColors, useStyles } from "@/context/MoodThemeContext";
+import { useLanguage } from "@/context/LanguageContext";
 import { Theme } from "@/constants/Theme";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
@@ -15,6 +16,7 @@ export default function InsightsScreen() {
   const { user } = useAppAuth();
   const colors = useThemeColors();
   const styles = useStyles(stylesFactory);
+  const { t } = useLanguage();
 
   const stats = useQuery(api.insights.getDailyStats, {
     userId: user?.id ?? "",
@@ -62,8 +64,8 @@ export default function InsightsScreen() {
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.header}>
-          <Text style={styles.title}>Your Journey</Text>
-          <Text style={styles.subtitle}>Tracking your path to emotional balance.</Text>
+          <Text style={styles.title}>{t("insights.title")}</Text>
+          <Text style={styles.subtitle}>{t("insights.subtitle")}</Text>
         </View>
 
         {/* Highlight Summary Card */}
@@ -80,7 +82,7 @@ export default function InsightsScreen() {
                   <Ionicons name="sparkles" size={18} color="#FFFFFF" />
                 </View>
                 <Text style={styles.summaryValue}>{stats.totalCalmPoints}</Text>
-                <Text style={styles.summaryLabel}>CALM POINTS</Text>
+                <Text style={styles.summaryLabel}>{t("insights.calmPoints")}</Text>
               </View>
               <View style={styles.summaryDivider} />
               <View style={styles.summaryItem}>
@@ -88,7 +90,7 @@ export default function InsightsScreen() {
                   <Ionicons name="trophy" size={18} color="#FFFFFF" />
                 </View>
                 <Text style={styles.summaryValue}>{stats.completedGoalsCount}</Text>
-                <Text style={styles.summaryLabel}>GOALS MET</Text>
+                <Text style={styles.summaryLabel}>{t("insights.goalsMet")}</Text>
               </View>
             </View>
           </LinearGradient>
@@ -101,15 +103,13 @@ export default function InsightsScreen() {
             <Ionicons name="trending-up-outline" size={18} color={colors.success} />
           </View>
           <Text style={styles.improvementText}>
-            You’ve logged mood checks consistently. Keep taking small steps.
+            {t("insights.weeklyProgressNote")}
           </Text>
         </View>
 
-
-
         {/* Mood Trend Chart */}
-        <Text style={styles.sectionTitle}>Mood Trend</Text>
-        <Text style={styles.sectionSubtitle}>Intensity tracking over recent check-ins</Text>
+        <Text style={styles.sectionTitle}>{t("insights.moodTrendTitle")}</Text>
+        <Text style={styles.sectionSubtitle}>{t("insights.moodTrendSubtitle")}</Text>
         <View style={styles.chartCard}>
           <LineChart
             data={{
@@ -134,11 +134,11 @@ export default function InsightsScreen() {
         </View>
 
         {/* Stats Grid */}
-        <Text style={styles.sectionTitle}>Activity Stats</Text>
+        <Text style={styles.sectionTitle}>{t("insights.activityStatsTitle")}</Text>
         <View style={styles.statsGrid}>
-          <StatCard icon="chatbubble-outline" color={colors.primary} value={stats.totalCheckins} label="CHECK-INS" styles={styles} />
-          <StatCard icon="leaf-outline" color={colors.accent || "#FFB6C1"} value={stats.reframesCount} label="REFRAMES" styles={styles} />
-          <StatCard icon="time-outline" color={colors.secondary} value={`${stats.jpmrMinutes}m`} label="RELAXATION" styles={styles} />
+          <StatCard icon="chatbubble-outline" color={colors.primary} value={stats.totalCheckins} label={t("insights.checkins")} styles={styles} />
+          <StatCard icon="leaf-outline" color={colors.accent || "#FFB6C1"} value={stats.reframesCount} label={t("insights.reframes")} styles={styles} />
+          <StatCard icon="time-outline" color={colors.secondary} value={`${stats.jpmrMinutes}m`} label={t("insights.relaxation")} styles={styles} />
         </View>
 
         <View style={{ height: 120 }} />

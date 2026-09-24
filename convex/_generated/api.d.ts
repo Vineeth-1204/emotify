@@ -31,6 +31,7 @@ import type * as reframes from "../reframes.js";
 import type * as reinforcement from "../reinforcement.js";
 import type * as screening from "../screening.js";
 import type * as triage from "../triage.js";
+import type * as tts from "../tts.js";
 import type * as users from "../users.js";
 import type * as wellness from "../wellness.js";
 
@@ -64,6 +65,7 @@ declare const fullApi: ApiFromModules<{
   reinforcement: typeof reinforcement;
   screening: typeof screening;
   triage: typeof triage;
+  tts: typeof tts;
   users: typeof users;
   wellness: typeof wellness;
 }>;

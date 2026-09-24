@@ -15,6 +15,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
 import * as SecureStore from "expo-secure-store";
 import { useAvatar } from "@/context/AvatarContext";
+import { useLanguage } from "@/context/LanguageContext";
 import { MitraAvatar } from "@/components/avatar/MitraAvatar";
 import { CalmPointToken, PlantProgress } from "@/components/svg/system";
 import { HappyEmotionIcon, CalmEmotionIcon, SadEmotionIcon, WorriedEmotionIcon, renderEmotionIcon } from "@/components/svg/emotions";
@@ -212,6 +213,7 @@ export default function DashboardScreen() {
   const colors = useThemeColors();
   const styles = useStyles(stylesFactory as any) as any;
   const { avatarState, setAvatarState, ageCohort, getDialogue, avatarName } = useAvatar();
+  const { t } = useLanguage();
 
   const [hasCheckedInToday, setHasCheckedInToday] = React.useState(true);
   const [showCheckInModal, setShowCheckInModal] = React.useState(false);
@@ -526,16 +528,17 @@ export default function DashboardScreen() {
       setHasCheckedInToday(true);
 
       const cardColor = emotionId === 'happy' ? '#F59E0B' : emotionId === 'calm' ? '#10B981' : emotionId === 'sad' ? '#3B82F6' : '#8B5CF6';
+      const moodLabel = emotionId === 'happy' ? t("home.moodGood") : emotionId === 'calm' ? t("home.moodCalm") : emotionId === 'sad' ? t("home.moodLow") : t("home.moodHeavy");
       setThemedMoodAlert({
         visible: true,
-        title: "Mood Logged!",
-        message: `${avatarName} and your dashboard have updated to support you.`,
+        title: t("home.moodModalTitle"),
+        message: t("home.moodModalSubtitle", { mood: moodLabel }),
         emotionId: emotionId,
         color: cardColor,
       });
     } catch (e) {
       console.error(e);
-      Alert.alert("Error", "Could not save your check-in. Please try again.");
+      Alert.alert(t("common.error"), "Could not save your check-in. Please try again.");
     } finally {
       setIsSubmittingCheckIn(false);
     }
@@ -543,10 +546,10 @@ export default function DashboardScreen() {
 
   const getGreeting = () => {
     const hours = new Date().getHours();
-    if (hours >= 5 && hours < 12) return "Good Morning";
-    if (hours >= 12 && hours < 17) return "Good Afternoon";
-    if (hours >= 17 && hours < 22) return "Good Evening";
-    return "Good Night";
+    if (hours >= 5 && hours < 12) return t("home.greetingMorning");
+    if (hours >= 12 && hours < 17) return t("home.greetingAfternoon");
+    if (hours >= 17 && hours < 22) return t("home.greetingEvening");
+    return t("home.greetingNight");
   };
 
   return (
@@ -615,7 +618,7 @@ export default function DashboardScreen() {
                 <View style={[styles.chatCtaPill, { backgroundColor: colors.primary + '12' }]}>
                   <Ionicons name="chatbubble-ellipses" size={13} color={colors.primary} />
                   <Text style={[styles.chatCtaText, { color: colors.primary }]}>
-                    Talk with {avatarName}
+                    {t("home.companionCta", { companionName: avatarName })}
                   </Text>
                   <Ionicons name="chevron-forward" size={13} color={colors.primary} />
                 </View>
@@ -634,7 +637,7 @@ export default function DashboardScreen() {
                   size={20} 
                 />
                 <Text style={styles.growthText}>
-                  {streakInfo?.currentStreak ? `${streakInfo.currentStreak} day streak` : "Start your wellness streak"}
+                  {streakInfo?.currentStreak ? t("home.moodStreakDays", { count: streakInfo.currentStreak }) : t("home.moodStreak")}
                 </Text>
               </View>
             </View>
@@ -651,19 +654,19 @@ export default function DashboardScreen() {
             <View style={styles.inlineCheckInHeaderRow}>
               <View style={styles.sparkleBadge}>
                 <Ionicons name="sparkles" size={12} color={colors.primary} />
-                <Text style={styles.sparkleBadgeText}>DAILY MOOD CHECK-IN</Text>
+                <Text style={styles.sparkleBadgeText}>{t("home.moodStreak")}</Text>
               </View>
             </View>
-            <Text style={styles.inlineCheckInTitle}>How are you feeling right now, {alias}?</Text>
-            <Text style={styles.inlineCheckInSubtitle}>Tap the card that best captures your state:</Text>
+            <Text style={styles.inlineCheckInTitle}>{t("home.moodPrompt")}</Text>
+            <Text style={styles.inlineCheckInSubtitle}>{t("home.moodSubtitle")}</Text>
 
             {/* 4 Cards Grid */}
             <View style={styles.homeCardsGrid}>
               {[
                 { 
                   id: "good", 
-                  title: "Good", 
-                  sub: "Energized, joyful", 
+                  title: t("home.moodGood"), 
+                  sub: t("home.moodDescGood"), 
                   backendCode: "happy", 
                   color: "#F59E0B",
                   bgSelected: "#FFFBEB",
@@ -671,8 +674,8 @@ export default function DashboardScreen() {
                 },
                 { 
                   id: "calm", 
-                  title: "Calm", 
-                  sub: "Peaceful, centered", 
+                  title: t("home.moodCalm"), 
+                  sub: t("home.moodDescCalm"), 
                   backendCode: "calm", 
                   color: "#10B981",
                   bgSelected: "#F0FDF4",
@@ -680,8 +683,8 @@ export default function DashboardScreen() {
                 },
                 { 
                   id: "low", 
-                  title: "Low", 
-                  sub: "Down, tired, drained", 
+                  title: t("home.moodLow"), 
+                  sub: t("home.moodDescLow"), 
                   backendCode: "sad", 
                   color: "#3B82F6",
                   bgSelected: "#EFF6FF",
@@ -689,8 +692,8 @@ export default function DashboardScreen() {
                 },
                 { 
                   id: "heavy", 
-                  title: "Heavy", 
-                  sub: "Worried, tense, angry", 
+                  title: t("home.moodHeavy"), 
+                  sub: t("home.moodDescHeavy"), 
                   backendCode: "worried", 
                   color: "#8B5CF6",
                   bgSelected: "#FAF5FF",
@@ -758,7 +761,7 @@ export default function DashboardScreen() {
                 </View>
 
                 <Button
-                  title="Confirm Check-In"
+                  title={t("common.confirm")}
                   onPress={() => {
                     if (selectedEmotionId) {
                       handleInlineCheckIn(selectedEmotionId, selectedIntensity);
@@ -845,7 +848,7 @@ export default function DashboardScreen() {
                     <Ionicons name="sparkles" size={16} color={colors.primary} />
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.companionGrowthTitle}>DAILY INSPIRATION</Text>
+                    <Text style={styles.companionGrowthTitle}>{t("home.dailyInspirationTitle")}</Text>
                     <Text style={styles.companionGrowthText}>{reinforcement.message}</Text>
                   </View>
                 </View>
@@ -856,67 +859,72 @@ export default function DashboardScreen() {
         )}
 
         {/* Visual Wellbeing Metrics (Humanized, Student-Friendly) */}
-        {isScreeningComplete && (
-          <View style={styles.scoreRow}>
-            {/* Emotional Balance card */}
-            <View style={styles.scoreCard}>
-              <View style={styles.scoreHeaderRow}>
-                <View style={[styles.iconCircle, { backgroundColor: colors.primary + '15' }]}>
-                  <Ionicons name="pulse-outline" size={18} color={colors.primary} />
-                </View>
-                <View style={styles.scoreBadgeMini}>
-                  <Text style={[styles.scoreBadgeMiniText, { color: phq9Score >= 10 ? colors.error : colors.success }]}>
-                    {phq9Score <= 4 ? "Optimal" : phq9Score <= 9 ? "Good" : phq9Score <= 14 ? "Balanced" : "Needs Care"}
-                  </Text>
-                </View>
-              </View>
-              <Text style={styles.scoreValue}>{phq9Score}<Text style={styles.scoreMax}>/27</Text></Text>
-              <Text style={styles.scoreLabel}>EMOTIONAL BALANCE</Text>
+        {isScreeningComplete && (() => {
+          const emotionalPercentage = Math.round(((27 - phq9Score) / 27) * 100);
+          const calmnessPercentage = Math.round(((21 - gad7Score) / 21) * 100);
 
-              <View style={styles.metricTrack}>
-                <View
-                  style={[
-                    styles.metricFill,
-                    {
-                      width: `${Math.min((phq9Score / 27) * 100, 100)}%`,
-                      backgroundColor: phq9Score <= 9 ? colors.success : phq9Score <= 14 ? colors.warning : colors.error
-                    }
-                  ]}
-                />
+          return (
+            <View style={styles.scoreRow}>
+              {/* Emotional Balance card */}
+              <View style={styles.scoreCard}>
+                <View style={styles.scoreHeaderRow}>
+                  <View style={[styles.iconCircle, { backgroundColor: colors.primary + '15' }]}>
+                    <Ionicons name="pulse-outline" size={18} color={colors.primary} />
+                  </View>
+                  <View style={styles.scoreBadgeMini}>
+                    <Text style={[styles.scoreBadgeMiniText, { color: phq9Score >= 10 ? colors.error : colors.success }]}>
+                      {phq9Score <= 4 ? t("home.badgeOptimal") : phq9Score <= 9 ? t("home.badgeGood") : phq9Score <= 14 ? t("home.badgeBalanced") : t("home.badgeNeedsCare")}
+                    </Text>
+                  </View>
+                </View>
+                <Text style={styles.scoreValue}>{emotionalPercentage}<Text style={styles.scoreMax}>%</Text></Text>
+                <Text style={styles.scoreLabel}>{t("home.emotionalBalance")}</Text>
+
+                <View style={styles.metricTrack}>
+                  <View
+                    style={[
+                      styles.metricFill,
+                      {
+                        width: `${Math.min(Math.max(emotionalPercentage, 5), 100)}%`,
+                        backgroundColor: phq9Score <= 9 ? colors.success : phq9Score <= 14 ? colors.warning : colors.error
+                      }
+                    ]}
+                  />
+                </View>
+                <Text style={styles.metricDesc}>{t("home.emotionalBalanceDesc")}</Text>
               </View>
-              <Text style={styles.metricDesc}>Mood vitality & energy</Text>
+
+              {/* Mind Calmness card */}
+              <View style={styles.scoreCard}>
+                <View style={styles.scoreHeaderRow}>
+                  <View style={[styles.iconCircle, { backgroundColor: colors.secondary + '15' }]}>
+                    <Ionicons name="heart-outline" size={18} color={colors.secondary} />
+                  </View>
+                  <View style={styles.scoreBadgeMini}>
+                    <Text style={[styles.scoreBadgeMiniText, { color: gad7Score >= 10 ? colors.error : colors.success }]}>
+                      {gad7Score <= 4 ? t("home.badgeSerene") : gad7Score <= 9 ? t("home.badgeCalm") : gad7Score <= 14 ? t("home.badgeMildTension") : t("home.badgeNeedsCare")}
+                    </Text>
+                  </View>
+                </View>
+                <Text style={styles.scoreValue}>{calmnessPercentage}<Text style={styles.scoreMax}>%</Text></Text>
+                <Text style={styles.scoreLabel}>{t("home.mindCalmness")}</Text>
+
+                <View style={styles.metricTrack}>
+                  <View
+                    style={[
+                      styles.metricFill,
+                      {
+                        width: `${Math.min(Math.max(calmnessPercentage, 5), 100)}%`,
+                        backgroundColor: gad7Score <= 7 ? colors.success : gad7Score <= 12 ? colors.warning : colors.error
+                      }
+                    ]}
+                  />
+                </View>
+                <Text style={styles.metricDesc}>{t("home.mindCalmnessDesc")}</Text>
+              </View>
             </View>
-
-            {/* Mind Calmness card */}
-            <View style={styles.scoreCard}>
-              <View style={styles.scoreHeaderRow}>
-                <View style={[styles.iconCircle, { backgroundColor: colors.secondary + '15' }]}>
-                  <Ionicons name="heart-outline" size={18} color={colors.secondary} />
-                </View>
-                <View style={styles.scoreBadgeMini}>
-                  <Text style={[styles.scoreBadgeMiniText, { color: gad7Score >= 10 ? colors.error : colors.success }]}>
-                    {gad7Score <= 4 ? "Serene" : gad7Score <= 9 ? "Calm" : gad7Score <= 14 ? "Mild Tension" : "Needs Care"}
-                  </Text>
-                </View>
-              </View>
-              <Text style={styles.scoreValue}>{gad7Score}<Text style={styles.scoreMax}>/21</Text></Text>
-              <Text style={styles.scoreLabel}>MIND CALMNESS</Text>
-
-              <View style={styles.metricTrack}>
-                <View
-                  style={[
-                    styles.metricFill,
-                    {
-                      width: `${Math.min((gad7Score / 21) * 100, 100)}%`,
-                      backgroundColor: gad7Score <= 7 ? colors.success : gad7Score <= 12 ? colors.warning : colors.error
-                    }
-                  ]}
-                />
-              </View>
-              <Text style={styles.metricDesc}>Inner peace & clarity</Text>
-            </View>
-          </View>
-        )}
+          );
+        })()}
 
         {/* Clinical Appointments Section */}
         {isScreeningComplete && (
@@ -990,7 +998,7 @@ export default function DashboardScreen() {
           </View>
         )}
 
-        <Text style={styles.sectionTitle}>Therapeutic Tools</Text>
+        <Text style={styles.sectionTitle}>{t("home.quickToolsTitle")}</Text>
 
         {/* Tools Grid */}
         <View style={styles.toolsGrid}>
@@ -1168,7 +1176,7 @@ export default function DashboardScreen() {
                 activeOpacity={0.85}
               >
                 <Ionicons name="chatbubble-ellipses" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
-                <Text style={styles.themedAlertPrimaryBtnText}>Talk with {avatarName}</Text>
+                <Text style={styles.themedAlertPrimaryBtnText}>{t("home.companionCta", { companionName: avatarName })}</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -1177,7 +1185,7 @@ export default function DashboardScreen() {
                 activeOpacity={0.7}
               >
                 <Text style={[styles.themedAlertSecondaryBtnText, { color: colors.textSecondary }]}>
-                  Continue to Dashboard
+                  {t("home.moodModalConfirm")}
                 </Text>
               </TouchableOpacity>
             </View>

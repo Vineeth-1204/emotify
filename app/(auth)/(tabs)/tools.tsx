@@ -2,6 +2,7 @@ import React from "react";
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Dimensions, Animated, ViewStyle, TextStyle } from "react-native";
 import { useRouter } from "expo-router";
 import { useThemeColors, useStyles } from "@/context/MoodThemeContext";
+import { useLanguage } from "@/context/LanguageContext";
 import { Theme } from "@/constants/Theme";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
@@ -10,15 +11,6 @@ import { MindfulnessActivityIcon, MuscleRelaxActivityIcon, JournalActivityIcon, 
 import { CounsellorBadgeIcon } from "@/components/svg/system";
 
 const { width } = Dimensions.get('window');
-
-const CATEGORIES = [
-  { id: 'all', label: 'All', icon: 'apps-outline' },
-  { id: 'mindfulness', label: 'Mindfulness', icon: 'leaf-outline' },
-  { id: 'relaxation', label: 'Relaxation', icon: 'water-outline' },
-  { id: 'cognitive', label: 'Cognitive', icon: 'bulb-outline' },
-  { id: 'habits', label: 'Habits', icon: 'ribbon-outline' },
-  { id: 'sessions', label: 'Sessions', icon: 'people-outline' },
-];
 
 function ToolHubCard({
   tool,
@@ -84,68 +76,78 @@ export default function ToolsScreen() {
   const router = useRouter();
   const colors = useThemeColors();
   const styles = useStyles(stylesFactory);
+  const { t } = useLanguage();
   const [selectedCategory, setSelectedCategory] = React.useState('all');
+
+  const categories = [
+    { id: 'all', label: t('tools.catAll'), icon: 'apps-outline' },
+    { id: 'mindfulness', label: t('tools.catMindfulness'), icon: 'leaf-outline' },
+    { id: 'relaxation', label: t('tools.catRelaxation'), icon: 'water-outline' },
+    { id: 'cognitive', label: t('tools.catCognitive'), icon: 'bulb-outline' },
+    { id: 'habits', label: t('tools.catHabits'), icon: 'ribbon-outline' },
+    { id: 'sessions', label: t('tools.catSessions'), icon: 'people-outline' },
+  ];
 
   const tools = [
     {
       id: "emotion-map",
-      title: "Emotion Map",
-      description: "Map your feelings to body regions.",
+      title: t("tools.emotionMapTitle"),
+      description: t("tools.emotionMapDesc"),
       renderIcon: (color: string) => <MindfulnessActivityIcon size={26} color={color} />,
       route: "/(auth)/tools/emotion-map" as const,
       color: colors.primary,
       category: "mindfulness",
-      categoryText: "Body Scan",
+      categoryText: t("tools.emotionMapTag"),
     },
     {
       id: "companion",
-      title: "AI Companion",
-      description: "Chat with your supportive AI companion.",
+      title: t("tools.companionTitle"),
+      description: t("tools.companionDesc"),
       renderIcon: () => <MitraAvatar state="neutral" size="sm" />,
       route: "/(auth)/tools/companion" as const,
       color: colors.primary,
       category: "mindfulness",
-      categoryText: "Support",
+      categoryText: t("tools.companionTag"),
     },
     {
       id: "jpmr",
-      title: "Relax Now",
-      description: "Guided deep physical relaxation.",
+      title: t("tools.jpmrTitle"),
+      description: t("tools.jpmrDesc"),
       renderIcon: (color: string) => <MuscleRelaxActivityIcon size={26} color={color} />,
       route: "/(auth)/tools/jpmr" as const,
       color: colors.secondary,
       category: "relaxation",
-      categoryText: "Breathing",
+      categoryText: t("tools.jpmrTag"),
     },
     {
       id: "reframe",
-      title: "Reframe",
-      description: "Balance negative thinking patterns.",
+      title: t("tools.reframeTitle"),
+      description: t("tools.reframeDesc"),
       renderIcon: (color: string) => <JournalActivityIcon size={26} color={color} />,
       route: "/(auth)/tools/reframe" as const,
       color: colors.accent || "#FFB6C1",
       category: "cognitive",
-      categoryText: "CBT",
+      categoryText: t("tools.reframeTag"),
     },
     {
       id: "microgoals",
-      title: "MicroGoals",
-      description: "Daily habits for small wins.",
+      title: t("tools.microgoalsTitle"),
+      description: t("tools.microgoalsDesc"),
       renderIcon: (color: string) => <HabitMicrogoalIcon size={26} color={color} />,
       route: "/(auth)/tools/microgoals" as const,
       color: colors.warning || "#F59E0B",
       category: "habits",
-      categoryText: "Habits",
+      categoryText: t("tools.microgoalsTag"),
     },
     {
       id: "appointments",
-      title: "Appointments",
-      description: "Manage clinical sessions and requests.",
+      title: t("tools.appointmentsTitle"),
+      description: t("tools.appointmentsDesc"),
       renderIcon: (color: string) => <CounsellorBadgeIcon size={26} color={color} />,
       route: "/(auth)/tools/appointments" as const,
       color: colors.success || "#10b981",
       category: "sessions",
-      categoryText: "Consult",
+      categoryText: t("tools.appointmentsTag"),
     },
   ];
 
@@ -162,8 +164,8 @@ export default function ToolsScreen() {
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.header}>
-          <Text style={styles.title}>Therapy Hub</Text>
-          <Text style={styles.subtitle}>Curated tools for your mental resilience.</Text>
+          <Text style={styles.title}>{t("tools.title")}</Text>
+          <Text style={styles.subtitle}>{t("tools.subtitle")}</Text>
         </View>
 
         {/* Categories Bar */}
@@ -173,7 +175,7 @@ export default function ToolsScreen() {
           contentContainerStyle={styles.categoryScroll}
           style={styles.categoryScrollContainer}
         >
-          {CATEGORIES.map((cat) => {
+          {categories.map((cat) => {
             const isSelected = selectedCategory === cat.id;
             return (
               <TouchableOpacity
@@ -215,7 +217,7 @@ export default function ToolsScreen() {
           {filteredTools.length === 0 && (
             <View style={styles.emptyState}>
               <Ionicons name="search-outline" size={48} color={colors.textMuted} style={{ opacity: 0.5, marginBottom: 16 }} />
-              <Text style={styles.emptyText}>No tools in this category yet</Text>
+              <Text style={styles.emptyText}>{t("tools.emptyCategory")}</Text>
             </View>
           )}
         </View>

@@ -14,6 +14,8 @@ import { AuthProvider, useAppAuth } from "@/utils/auth";
 import { api } from "@/convex/_generated/api";
 import { MoodThemeProvider } from "@/context/MoodThemeContext";
 import { AvatarProvider } from "@/context/AvatarContext";
+import { LanguageProvider } from "@/context/LanguageContext";
+import { VoiceProvider } from "@/context/VoiceContext";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -113,11 +115,15 @@ function ConvexAuthWrapper() {
 
   return (
     <ConvexProviderWithAuth client={convex} useAuth={useAuth}>
-      <MoodThemeProvider>
-        <AvatarProvider>
-          <InitialLayout />
-        </AvatarProvider>
-      </MoodThemeProvider>
+      <LanguageProvider>
+        <MoodThemeProvider>
+          <AvatarProvider>
+            <VoiceProvider>
+              <InitialLayout />
+            </VoiceProvider>
+          </AvatarProvider>
+        </MoodThemeProvider>
+      </LanguageProvider>
     </ConvexProviderWithAuth>
   );
 }

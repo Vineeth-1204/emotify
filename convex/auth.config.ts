@@ -1,4 +1,4 @@
-const domain = process.env.CONVEX_SITE_URL || "https://usable-stork-789.convex.site";
+const domain = process.env.CONVEX_SITE_URL || "https://fabulous-rooster-538.convex.site";
 
 export default {
   providers: [

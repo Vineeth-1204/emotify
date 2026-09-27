@@ -20,10 +20,11 @@ import { MitraAvatar } from "@/components/avatar/MitraAvatar";
 import { CalmPointToken, PlantProgress } from "@/components/svg/system";
 import { HappyEmotionIcon, CalmEmotionIcon, SadEmotionIcon, WorriedEmotionIcon, renderEmotionIcon } from "@/components/svg/emotions";
 import { MindfulnessActivityIcon, MuscleRelaxActivityIcon, JournalActivityIcon, HabitMicrogoalIcon } from "@/components/svg/activities";
+import { ACTIVE_SCREENING_QUESTIONS_COUNT } from "@/constants/Screening";
 
 const { width } = Dimensions.get('window');
 
-const TOTAL_QUESTIONS = 47; // PHQ9:9 + GAD7:7 + PQ16:16 + WSAS:5 + ReQoL10:10
+const TOTAL_QUESTIONS = ACTIVE_SCREENING_QUESTIONS_COUNT;
 const SCREENING_STORE_KEY = "screening_progress";
 
 function getAppointmentTimeLeft(startTime: number, endTime: number, now: number): string | null {

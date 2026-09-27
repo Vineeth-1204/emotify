@@ -54,7 +54,7 @@ export async function signJwt(
     kid: "static-key-1",
   };
 
-  const convexSiteUrl = (globalThis as any).process?.env?.CONVEX_SITE_URL || "https://usable-stork-789.convex.site";
+  const convexSiteUrl = (globalThis as any).process?.env?.CONVEX_SITE_URL || "https://fabulous-rooster-538.convex.site";
 
   const enrichedPayload = {
     ...payload,

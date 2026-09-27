@@ -4,21 +4,30 @@ import type { Id } from "./_generated/dataModel";
 import { signJwt, verifyPassword, hashPassword } from "./authHelpers";
 import { logAuditEvent } from "./audit";
 
+function sanitizeUser(u: any) {
+  if (!u) return null;
+  const { password_hash, biometricToken, temp_password, ...safeUser } = u;
+  return safeUser;
+}
+
 /** Get user by ID (for compatibility with getByClerkId) */
 export const getByClerkId = query({
   args: { clerkId: v.string() },
   handler: async (ctx, args) => {
+    let user = null;
     try {
-      const user = await ctx.db.get(args.clerkId as Id<"users">);
-      if (user) return user;
+      user = await ctx.db.get(args.clerkId as Id<"users">);
+      if (user) return sanitizeUser(user);
     } catch (e) {
       // Ignore conversion error
     }
 
-    return await ctx.db
+    user = await ctx.db
       .query("users")
       .withIndex("by_clerkId", (q) => q.eq("clerkId", args.clerkId))
       .first();
+
+    return sanitizeUser(user);
   },
 });
 
@@ -46,18 +55,20 @@ export const listPatients = query({
     // Sort chronologically to determine sequential patient IDs if not yet set
     users.sort((a, b) => (a._creationTime || a.created_at || 0) - (b._creationTime || b.created_at || 0));
 
-    // Assign permanent/stable patientId first
-    let mapped = users.map((u, idx) => ({
-      ...u,
-      patientId: u.patientId || String(101 + idx),
-      temp_password: u.temp_password || "Patient123!",
-    }));
+    // Assign permanent/stable patientId first, stripping password hashes and auth secrets
+    let mapped = users.map((u, idx) => {
+      const safe = sanitizeUser(u);
+      return {
+        ...safe,
+        patientId: u.patientId || String(101 + idx),
+      };
+    });
 
     if (args.search) {
       const s = args.search.toLowerCase();
       mapped = mapped.filter(
-        (u) =>
-          u.patientId.toLowerCase().includes(s) ||
+        (u: any) =>
+          (u.patientId || "").toLowerCase().includes(s) ||
           (u.full_name || "").toLowerCase().includes(s) ||
           (u.mobile_number || "").includes(s)
       );
@@ -231,27 +242,52 @@ export const getAndClearTempPassword = mutation({
 /** Complete onboarding details */
 export const completeOnboarding = mutation({
   args: {
+    userId: v.optional(v.string()),
     alias: v.string(),
     age: v.number(),
     campus: v.string(),
     department: v.string(),
+    year: v.optional(v.string()),
+    gender: v.optional(v.string()),
     consentVersion: v.string(),
     consentTimestamp: v.number(),
     emergencyContactName: v.optional(v.string()),
     emergencyContactPhone: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    let user = null;
     const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Unauthenticated");
-
-    const user = await ctx.db.get(identity.subject as Id<"users">);
-    if (!user) throw new Error("User not found");
+    if (identity) {
+      try {
+        user = await ctx.db.get(identity.subject as Id<"users">);
+      } catch (e) {}
+      if (!user) {
+        user = await ctx.db
+          .query("users")
+          .withIndex("by_clerkId", (q) => q.eq("clerkId", identity.subject))
+          .first();
+      }
+    }
+    if (!user && args.userId) {
+      try {
+        user = await ctx.db.get(args.userId as Id<"users">);
+      } catch (e) {}
+      if (!user) {
+        user = await ctx.db
+          .query("users")
+          .withIndex("by_clerkId", (q) => q.eq("clerkId", args.userId))
+          .first();
+      }
+    }
+    if (!user) throw new Error("Unauthenticated");
 
     await ctx.db.patch(user._id, {
       alias: args.alias,
       age: args.age,
       campus: args.campus,
       department: args.department,
+      year: args.year,
+      gender: args.gender,
       consentVersion: args.consentVersion,
       consentTimestamp: args.consentTimestamp,
       emergencyContactName: args.emergencyContactName,
@@ -259,24 +295,28 @@ export const completeOnboarding = mutation({
       onboardingComplete: true,
       updated_at: Date.now(),
     });
+
+    return { success: true };
   },
 });
 
-/** Get user by ID */
+/** Get user by ID (sanitized) */
 export const getUserById = query({
   args: { userId: v.id("users") },
   handler: async (ctx, args) => {
-    return await ctx.db.get(args.userId);
+    const user = await ctx.db.get(args.userId);
+    return sanitizeUser(user);
   },
 });
 
-/** Get current user profile details */
+/** Get current user profile details (sanitized) */
 export const getCurrentUser = query({
   args: {},
   handler: async (ctx) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return null;
-    return await ctx.db.get(identity.subject as Id<"users">);
+    const user = await ctx.db.get(identity.subject as Id<"users">);
+    return sanitizeUser(user);
   },
 });
 
@@ -334,11 +374,12 @@ export const seedAdmin = mutation({
       .first();
 
     if (existing) {
-      return { message: "Admin already seeded" };
+      return { userId: existing._id, message: "Admin already seeded" };
     }
 
     const password_hash = await hashPassword("adminpassword");
-    await ctx.db.insert("users", {
+    const userId = await ctx.db.insert("users", {
+      clerkId: "seed-admin",
       full_name: "Admin User",
       mobile_number: "1234567890",
       password_hash,
@@ -352,7 +393,7 @@ export const seedAdmin = mutation({
       biometricEnabled: false,
     });
 
-    return { message: "Admin seeded successfully. Mobile: 1234567890, Password: adminpassword" };
+    return { userId, message: "Admin seeded successfully. Mobile: 1234567890, Password: adminpassword" };
   },
 });
 
@@ -412,13 +453,112 @@ export const updateLastLogin = mutation({
   },
 });
 
+/** Public Student Self-Registration */
+export const registerStudent = mutation({
+  args: {
+    full_name: v.string(),
+    mobile_number: v.string(),
+    password: v.string(),
+    email: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const fullName = args.full_name.trim();
+    if (!fullName || fullName.length < 2) {
+      return { error: "Please enter your full name (at least 2 characters)." };
+    }
+
+    const cleanMobile = args.mobile_number.replace(/\D/g, "");
+    if (cleanMobile.length !== 10) {
+      return { error: "Please enter a valid 10-digit mobile number." };
+    }
+
+    if (!args.password || args.password.length < 6) {
+      return { error: "Password must be at least 6 characters long." };
+    }
+
+    // Check duplicate identifier
+    const existing = await ctx.db
+      .query("users")
+      .withIndex("by_mobile_number", (q) => q.eq("mobile_number", cleanMobile))
+      .first();
+
+    if (existing) {
+      return { error: "This mobile number is already registered. Please sign in." };
+    }
+
+    // Hash password with bcryptjs
+    const password_hash = await hashPassword(args.password);
+
+    // Calculate sequential patientId based on all existing patients
+    const allUsers = await ctx.db.query("users").collect();
+    let maxId = 100;
+    for (const u of allUsers) {
+      if (u.patientId && !isNaN(Number(u.patientId))) {
+        maxId = Math.max(maxId, Number(u.patientId));
+      }
+    }
+    const nextPatientId = String(maxId + 1);
+
+    const now = Date.now();
+    const userId = await ctx.db.insert("users", {
+      patientId: nextPatientId,
+      full_name: fullName,
+      alias: fullName,
+      mobile_number: cleanMobile,
+      email: args.email?.trim() || undefined,
+      password_hash,
+      role: "patient",
+      status: "active",
+      is_first_login: false,
+      onboardingComplete: false,
+      screeningComplete: false,
+      biometricEnabled: false,
+      created_at: now,
+      updated_at: now,
+    });
+
+    await logAuditEvent(ctx, userId, "student_registered", `Student self-registered with patientId ${nextPatientId}`);
+
+    // Generate JWT and session immediately
+    const token = await signJwt({
+      sub: userId,
+      role: "patient",
+      mobile_number: cleanMobile,
+      full_name: fullName,
+    });
+
+    const expiresAt = now + 30 * 24 * 60 * 60 * 1000;
+    await ctx.db.insert("sessions", {
+      userId,
+      token,
+      createdAt: now,
+      expiresAt,
+    });
+
+    return {
+      token,
+      user: {
+        id: userId,
+        full_name: fullName,
+        mobile_number: cleanMobile,
+        role: "patient",
+        status: "active",
+        onboardingComplete: false,
+        screeningComplete: false,
+        is_first_login: false,
+      },
+    };
+  },
+});
+
 /** Standard Authentication: Login */
 export const login = mutation({
   args: { mobile_number: v.string(), password: v.string() },
   handler: async (ctx, args) => {
+    const cleanMobile = args.mobile_number.replace(/\D/g, "");
     const user = await ctx.db
       .query("users")
-      .withIndex("by_mobile_number", (q) => q.eq("mobile_number", args.mobile_number))
+      .withIndex("by_mobile_number", (q) => q.eq("mobile_number", cleanMobile || args.mobile_number))
       .first();
 
     if (!user) {

@@ -29,6 +29,8 @@ export default defineSchema({
     age: v.optional(v.number()),
     campus: v.optional(v.string()),
     department: v.optional(v.string()),
+    year: v.optional(v.string()),
+    gender: v.optional(v.string()),
     consentVersion: v.optional(v.string()),
     consentTimestamp: v.optional(v.number()),
     emergencyContactName: v.optional(v.string()),
@@ -90,7 +92,81 @@ export default defineSchema({
     phq9_item9_flag: v.boolean(),
     phq9_item9_score: v.number(),
     createdAt: v.number(),
+    attemptId: v.optional(v.string()),
   }).index("by_userId", ["userId"]),
+
+  screeningAttempts: defineTable({
+    userId: v.string(),
+    patientId: v.optional(v.string()),
+    status: v.string(), // "in_progress" | "completed" | "abandoned"
+    startedAt: v.number(),
+    completedAt: v.optional(v.number()),
+    instrumentVersions: v.object({
+      phq9: v.string(),
+      gad7: v.string(),
+      pq16: v.string(),
+      wsas: v.optional(v.string()),
+      reqol10: v.optional(v.string()),
+    }),
+    responses: v.object({
+      phq9: v.optional(v.record(v.string(), v.number())),
+      gad7: v.optional(v.record(v.string(), v.number())),
+      pq16: v.optional(v.record(v.string(), v.number())),
+      wsas: v.optional(v.record(v.string(), v.number())),
+      reqol10: v.optional(v.record(v.string(), v.number())),
+    }),
+    results: v.object({
+      phq9: v.object({
+        administered: v.boolean(),
+        score: v.number(),
+        maxScore: v.number(),
+        severity: v.string(),
+        level: v.string(),
+        item9Score: v.number(),
+        item9Flag: v.boolean(),
+      }),
+      gad7: v.object({
+        administered: v.boolean(),
+        score: v.number(),
+        maxScore: v.number(),
+        severity: v.string(),
+        level: v.string(),
+      }),
+      pq16: v.object({
+        administered: v.boolean(),
+        score: v.number(),
+        maxScore: v.number(),
+        severity: v.string(),
+        level: v.string(),
+      }),
+      wsas: v.optional(
+        v.object({
+          administered: v.boolean(),
+          score: v.number(),
+          maxScore: v.number(),
+          severity: v.string(),
+          level: v.string(),
+        })
+      ),
+      reqol10: v.optional(
+        v.object({
+          administered: v.boolean(),
+          score: v.number(),
+          maxScore: v.number(),
+          severity: v.string(),
+          level: v.string(),
+        })
+      ),
+    }),
+    triageLevel: v.string(),
+    suicideFlag: v.boolean(),
+    psychosisFlag: v.boolean(),
+    triageId: v.optional(v.id("triages")),
+    screeningId: v.optional(v.id("screenings")),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_status", ["status"])
+    .index("by_startedAt", ["startedAt"]),
 
   triages: defineTable({
     userId: v.string(),

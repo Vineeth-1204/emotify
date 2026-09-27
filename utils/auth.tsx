@@ -22,6 +22,12 @@ interface AuthContextType {
   isLoading: boolean;
   isLoggingOut: boolean;
   isAuthenticated: boolean;
+  register: (params: {
+    full_name: string;
+    mobile_number: string;
+    password: string;
+    email?: string;
+  }) => Promise<{ error?: string }>;
   login: (mobile_number: string, password: string) => Promise<{ error?: string }>;
   logout: () => Promise<void>;
   updateUser: (updatedUser: User) => void;
@@ -119,6 +125,43 @@ export function AuthProvider({ children, convex }: { children: React.ReactNode; 
         await SecureStore.setItemAsync("biometric_enabled", "true");
         setBiometricsEnabled(true);
       }
+
+      return {};
+    } catch (e: any) {
+      return { error: e.message || "Network request failed" };
+    }
+  };
+
+  const register = async (params: {
+    full_name: string;
+    mobile_number: string;
+    password: string;
+    email?: string;
+  }) => {
+    try {
+      const data = await convex.mutation(api.users.registerStudent, params);
+
+      if (data.error || !data.token || !data.user) {
+        return { error: data.error || "Registration failed" };
+      }
+
+      const mappedUser: User = {
+        id: data.user.id,
+        full_name: data.user.full_name || "",
+        mobile_number: data.user.mobile_number || "",
+        role: data.user.role || "",
+        status: data.user.status || "",
+        is_first_login: data.user.is_first_login,
+        onboardingComplete: data.user.onboardingComplete,
+        screeningComplete: data.user.screeningComplete,
+      };
+
+      tokenRef.current = data.token;
+      setToken(data.token);
+      setUser(mappedUser);
+
+      await SecureStore.setItemAsync("mobile_token", data.token);
+      await SecureStore.setItemAsync("mobile_user", JSON.stringify(mappedUser));
 
       return {};
     } catch (e: any) {
@@ -248,6 +291,7 @@ export function AuthProvider({ children, convex }: { children: React.ReactNode; 
         isLoading,
         isLoggingOut,
         isAuthenticated: !!token,
+        register,
         login,
         logout,
         updateUser,

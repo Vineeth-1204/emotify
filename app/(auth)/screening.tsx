@@ -18,12 +18,15 @@ import {
   GAD7_QUESTIONS,
   GAD7_OPTIONS,
   GAD7_INSTRUCTION,
+  PQ16_QUESTIONS,
+  PQ16_OPTIONS,
+  PQ16_INSTRUCTION,
 } from "@/constants/Screening";
 import {
   scorePHQ9,
   scoreGAD7,
+  scorePQ16,
 } from "@/utils/scoring";
-import { runTriage, TriageInput } from "@/utils/triage";
 
 const INSTRUMENTS = [
   {
@@ -44,6 +47,15 @@ const INSTRUMENTS = [
     instruction: GAD7_INSTRUCTION,
     scoring: scoreGAD7,
   },
+  {
+    id: "pq16",
+    title: "Perception & Thoughts Check",
+    desc: "Reflect on sensory experiences, unusual thoughts, and perceptions.",
+    questions: PQ16_QUESTIONS,
+    options: PQ16_OPTIONS,
+    instruction: PQ16_INSTRUCTION,
+    scoring: scorePQ16,
+  },
 ];
 
 type ScreeningState = Record<string, (number | null)[]>;
@@ -55,9 +67,11 @@ export default function ScreeningScreen() {
   const { user } = useAppAuth();
   const { t } = useLanguage();
   const [selectedInstrument, setSelectedInstrument] = useState<string | null>(null);
+  const [screeningStartTime] = useState<number>(() => Date.now());
   const [answers, setAnswers] = useState<ScreeningState>({
     phq9: new Array(PHQ9_QUESTIONS.length).fill(null),
     gad7: new Array(GAD7_QUESTIONS.length).fill(null),
+    pq16: new Array(PQ16_QUESTIONS.length).fill(null),
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -76,12 +90,18 @@ export default function ScreeningScreen() {
         const saved = await SecureStore.getItemAsync(key);
         if (saved) {
           const parsed = JSON.parse(saved) as ScreeningState;
-          setAnswers(parsed);
+          // Ensure all active instruments have answer arrays initialized
+          setAnswers({
+            phq9: parsed.phq9 && parsed.phq9.length === PHQ9_QUESTIONS.length ? parsed.phq9 : new Array(PHQ9_QUESTIONS.length).fill(null),
+            gad7: parsed.gad7 && parsed.gad7.length === GAD7_QUESTIONS.length ? parsed.gad7 : new Array(GAD7_QUESTIONS.length).fill(null),
+            pq16: parsed.pq16 && parsed.pq16.length === PQ16_QUESTIONS.length ? parsed.pq16 : new Array(PQ16_QUESTIONS.length).fill(null),
+          });
         } else {
           // Reset answers to default if no draft saved for this user
           setAnswers({
             phq9: new Array(PHQ9_QUESTIONS.length).fill(null),
             gad7: new Array(GAD7_QUESTIONS.length).fill(null),
+            pq16: new Array(PQ16_QUESTIONS.length).fill(null),
           });
         }
       } catch (e) {
@@ -101,8 +121,7 @@ export default function ScreeningScreen() {
     }
   }
 
-  const submitScreening = useMutation(api.screening.submitScreening);
-  const processTriage = useMutation(api.triage.processTriage);
+  const submitScreeningAttempt = useMutation(api.screening.submitScreeningAttempt);
   const markScreeningComplete = useMutation(api.users.markScreeningComplete);
   const scheduleFollowUp = useMutation(api.followUps.scheduleFollowUp);
 
@@ -111,56 +130,52 @@ export default function ScreeningScreen() {
     setIsSubmitting(true);
 
     try {
-      const phq9 = scorePHQ9(answers.phq9 as number[]);
-      const gad7 = scoreGAD7(answers.gad7 as number[]);
-
-      const triageInput: TriageInput = {
-        phq9_total: phq9.total,
-        gad7_total: gad7.total,
-        pq16_total: 0,
-        phq9_item9_score: phq9.item9Score,
-      };
-
-      const triageResult = runTriage(triageInput);
-
-      // 1. Save screening
-      await submitScreening({
-        userId: user.id,
-        phq9_total: phq9.total,
-        gad7_total: gad7.total,
-        pq16_total: 0,
-        phq9_item9_flag: phq9.item9Flag,
-        phq9_item9_score: phq9.item9Score,
+      // 1. Convert responses into structured item-level answer maps
+      const phq9Responses: Record<string, number> = {};
+      (answers.phq9 as number[]).forEach((val, idx) => {
+        phq9Responses[`phq9_q${idx + 1}`] = val;
       });
 
-      // 2. Process Triage and Handle Alerts (Backend handled)
-      const triage = await processTriage({
-        userId: user.id,
-        phq9_total: phq9.total,
-        gad7_total: gad7.total,
-        pq16_total: 0,
-        phq9_item9_score: phq9.item9Score,
+      const gad7Responses: Record<string, number> = {};
+      (answers.gad7 as number[]).forEach((val, idx) => {
+        gad7Responses[`gad7_q${idx + 1}`] = val;
       });
 
-      // 3. Schedule Follow-up based on level
+      const pq16Responses: Record<string, number> = {};
+      (answers.pq16 as number[]).forEach((val, idx) => {
+        pq16Responses[`pq16_q${idx + 1}`] = val;
+      });
+
+      // 2. Authoritative server-side scoring, triage, alert generation, and persistence
+      const attempt = await submitScreeningAttempt({
+        userId: user.id,
+        startedAt: screeningStartTime,
+        responses: {
+          phq9: phq9Responses,
+          gad7: gad7Responses,
+          pq16: pq16Responses,
+        },
+      });
+
+      // 3. Schedule follow-up based on authoritative triage level
       await scheduleFollowUp({
         userId: user.id,
-        level: triage.level,
+        level: attempt.triageLevel,
       });
 
-      // Mark complete on user
+      // 4. Mark screening complete on user record
       await markScreeningComplete({ clerkId: user.id });
 
-      // Delete cached progress
+      // 5. Delete cached draft progress
       try {
         const key = `${SCREENING_STORE_KEY}_${user.id}`;
         await SecureStore.deleteItemAsync(key);
       } catch (e) {}
 
-      // Go to app
+      // 6. Navigate to main tabs
       router.replace("/(auth)/(tabs)");
     } catch (error) {
-      console.error("Failed to submit screening", error);
+      console.error("Failed to submit screening attempt", error);
       setIsSubmitting(false);
     }
   }
@@ -248,8 +263,22 @@ export default function ScreeningScreen() {
             const { answered, percent } = getProgress(inst.id, inst.questions.length);
             const isFinished = percent === 100;
             const isStarted = percent > 0;
-            const instTitle = inst.id === "phq9" ? t("screening.phq9Title") : t("screening.gad7Title");
-            const instDesc = inst.id === "phq9" ? t("screening.phq9Desc") : t("screening.gad7Desc");
+            const instTitle =
+              inst.id === "phq9"
+                ? t("screening.phq9Title")
+                : inst.id === "gad7"
+                ? t("screening.gad7Title")
+                : inst.id === "pq16"
+                ? t("screening.pq16Title")
+                : inst.title;
+            const instDesc =
+              inst.id === "phq9"
+                ? t("screening.phq9Desc")
+                : inst.id === "gad7"
+                ? t("screening.gad7Desc")
+                : inst.id === "pq16"
+                ? t("screening.pq16Desc")
+                : inst.desc;
 
             return (
               <TouchableOpacity

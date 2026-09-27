@@ -19,7 +19,7 @@ http.route({
   path: "/.well-known/openid-configuration",
   method: "GET",
   handler: httpAction(async (_ctx, _req) => {
-    const siteUrl = (globalThis as any).process?.env?.CONVEX_SITE_URL || "https://usable-stork-789.convex.site";
+    const siteUrl = (globalThis as any).process?.env?.CONVEX_SITE_URL || "https://fabulous-rooster-538.convex.site";
     const body = {
       issuer: siteUrl,
       jwks_uri: `${siteUrl}/.well-known/jwks.json`,

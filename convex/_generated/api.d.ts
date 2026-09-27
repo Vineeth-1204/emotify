@@ -13,6 +13,7 @@ import type * as appointments from "../appointments.js";
 import type * as audit from "../audit.js";
 import type * as authHelpers from "../authHelpers.js";
 import type * as cbt from "../cbt.js";
+import type * as clinicalScoring from "../clinicalScoring.js";
 import type * as companion from "../companion.js";
 import type * as counsellorRequests from "../counsellorRequests.js";
 import type * as crons from "../crons.js";
@@ -47,6 +48,7 @@ declare const fullApi: ApiFromModules<{
   audit: typeof audit;
   authHelpers: typeof authHelpers;
   cbt: typeof cbt;
+  clinicalScoring: typeof clinicalScoring;
   companion: typeof companion;
   counsellorRequests: typeof counsellorRequests;
   crons: typeof crons;

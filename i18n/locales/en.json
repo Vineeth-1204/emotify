@@ -181,6 +181,8 @@
     "phq9Desc": "Assesses mood, sleep patterns, energy levels, and emotional balance over the past 2 weeks.",
     "gad7Title": "Calm & Focus Check",
     "gad7Desc": "Assesses anxiety, worry regulation, nervousness, and tension over the past 2 weeks.",
+    "pq16Title": "Perception & Thoughts Check",
+    "pq16Desc": "Reflect on sensory experiences, unusual thoughts, and perceptions.",
     "startCheck": "Start Check-In",
     "checkCompleted": "Completed {{date}}",
     "retakeCheck": "Retake Check-In",

@@ -3,10 +3,11 @@ import { useAppAuth } from "@/utils/auth";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import React, { useState, useEffect, useCallback } from "react";
-import { View, ActivityIndicator, StyleSheet, AppState } from "react-native";
+import { View, ActivityIndicator, StyleSheet, AppState, Pressable } from "react-native";
 import { Colors } from "@/constants/Colors";
 import { Theme } from "@/constants/Theme";
 import { useVideoPlayer, VideoView } from "expo-video";
+import { LinearGradient } from "expo-linear-gradient";
 import * as SecureStore from "expo-secure-store";
 import { StatusBar } from "expo-status-bar";
 
@@ -25,7 +26,7 @@ export default function Index() {
   const [isVideoPlaying, setIsVideoPlaying] = useState(false);
   const [isCheckComplete, setIsCheckComplete] = useState(false);
 
-  // Initialize expo-video player with landing-page2.mp4 splash video
+  // Initialize expo-video player with landing-page.mp4 splash video
   const player = useVideoPlayer(require("@/assets/landing-page.mp4"), (playerInstance) => {
     playerInstance.loop = false;
   });
@@ -118,7 +119,11 @@ export default function Index() {
       if (dbUser?.is_first_login) {
         router.replace("/(auth)/onboarding/change-password");
       } else if (onboardingComplete) {
-        router.replace("/(auth)/(tabs)");
+        if (!dbUser?.screeningComplete) {
+          router.replace("/(auth)/screening");
+        } else {
+          router.replace("/(auth)/(tabs)");
+        }
       } else {
         router.replace("/(auth)/onboarding/welcome");
       }
@@ -131,16 +136,21 @@ export default function Index() {
   // Render video player overlay if active
   if (isVideoPlaying) {
     return (
-      <View style={styles.videoContainer}>
+      <LinearGradient
+        colors={["#E8E8E8", "#DCDCDC", "#D0D0D0"]}
+        style={styles.videoContainer}
+      >
         <StatusBar style="dark" />
-        <VideoView
-          player={player}
-          style={StyleSheet.absoluteFill}
-          fullscreenOptions={{ enable: false }}
-          nativeControls={false}
-          contentFit="cover"
-        />
-      </View>
+        <Pressable style={styles.videoPressable} onPress={dismissVideo}>
+          <VideoView
+            player={player}
+            style={styles.videoPlayer}
+            fullscreenOptions={{ enable: false }}
+            nativeControls={false}
+            contentFit="contain"
+          />
+        </Pressable>
+      </LinearGradient>
     );
   }
 
@@ -155,7 +165,19 @@ export default function Index() {
 const styles = StyleSheet.create({
   videoContainer: {
     flex: 1,
-    backgroundColor: '#F8F8F8',
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#E8E8E8",
+  },
+  videoPressable: {
+    width: "100%",
+    height: "100%",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  videoPlayer: {
+    width: "100%",
+    height: "100%",
   },
   loadingContainer: {
     flex: 1,

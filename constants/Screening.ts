@@ -80,9 +80,103 @@ export const PQ16_OPTIONS: ScreeningOption[] = [
 
 export const PQ16_INSTRUCTION = 'Please indicate whether you have experienced any of the following:';
 
-// ─── Screening order ───
-export const SCREENING_ORDER = ['phq9', 'gad7'] as const;
+// ─── Screening order & Instruments Definition ───
+export const SCREENING_ORDER = ['phq9', 'gad7', 'pq16'] as const;
 export type ScreeningType = typeof SCREENING_ORDER[number];
+export type ScreeningInstrumentId = 'phq9' | 'gad7' | 'pq16' | 'wsas' | 'reqol10';
+
+export interface QuestionnaireDefinition {
+  id: ScreeningInstrumentId;
+  title: string;
+  shortTitle: string;
+  description: string;
+  instruction: string;
+  version: string;
+  status: 'active' | 'pending_approved_content';
+  questionCount: number;
+  minScore: number;
+  maxScore: number;
+  questions: ScreeningQuestion[];
+  options: ScreeningOption[];
+}
+
+export const INSTRUMENT_DEFINITIONS: Record<ScreeningInstrumentId, QuestionnaireDefinition> = {
+  phq9: {
+    id: 'phq9',
+    title: 'Patient Health Questionnaire (PHQ-9)',
+    shortTitle: 'Mood & Energy Check',
+    description: 'Reflect on feelings of low mood, sleep patterns, and daily vitality over the last 2 weeks.',
+    instruction: PHQ9_INSTRUCTION,
+    version: 'PHQ-9.v1',
+    status: 'active',
+    questionCount: 9,
+    minScore: 0,
+    maxScore: 27,
+    questions: PHQ9_QUESTIONS,
+    options: PHQ9_OPTIONS,
+  },
+  gad7: {
+    id: 'gad7',
+    title: 'Generalized Anxiety Disorder (GAD-7)',
+    shortTitle: 'Calm & Focus Check',
+    description: 'Reflect on feelings of worry, tension, and daily peace of mind over the last 2 weeks.',
+    instruction: GAD7_INSTRUCTION,
+    version: 'GAD-7.v1',
+    status: 'active',
+    questionCount: 7,
+    minScore: 0,
+    maxScore: 21,
+    questions: GAD7_QUESTIONS,
+    options: GAD7_OPTIONS,
+  },
+  pq16: {
+    id: 'pq16',
+    title: 'Prodromal Questionnaire (PQ-16)',
+    shortTitle: 'Perception & Thoughts Check',
+    description: 'Reflect on sensory experiences, unusual thoughts, and perceptions.',
+    instruction: PQ16_INSTRUCTION,
+    version: 'PQ-16.v1',
+    status: 'active',
+    questionCount: 16,
+    minScore: 0,
+    maxScore: 16,
+    questions: PQ16_QUESTIONS,
+    options: PQ16_OPTIONS,
+  },
+  wsas: {
+    id: 'wsas',
+    title: 'Work and Social Adjustment Scale (WSAS)',
+    shortTitle: 'Daily Functioning Check',
+    description: 'Measures impairment in ability to function day-to-day (pending validated content).',
+    instruction: 'PENDING_APPROVED_CONTENT: Validated questionnaire text required before administration.',
+    version: 'WSAS.v1',
+    status: 'pending_approved_content',
+    questionCount: 5,
+    minScore: 0,
+    maxScore: 40,
+    questions: [], // CRITICAL SAFETY RULE: Never fabricate clinical questions
+    options: [],
+  },
+  reqol10: {
+    id: 'reqol10',
+    title: 'Recovering Quality of Life (ReQoL-10)',
+    shortTitle: 'Quality of Life Check',
+    description: 'Measures quality of life for individuals with mental health difficulties (pending validated content).',
+    instruction: 'PENDING_APPROVED_CONTENT: Validated questionnaire text required before administration.',
+    version: 'ReQoL-10.v1',
+    status: 'pending_approved_content',
+    questionCount: 10,
+    minScore: 0,
+    maxScore: 40,
+    questions: [], // CRITICAL SAFETY RULE: Never fabricate clinical questions
+    options: [],
+  },
+};
+
+/** Total active screening questions administered in the mobile app */
+export const ACTIVE_SCREENING_QUESTIONS_COUNT =
+  PHQ9_QUESTIONS.length + GAD7_QUESTIONS.length + PQ16_QUESTIONS.length;
+
 
 // ─── Thinking Traps for Reframe Tool ───
 export const THINKING_TRAPS = [

@@ -23,11 +23,13 @@ export default function DemographicsScreen() {
 
   const completeOnboarding = useMutation(api.users.completeOnboarding);
 
-  const assignedName = appUser?.full_name || user?.full_name || "Assigned Student";
+  const assignedName = appUser?.full_name || user?.full_name || "Student";
 
+  const [alias, setAlias] = useState("");
   const [age, setAge] = useState("");
   const [campus, setCampus] = useState("");
   const [department, setDepartment] = useState("");
+  const [year, setYear] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -40,10 +42,12 @@ export default function DemographicsScreen() {
 
     try {
       await completeOnboarding({
-        alias: assignedName,
+        userId: user.id,
+        alias: alias.trim() || assignedName,
         age: parseInt(age, 10) || 0,
         campus: campus.trim(),
         department: department.trim(),
+        year: year.trim() || undefined,
         consentVersion: "1.0",
         consentTimestamp: Date.now(),
         emergencyContactName: params.emergencyName || undefined,
@@ -55,8 +59,8 @@ export default function DemographicsScreen() {
         onboardingComplete: true,
       });
 
-      // Go to app dashboard directly (screening is now a tab/card)
-      router.replace("/(auth)/(tabs)");
+      // Progress directly to baseline screening
+      router.replace("/(auth)/screening");
     } catch (err: any) {
       console.error("Onboarding error:", err);
       setError("Failed to save your information. Please try again.");
@@ -87,16 +91,20 @@ export default function DemographicsScreen() {
       <Text style={styles.step}>Step 3 of 3</Text>
       <Text style={styles.title}>Tell us about you</Text>
       <Text style={styles.subtitle}>
-        Your profile details assigned by your counselor/institution.
+        Your profile details help us tailor support and resources for your campus journey.
       </Text>
 
       <View style={styles.form}>
-        <Text style={styles.label}>Name (Assigned by Admin)</Text>
-        <View style={styles.readOnlyContainer}>
-          <Text style={styles.readOnlyText}>{assignedName}</Text>
-        </View>
+        <Text style={styles.label}>Preferred Name / Alias (Optional)</Text>
+        <TextInput
+          style={styles.input}
+          value={alias}
+          onChangeText={setAlias}
+          placeholder={assignedName}
+          placeholderTextColor={Colors.textMuted}
+        />
 
-        <Text style={styles.label}>Age</Text>
+        <Text style={styles.label}>Age *</Text>
         <TextInput
           style={styles.input}
           value={age}
@@ -107,7 +115,7 @@ export default function DemographicsScreen() {
           maxLength={3}
         />
 
-        <Text style={styles.label}>Campus</Text>
+        <Text style={styles.label}>Campus / College *</Text>
         <TextInput
           style={styles.input}
           value={campus}
@@ -116,7 +124,7 @@ export default function DemographicsScreen() {
           placeholderTextColor={Colors.textMuted}
         />
 
-        <Text style={styles.label}>Department</Text>
+        <Text style={styles.label}>Department / Major *</Text>
         <TextInput
           style={styles.input}
           value={department}
@@ -124,12 +132,21 @@ export default function DemographicsScreen() {
           placeholder="e.g. Computer Science"
           placeholderTextColor={Colors.textMuted}
         />
+
+        <Text style={styles.label}>Year of Study (Optional)</Text>
+        <TextInput
+          style={styles.input}
+          value={year}
+          onChangeText={setYear}
+          placeholder="e.g. 2nd Year or 2024"
+          placeholderTextColor={Colors.textMuted}
+        />
       </View>
 
       {error ? <Text style={styles.error}>{error}</Text> : null}
 
       <Button
-        title="Complete Setup"
+        title="Complete & Continue to Screening"
         onPress={handleSubmit}
         loading={loading}
         disabled={!isValid}

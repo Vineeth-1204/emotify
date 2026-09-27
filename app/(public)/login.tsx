@@ -228,6 +228,17 @@ export default function LoginScreen() {
                   </TouchableOpacity>
                 </>
               ) : null}
+
+              <TouchableOpacity
+                style={{ marginTop: 20, alignItems: "center", paddingVertical: 4 }}
+                onPress={() => router.push("/(public)/register" as any)}
+                activeOpacity={0.7}
+              >
+                <Text style={{ fontFamily: Theme.fontFamily.medium, fontSize: 14, color: "#475569" }}>
+                  New student?{" "}
+                  <Text style={{ fontFamily: Theme.fontFamily.bold, color: "#4F46E5" }}>Create an Account</Text>
+                </Text>
+              </TouchableOpacity>
             </View>
 
             <View style={styles.footer}>

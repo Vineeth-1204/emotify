@@ -1,4 +1,4 @@
-npx convex env listinterface:
+interface:
   display_name: "Convex Quickstart"
   short_description:
     "Start a new Convex app or add Convex to an existing frontend."

@@ -10,6 +10,7 @@ import { useVideoPlayer, VideoView } from "expo-video";
 import { LinearGradient } from "expo-linear-gradient";
 import * as SecureStore from "expo-secure-store";
 import { StatusBar } from "expo-status-bar";
+import { getLocalDateString } from "@/utils/date";
 
 // Module-level tracking for cold starts (resets on app process kill)
 let hasPlayedThisSession = false;
@@ -38,7 +39,7 @@ export default function Index() {
     }
     hasPlayedThisSession = true;
     try {
-      const todayStr = new Date().toISOString().split('T')[0];
+      const todayStr = getLocalDateString();
       await SecureStore.setItemAsync("last_played_video_date", todayStr);
     } catch (e) {
       console.error("Failed to store video played date:", e);
@@ -60,7 +61,7 @@ export default function Index() {
   useEffect(() => {
     async function checkVideoPlayback() {
       try {
-        const todayStr = new Date().toISOString().split('T')[0];
+        const todayStr = getLocalDateString();
         const lastPlayedDate = await SecureStore.getItemAsync("last_played_video_date");
 
         if (!hasPlayedThisSession || lastPlayedDate !== todayStr) {
@@ -83,7 +84,7 @@ export default function Index() {
     const handleAppStateChange = async (nextAppState: string) => {
       if (nextAppState === "active") {
         try {
-          const todayStr = new Date().toISOString().split('T')[0];
+          const todayStr = getLocalDateString();
           const lastPlayedDate = await SecureStore.getItemAsync("last_played_video_date");
           if (lastPlayedDate !== todayStr) {
             setIsVideoPlaying(true);

@@ -22,6 +22,7 @@ import {
   AngryEmotionIcon,
   TiredEmotionIcon,
 } from "@/components/svg/emotions";
+import { getLocalDateString } from "@/utils/date";
 
 const { width } = Dimensions.get('window');
 
@@ -74,9 +75,9 @@ export default function MicroGoalsScreen() {
   const insets = useSafeAreaInsets();
 
   // Convex Queries
-  const todayCheckin = useQuery(api.microGoals.getTodayCheckin);
-  const dailyGoals = useQuery(api.microGoals.getTodayGoals, { userId: user?.id ?? "" });
-  const streakInfo = useQuery(api.microGoals.getStreak, { userId: user?.id ?? "" });
+  const todayCheckin = useQuery(api.microGoals.getTodayCheckin, { dateStr: getLocalDateString() });
+  const dailyGoals = useQuery(api.microGoals.getTodayGoals, { userId: user?.id ?? "", dateStr: getLocalDateString() });
+  const streakInfo = useQuery(api.microGoals.getStreak, { userId: user?.id ?? "", dateStr: getLocalDateString() });
   const gamification = useQuery(api.microGoals.getGamificationStats);
   const weeklyMission = useQuery(api.microGoals.getWeeklyMission);
   const monthlyChallenge = useQuery(api.microGoals.getMonthlyChallenge);
@@ -205,7 +206,7 @@ export default function MicroGoalsScreen() {
     setIsFeelingVisible(false);
     setIsMutationLoading(true);
     try {
-      const res = await completeGoalWithFeeling({ id: selectedGoal._id, feelingAfter: feeling });
+      const res = await completeGoalWithFeeling({ id: selectedGoal._id, feelingAfter: feeling, dateStr: getLocalDateString() });
       if (res.success) {
         setRewardData({
           xp: res.xpAward || 10,

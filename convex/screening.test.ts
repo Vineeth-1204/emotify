@@ -359,4 +359,142 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
       })
     ).rejects.toThrow(/PQ-16/);
   });
+
+  // TEST 15: Canonical user identity and patientId resolution in submitScreeningAttempt
+  test("15. Canonical user identity resolves patientId authoritatively from users._id without clerkId", async () => {
+    const t = convexTest(schema, modules);
+
+    // Register a modern student via registerStudent
+    const regRes = await t.mutation(api.users.registerStudent, {
+      full_name: "Rahul Verma",
+      mobile_number: "9811223344",
+      password: "Password123!",
+      email: "rahul@campus.edu",
+    });
+
+    const studentId = regRes.user!.id;
+    const dbUser = await t.query(api.users.getByClerkId, { clerkId: studentId });
+    const expectedPatientId = dbUser?.patientId;
+    expect(expectedPatientId).toBeDefined();
+
+    // Authenticate as this student
+    const authedT = t.withIdentity({
+      subject: studentId,
+    });
+
+    const attempt = await authedT.mutation(api.screening.submitScreeningAttempt, {
+      responses: {
+        phq9: makePHQ9Responses([1, 1, 1, 1, 1, 1, 1, 1, 0]),
+        gad7: makeGAD7Responses([1, 1, 1, 1, 1, 1, 1]),
+        pq16: makePQ16Responses(2),
+      },
+    });
+
+    expect(attempt.attemptId).toBeDefined();
+
+    // Retrieve attempt directly and check identity fields
+    const savedAttempt = await authedT.query(api.screening.getAttemptById, {
+      attemptId: attempt.attemptId,
+    });
+
+    expect(savedAttempt).toBeDefined();
+    expect(savedAttempt?.userId).toBe(studentId);
+    expect(savedAttempt?.patientId).toBe(expectedPatientId);
+
+    // Also verify screening mirror contains canonical userId
+    const mirror = await authedT.query(api.screening.getLatest, {
+      userId: studentId,
+    });
+    expect(mirror).toBeDefined();
+    expect(mirror?.userId).toBe(studentId);
+    expect(mirror?.attemptId).toBe(String(attempt.attemptId));
+  });
+
+  // TEST 16: Isolation - Student A cannot resolve to Student B and missing patientId does not guess
+  test("16. Student A cannot resolve to Student B, and missing patientId does not cause guessing", async () => {
+    const t = convexTest(schema, modules);
+
+    // Register Student A
+    const regA = await t.mutation(api.users.registerStudent, {
+      full_name: "Student Alpha",
+      mobile_number: "9100000001",
+      password: "Password123!",
+    });
+    const userA = await t.query(api.users.getByClerkId, { clerkId: regA.user!.id });
+
+    // Register Student B
+    const regB = await t.mutation(api.users.registerStudent, {
+      full_name: "Student Beta",
+      mobile_number: "9200000002",
+      password: "Password123!",
+    });
+    const userB = await t.query(api.users.getByClerkId, { clerkId: regB.user!.id });
+
+    const authedA = t.withIdentity({ subject: regA.user!.id });
+    const attemptA = await authedA.mutation(api.screening.submitScreeningAttempt, {
+      responses: {
+        phq9: makePHQ9Responses(),
+        gad7: makeGAD7Responses(),
+        pq16: makePQ16Responses(0),
+      },
+    });
+
+    const savedA = await authedA.query(api.screening.getAttemptById, {
+      attemptId: attemptA.attemptId,
+    });
+    expect(savedA?.userId).toBe(regA.user!.id);
+    expect(savedA?.patientId).toBe(userA?.patientId);
+    expect(savedA?.patientId).not.toBe(userB?.patientId);
+
+    // Test a user without patientId: ensure patientId is undefined (never guessed)
+    const authedUnknown = t.withIdentity({ subject: "non_existent_user_id" });
+    const attemptUnknown = await authedUnknown.mutation(api.screening.submitScreeningAttempt, {
+      responses: {
+        phq9: makePHQ9Responses(),
+        gad7: makeGAD7Responses(),
+        pq16: makePQ16Responses(0),
+      },
+    });
+
+    const savedUnknown = await authedUnknown.query(api.screening.getAttemptById, {
+      attemptId: attemptUnknown.attemptId,
+    });
+    expect(savedUnknown?.userId).toBe("non_existent_user_id");
+    expect(savedUnknown?.patientId).toBeUndefined();
+  });
+
+  // TEST 17: Canonical users._id is preferred over clerkId
+  test("17. Canonical users._id is prioritized over clerkId", async () => {
+    const t = convexTest(schema, modules);
+
+    // Insert a user with both _id and clerkId
+    let studentId = "";
+    await t.run(async (ctx) => {
+      studentId = await ctx.db.insert("users", {
+        full_name: "Dual Identity User",
+        mobile_number: "9333333333",
+        role: "patient",
+        status: "active",
+        patientId: "199",
+        clerkId: "legacy_clerk_199",
+        created_at: Date.now(),
+        updated_at: Date.now(),
+      });
+    });
+
+    const authedT = t.withIdentity({ subject: studentId });
+    const attempt = await authedT.mutation(api.screening.submitScreeningAttempt, {
+      responses: {
+        phq9: makePHQ9Responses(),
+        gad7: makeGAD7Responses(),
+        pq16: makePQ16Responses(0),
+      },
+    });
+
+    const saved = await authedT.query(api.screening.getAttemptById, {
+      attemptId: attempt.attemptId,
+    });
+    expect(saved?.userId).toBe(studentId); // Canonical ID stored, NOT clerkId
+    expect(saved?.patientId).toBe("199");
+  });
 });

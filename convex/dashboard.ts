@@ -1,6 +1,12 @@
 import { query, mutation } from "./_generated/server";
 import { Id } from "./_generated/dataModel";
 import { v } from "convex/values";
+import {
+  getAuthenticatedUser,
+  requireAdmin,
+  requireCounselorOrAdmin,
+  assertCanAccessStudent,
+} from "./authz";
 
 // Helper to resolve patient name dynamically by userId (clerkId or user _id)
 async function getPatientName(ctx: any, userId: string): Promise<string> {
@@ -22,8 +28,8 @@ async function getPatientName(ctx: any, userId: string): Promise<string> {
 export const getDashboardOverview = query({
   args: {},
   handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return null;
+    const caller = await getAuthenticatedUser(ctx);
+    if (!caller || (caller.role !== "admin" && caller.role !== "counsellor")) return null;
 
     const patients = await ctx.db
       .query("users")
@@ -113,8 +119,21 @@ export const getAlerts = query({
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return [];
 
+    const caller = await getAuthenticatedUser(ctx);
+    const isStaff = caller && (caller.role === "admin" || caller.role === "counsellor");
+    const callerId = caller ? String(caller._id) : identity.subject;
+
     // Fetch all explicitly logged alert records
-    const dbAlerts = await ctx.db.query("alerts").order("desc").collect();
+    let dbAlerts = await ctx.db.query("alerts").order("desc").collect();
+
+    // If student, filter ONLY their own clinical alerts
+    if (!isStaff) {
+      const canonicalId = caller ? String(caller._id) : callerId;
+      const legacyId = caller?.clerkId;
+      dbAlerts = dbAlerts.filter(
+        (a) => a.userId === canonicalId || (legacyId && a.userId === legacyId) || a.userId === callerId
+      );
+    }
     
     // Fetch all active patients
     const patients = await ctx.db
@@ -147,6 +166,9 @@ export const getAlerts = query({
 
     // For any patient whose latest triage has suicideFlag or psychosisFlag or severe level, ensure an active alert exists
     for (const [canonicalId, triage] of Object.entries(latestTriageByPatient)) {
+      if (!isStaff && canonicalId !== callerId && canonicalId !== (caller ? String(caller._id) : "") && canonicalId !== (caller?.clerkId || "")) {
+        continue;
+      }
       const patient = patientMap.get(canonicalId);
       if (!patient) continue;
 
@@ -213,9 +235,22 @@ export const getActivityFeed = query({
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return [];
 
-    const alerts = await ctx.db.query("alerts").order("desc").take(15);
-    const emotionLogs = await ctx.db.query("emotionLogs").order("desc").take(15);
-    const microGoals = await ctx.db.query("microGoals").order("desc").take(15);
+    const caller = await getAuthenticatedUser(ctx);
+    const isStaff = caller && (caller.role === "admin" || caller.role === "counsellor");
+    const callerId = caller ? String(caller._id) : identity.subject;
+
+    let alerts = await ctx.db.query("alerts").order("desc").take(isStaff ? 15 : 50);
+    let emotionLogs = await ctx.db.query("emotionLogs").order("desc").take(isStaff ? 15 : 50);
+    let microGoals = await ctx.db.query("microGoals").order("desc").take(isStaff ? 15 : 50);
+
+    if (!isStaff) {
+      const canonicalId = caller ? String(caller._id) : callerId;
+      const legacyId = caller?.clerkId;
+      const matchesCaller = (uid: string) => uid === canonicalId || (legacyId && uid === legacyId) || uid === callerId;
+      alerts = alerts.filter(a => matchesCaller(a.userId));
+      emotionLogs = emotionLogs.filter(e => matchesCaller(e.userId));
+      microGoals = microGoals.filter(m => matchesCaller(m.userId));
+    }
 
     const feed = [];
 
@@ -269,8 +304,7 @@ export const getActivityFeed = query({
 export const updateAlertStatus = mutation({
   args: { alertId: v.id("alerts"), status: v.string() },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return;
+    await requireCounselorOrAdmin(ctx);
 
     await ctx.db.patch(args.alertId, {
       status: args.status,
@@ -282,8 +316,7 @@ export const updateAlertStatus = mutation({
 export const getPatientCbtAnalytics = query({
   args: { userId: v.string() },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return null;
+    await assertCanAccessStudent(ctx, args.userId);
 
     // Resolve stable userId
     let user = null;
@@ -297,13 +330,22 @@ export const getPatientCbtAnalytics = query({
         .first();
     }
     if (!user) return null;
-    const resolvedUserId = user.clerkId || user._id;
+    const resolvedUserId = String(user._id);
 
-    const sessions = await ctx.db
+    let sessions = await ctx.db
       .query("cbtSessions")
       .withIndex("by_userId", (q) => q.eq("userId", resolvedUserId))
       .order("desc")
       .collect();
+
+    // Preserve legacy compatibility if no sessions found under canonical ID
+    if (sessions.length === 0 && user.clerkId) {
+      sessions = await ctx.db
+        .query("cbtSessions")
+        .withIndex("by_userId", (q) => q.eq("userId", user.clerkId!))
+        .order("desc")
+        .collect();
+    }
 
     const completedSessions = sessions.filter(s => s.sessionStatus === "completed" || s.currentStep === "completed");
     const safetySessions = sessions.filter(s => s.sessionStatus === "safety_mode" || s.currentStep === "safety_mode");
@@ -530,8 +572,8 @@ export const getPatientCbtAnalytics = query({
 export const listAllCbtSessions = query({
   args: {},
   handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return [];
+    const caller = await getAuthenticatedUser(ctx);
+    if (!caller || (caller.role !== "admin" && caller.role !== "counsellor")) return [];
 
     const sessions = await ctx.db
       .query("cbtSessions")
@@ -553,8 +595,8 @@ export const listAllCbtSessions = query({
 export const getCounsellorRequests = query({
   args: {},
   handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return [];
+    const caller = await getAuthenticatedUser(ctx);
+    if (!caller || (caller.role !== "admin" && caller.role !== "counsellor")) return [];
 
     const requests = await ctx.db
       .query("counsellorRequests")
@@ -578,7 +620,7 @@ export const getCounsellorRequests = query({
         ...req,
         patientName: patient ? (patient.full_name || patient.alias || "Unknown Patient") : "Unknown Patient",
         patientMobile: patient?.mobile_number || "N/A",
-        patientId: patient ? (patient.clerkId || patient._id) : userId,
+        patientId: patient ? (patient._id || patient.clerkId) : userId,
       });
     }
     return results;
@@ -588,8 +630,8 @@ export const getCounsellorRequests = query({
 export const getAuditLogs = query({
   args: {},
   handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return [];
+    const caller = await getAuthenticatedUser(ctx);
+    if (!caller || caller.role !== "admin") return [];
 
     const logs = await ctx.db.query("auditLogs").order("desc").take(100);
     const results = [];
@@ -613,8 +655,8 @@ export const getAuditLogs = query({
 export const getCounsellors = query({
   args: {},
   handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return [];
+    const caller = await getAuthenticatedUser(ctx);
+    if (!caller || (caller.role !== "admin" && caller.role !== "counsellor")) return [];
 
     return await ctx.db.query("counsellors").order("desc").collect();
   }
@@ -630,8 +672,7 @@ export const addCounsellor = mutation({
     maxWorkload: v.number(),
   },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Unauthenticated");
+    await requireAdmin(ctx);
 
     return await ctx.db.insert("counsellors", {
       name: args.name,
@@ -651,8 +692,7 @@ export const addCounsellor = mutation({
 export const updateCounsellorStatus = mutation({
   args: { counsellorId: v.id("counsellors"), status: v.string() },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Unauthenticated");
+    await requireAdmin(ctx);
 
     await ctx.db.patch(args.counsellorId, { status: args.status });
   }
@@ -662,8 +702,7 @@ export const updateCounsellorStatus = mutation({
 export const getPatientTimeline = query({
   args: { userId: v.string() },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return [];
+    await assertCanAccessStudent(ctx, args.userId);
 
     return await ctx.db
       .query("clinicalTimelines")
@@ -682,15 +721,14 @@ export const addTimelineEvent = mutation({
     metadata: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Unauthenticated");
+    const staff = await requireCounselorOrAdmin(ctx);
 
     return await ctx.db.insert("clinicalTimelines", {
       userId: args.userId,
       eventType: args.eventType,
       title: args.title,
       description: args.description,
-      performedBy: identity.name || identity.email || "Admin",
+      performedBy: staff.full_name || "Staff",
       timestamp: Date.now(),
       metadata: args.metadata,
     });
@@ -701,8 +739,8 @@ export const addTimelineEvent = mutation({
 export const getAiMonitoringLogs = query({
   args: {},
   handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return [];
+    const caller = await getAuthenticatedUser(ctx);
+    if (!caller || (caller.role !== "admin" && caller.role !== "counsellor")) return [];
 
     const logs = await ctx.db.query("aiMonitoringLogs").order("desc").take(100);
     const results = [];
@@ -739,8 +777,8 @@ export const markNotificationRead = mutation({
 export const getEnterpriseAnalytics = query({
   args: {},
   handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return null;
+    const caller = await getAuthenticatedUser(ctx);
+    if (!caller || (caller.role !== "admin" && caller.role !== "counsellor")) return null;
 
     const users = await ctx.db.query("users").collect();
     const patients = users.filter(u => u.role === "patient");
@@ -757,8 +795,11 @@ export const getEnterpriseAnalytics = query({
     const sessions = await ctx.db.query("cbtSessions").collect();
     const rawTriages = await ctx.db.query("triages").collect();
     const triages = rawTriages.filter((t) => t.userId && patientIdMap.has(t.userId.toString()));
+    const rawAttempts = await ctx.db.query("screeningAttempts").collect();
+    const completedAttempts = rawAttempts.filter(
+      (a) => a.status === "completed" && a.userId && patientIdMap.has(a.userId.toString())
+    );
     const emotionLogs = await ctx.db.query("emotionLogs").collect();
-    const screenings = await ctx.db.query("screenings").collect();
 
     const latestTriageByPatient: Record<string, any> = {};
     for (const t of triages) {
@@ -769,16 +810,30 @@ export const getEnterpriseAnalytics = query({
     }
     const latestTriagesList = Object.values(latestTriageByPatient);
 
-    // Calculate PHQ / GAD improvements
+    // Calculate PHQ / GAD averages from authoritative attempts, falling back to legacy screenings
     let totalPhq = 0;
     let totalGad = 0;
-    screenings.forEach(s => {
-      totalPhq += s.phq9_total;
-      totalGad += s.gad7_total;
-    });
+    let count = 0;
 
-    const avgPhq = screenings.length > 0 ? (totalPhq / screenings.length).toFixed(1) : "0";
-    const avgGad = screenings.length > 0 ? (totalGad / screenings.length).toFixed(1) : "0";
+    if (completedAttempts.length > 0) {
+      for (const a of completedAttempts) {
+        if (a.results?.phq9?.score !== undefined) {
+          totalPhq += a.results.phq9.score;
+          totalGad += a.results.gad7.score;
+          count++;
+        }
+      }
+    } else {
+      const fallbackScreenings = await ctx.db.query("screenings").collect();
+      fallbackScreenings.forEach((s) => {
+        totalPhq += s.phq9_total;
+        totalGad += s.gad7_total;
+      });
+      count = fallbackScreenings.length;
+    }
+
+    const avgPhq = count > 0 ? (totalPhq / count).toFixed(1) : "0";
+    const avgGad = count > 0 ? (totalGad / count).toFixed(1) : "0";
 
     return {
       totalPatients: patients.length,
@@ -803,8 +858,8 @@ export const getEnterpriseAnalytics = query({
 export const getTrashItems = query({
   args: {},
   handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return [];
+    const caller = await getAuthenticatedUser(ctx);
+    if (!caller || caller.role !== "admin") return [];
 
     return await ctx.db.query("trash").order("desc").collect();
   }
@@ -813,8 +868,7 @@ export const getTrashItems = query({
 export const restoreTrashItem = mutation({
   args: { trashId: v.id("trash") },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Unauthenticated");
+    await requireAdmin(ctx);
 
     const item = await ctx.db.get(args.trashId);
     if (!item) return;
@@ -844,8 +898,8 @@ export const restoreTrashItem = mutation({
 export const getUsersWithAiChats = query({
   args: {},
   handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) {
+    const caller = await getAuthenticatedUser(ctx);
+    if (!caller || (caller.role !== "admin" && caller.role !== "counsellor")) {
       return {
         users: [],
         stats: { totalUsers: 0, totalMessages: 0, activeToday: 0, highRiskFlags: 0 }
@@ -978,8 +1032,10 @@ export const getUsersWithAiChats = query({
 export const getPatientAiChatHistoryAdmin = query({
   args: { userId: v.string() },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return { patient: null, messages: [] };
+    const caller = await getAuthenticatedUser(ctx);
+    if (!caller || (caller.role !== "admin" && caller.role !== "counsellor")) {
+      return { patient: null, messages: [] };
+    }
 
     let patient = null;
     try {

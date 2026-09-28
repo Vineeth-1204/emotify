@@ -36,6 +36,7 @@ import { useLanguage } from "@/context/LanguageContext";
 import { useVoice } from "@/context/VoiceContext";
 import { MitraAvatar, AvatarState } from "@/components/avatar/MitraAvatar";
 import { ShieldSafetyIcon } from "@/components/svg/system";
+import { getLocalDateString } from "@/utils/date";
 
 const { width } = Dimensions.get("window");
 
@@ -197,6 +198,7 @@ export default function AICompanionScreen() {
     isSafetyActive,
     ageGroup,
     avatarName,
+    avatarGender,
   } = useAvatar();
 
   const { t } = useLanguage();
@@ -238,7 +240,9 @@ export default function AICompanionScreen() {
   const messages = useQuery(api.companion.getConversationHistory);
   const clearHistory = useMutation(api.companion.clearConversation);
   const generateAIResponse = useAction(api.companion.generateAIResponse);
-  const createEmotionLog = useMutation(api.emotionLogs.create);
+  const submitDailyCheckin = useMutation(api.microGoals.submitMorningCheckin);
+  const todayDateStr = useMemo(() => getLocalDateString(), []);
+  const todayCheckin = useQuery(api.microGoals.getTodayCheckin, { dateStr: todayDateStr });
 
   // Dynamic Mitra Avatar state computation
   const currentMitraState: AvatarState = useMemo(() => {
@@ -580,18 +584,28 @@ export default function AICompanionScreen() {
   const handleDailyMoodSelect = async (mood: string) => {
     if (!user?.id) return;
     try {
-      await createEmotionLog({
-        userId: user.id,
-        emotion: mood,
-        bodyRegions: [],
-        preIntensity: 5,
-        postIntensity: 5,
+      const moodMap: Record<string, string> = {
+        great: "great",
+        good: "good",
+        okay: "okay",
+        calm: "great",
+        happy: "good",
+        sad: "low",
+        low: "low",
+        stressed: "terrible",
+        terrible: "terrible",
+      };
+      const canonicalMood = moodMap[mood] || "okay";
+      await submitDailyCheckin({
+        mood: canonicalMood,
+        dateStr: getLocalDateString(),
+        allowUpdate: true,
       });
       setDailyMoodSubmitted(true);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       Alert.alert("Mood Logged", `You logged that you are feeling ${mood}. ${avatarName} will tailor support to you.`);
     } catch (e) {
-      console.error("Failed to log emotion:", e);
+      console.error("Failed to log daily check-in:", e);
     }
   };
 
@@ -650,7 +664,7 @@ export default function AICompanionScreen() {
           </View>
         )}
 
-        {!hasChattedToday && !dailyMoodSubmitted && (
+        {!hasChattedToday && !dailyMoodSubmitted && !todayCheckin && (
           <View style={[styles.checkInCard, { borderColor: colors.primary + "15" }]}>
             <Text style={[styles.checkInTitle, { color: colors.text }]}>How are you feeling today?</Text>
             <Text style={[styles.checkInSub, { color: colors.textSecondary }]}>
@@ -742,7 +756,7 @@ export default function AICompanionScreen() {
             </TouchableOpacity>
 
             <View style={styles.avatarBox}>
-              <MitraAvatar state={currentMitraState} size="xs" />
+              <MitraAvatar gender={avatarGender} state={currentMitraState} size="xs" />
               <View style={[styles.statusDot, { backgroundColor: colors.success }]} />
             </View>
 

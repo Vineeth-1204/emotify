@@ -3,6 +3,7 @@ import { mutation, query, internalMutation } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import { signJwt, verifyPassword, hashPassword } from "./authHelpers";
 import { logAuditEvent } from "./audit";
+import { assertCanAccessStudent } from "./authz";
 
 function sanitizeUser(u: any) {
   if (!u) return null;
@@ -35,17 +36,44 @@ export const getByClerkId = query({
 async function checkAdmin(ctx: any) {
   const identity = await ctx.auth.getUserIdentity();
   if (!identity) return null;
-  const user = await ctx.db.get(identity.subject as Id<"users">);
+  let user = null;
+  try {
+    user = await ctx.db.get(identity.subject as Id<"users">);
+  } catch (e) {}
+  if (!user) {
+    user = await ctx.db
+      .query("users")
+      .withIndex("by_clerkId", (q: any) => q.eq("clerkId", identity.subject))
+      .first();
+  }
   if (!user || user.role !== "admin") return null;
   return user;
 }
 
-/** Admin: List all patient users */
+/** Required Staff (Counselor or Admin) Auth Helper */
+async function checkStaff(ctx: any) {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) return null;
+  let user = null;
+  try {
+    user = await ctx.db.get(identity.subject as Id<"users">);
+  } catch (e) {}
+  if (!user) {
+    user = await ctx.db
+      .query("users")
+      .withIndex("by_clerkId", (q: any) => q.eq("clerkId", identity.subject))
+      .first();
+  }
+  if (!user || (user.role !== "admin" && user.role !== "counsellor")) return null;
+  return user;
+}
+
+/** Admin/Counselor: List all patient users */
 export const listPatients = query({
   args: { search: v.optional(v.string()) },
   handler: async (ctx, args) => {
-    const admin = await checkAdmin(ctx);
-    if (!admin) return [];
+    const staff = await checkStaff(ctx);
+    if (!staff) return [];
 
     let users = await ctx.db
       .query("users")
@@ -253,6 +281,12 @@ export const completeOnboarding = mutation({
     consentTimestamp: v.number(),
     emergencyContactName: v.optional(v.string()),
     emergencyContactPhone: v.optional(v.string()),
+    mitraPreferences: v.optional(
+      v.object({
+        name: v.optional(v.string()),
+        avatarGender: v.optional(v.string()),
+      })
+    ),
   },
   handler: async (ctx, args) => {
     let user = null;
@@ -281,6 +315,32 @@ export const completeOnboarding = mutation({
     }
     if (!user) throw new Error("Unauthenticated");
 
+    // Process optional mitraPreferences or keep existing/default
+    let validatedMitra = user.mitraPreferences;
+    if (args.mitraPreferences) {
+      let g = (args.mitraPreferences.avatarGender || "female").toLowerCase().trim();
+      if (g !== "female" && g !== "male") g = "female";
+
+      let rawName = args.mitraPreferences.name ? args.mitraPreferences.name.replace(/[\x00-\x1F\x7F]/g, "").trim() : "Mitra";
+      if (rawName.length > 30) rawName = rawName.substring(0, 30).trim();
+      const n = rawName.length > 0 ? rawName : "Mitra";
+
+      validatedMitra = {
+        name: n,
+        avatarGender: g,
+        avatarVariant: "default",
+        updatedAt: Date.now(),
+      };
+    } else if (!validatedMitra) {
+      // Default to female + Mitra if none set
+      validatedMitra = {
+        name: "Mitra",
+        avatarGender: "female",
+        avatarVariant: "default",
+        updatedAt: Date.now(),
+      };
+    }
+
     await ctx.db.patch(user._id, {
       alias: args.alias,
       age: args.age,
@@ -293,6 +353,7 @@ export const completeOnboarding = mutation({
       emergencyContactName: args.emergencyContactName,
       emergencyContactPhone: args.emergencyContactPhone,
       onboardingComplete: true,
+      mitraPreferences: validatedMitra,
       updated_at: Date.now(),
     });
 
@@ -943,10 +1004,386 @@ export const deleteUser = mutation({
       await ctx.db.delete(doc._id);
     }
 
-    // 11. Finally delete the user
+    // 11. screeningAttempts
+    const attempts = await ctx.db
+      .query("screeningAttempts")
+      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
+      .collect();
+    for (const doc of attempts) {
+      await ctx.db.delete(doc._id);
+    }
+
+    // 12. cbtSessions
+    const cbtSessions = await ctx.db
+      .query("cbtSessions")
+      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
+      .collect();
+    for (const doc of cbtSessions) {
+      await ctx.db.delete(doc._id);
+    }
+
+    // 13. appointments
+    const appointments = await ctx.db
+      .query("appointments")
+      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
+      .collect();
+    for (const doc of appointments) {
+      await ctx.db.delete(doc._id);
+    }
+
+    // 14. counsellorRequests
+    const counsellorRequests = await ctx.db
+      .query("counsellorRequests")
+      .withIndex("by_user_id", (q) => q.eq("user_id", args.userId))
+      .collect();
+    for (const doc of counsellorRequests) {
+      await ctx.db.delete(doc._id);
+    }
+
+    // 15. reframeLogs
+    const reframeLogs = await ctx.db
+      .query("reframeLogs")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .collect();
+    for (const doc of reframeLogs) {
+      await ctx.db.delete(doc._id);
+    }
+
+    // 16. companionMessages
+    const companionMessages = await ctx.db
+      .query("companionMessages")
+      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
+      .collect();
+    for (const doc of companionMessages) {
+      await ctx.db.delete(doc._id);
+    }
+
+    // 17. aiCompanionLogs
+    const aiCompanionLogs = await ctx.db
+      .query("aiCompanionLogs")
+      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
+      .collect();
+    for (const doc of aiCompanionLogs) {
+      await ctx.db.delete(doc._id);
+    }
+
+    // 18. points
+    const points = await ctx.db
+      .query("points")
+      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
+      .collect();
+    for (const doc of points) {
+      await ctx.db.delete(doc._id);
+    }
+
+    // 19. badges
+    const badges = await ctx.db
+      .query("badges")
+      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
+      .collect();
+    for (const doc of badges) {
+      await ctx.db.delete(doc._id);
+    }
+
+    // 20. streaks
+    const streaks = await ctx.db
+      .query("streaks")
+      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
+      .collect();
+    for (const doc of streaks) {
+      await ctx.db.delete(doc._id);
+    }
+
+    // 21. emotionMaps
+    const emotionMaps = await ctx.db
+      .query("emotionMaps")
+      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
+      .collect();
+    for (const doc of emotionMaps) {
+      await ctx.db.delete(doc._id);
+    }
+
+    // 22. dailyCheckins
+    const dailyCheckins = await ctx.db
+      .query("dailyCheckins")
+      .withIndex("by_userId_and_dateStr", (q) => q.eq("userId", args.userId))
+      .collect();
+    for (const doc of dailyCheckins) {
+      await ctx.db.delete(doc._id);
+    }
+
+    // 23. weeklyMissions
+    const weeklyMissions = await ctx.db
+      .query("weeklyMissions")
+      .withIndex("by_userId_and_weekStart", (q) => q.eq("userId", args.userId))
+      .collect();
+    for (const doc of weeklyMissions) {
+      await ctx.db.delete(doc._id);
+    }
+
+    // 24. monthlyChallenges
+    const monthlyChallenges = await ctx.db
+      .query("monthlyChallenges")
+      .withIndex("by_userId_and_monthStr", (q) => q.eq("userId", args.userId))
+      .collect();
+    for (const doc of monthlyChallenges) {
+      await ctx.db.delete(doc._id);
+    }
+
+    // 25. clinicalTimelines
+    const clinicalTimelines = await ctx.db
+      .query("clinicalTimelines")
+      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
+      .collect();
+    for (const doc of clinicalTimelines) {
+      await ctx.db.delete(doc._id);
+    }
+
+    // 26. aiMonitoringLogs
+    const aiMonitoringLogs = await ctx.db
+      .query("aiMonitoringLogs")
+      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
+      .collect();
+    for (const doc of aiMonitoringLogs) {
+      await ctx.db.delete(doc._id);
+    }
+
+    // 27. notifications
+    const notifications = await ctx.db
+      .query("notifications")
+      .withIndex("by_recipientId", (q) => q.eq("recipientId", args.userId))
+      .collect();
+    for (const doc of notifications) {
+      await ctx.db.delete(doc._id);
+    }
+
+    // 28. loginHistory
+    const loginHistory = await ctx.db
+      .query("loginHistory")
+      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
+      .collect();
+    for (const doc of loginHistory) {
+      await ctx.db.delete(doc._id);
+    }
+
+    // 29. Finally delete the user
     await ctx.db.delete(args.userId);
 
     return { success: true };
   },
 });
+
+// ==========================================
+// MITRA PREFERENCES (Priority 6)
+// ==========================================
+
+/** Get persistent Mitra preferences for student (with safe female + Mitra defaults) */
+export const getMitraPreferences = query({
+  args: { userId: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      return {
+        name: "Mitra",
+        avatarGender: "female",
+        avatarVariant: "default",
+      };
+    }
+    const targetUserId = args.userId || identity.subject;
+    await assertCanAccessStudent(ctx, targetUserId);
+
+    let user = null;
+    try {
+      user = await ctx.db.get(targetUserId as Id<"users">);
+    } catch (e) {}
+    if (!user) {
+      user = await ctx.db
+        .query("users")
+        .withIndex("by_clerkId", (q) => q.eq("clerkId", targetUserId))
+        .first();
+    }
+
+    const prefs = user?.mitraPreferences;
+    const name = prefs?.name && prefs.name.trim().length > 0 ? prefs.name.trim() : "Mitra";
+    const avatarGender =
+      prefs?.avatarGender === "male" || prefs?.avatarGender === "female"
+        ? prefs.avatarGender
+        : "female";
+
+    return {
+      name,
+      avatarGender,
+      avatarVariant: prefs?.avatarVariant || "default",
+      updatedAt: prefs?.updatedAt,
+    };
+  },
+});
+
+/** Update persistent Mitra preferences for student */
+export const updateMitraPreferences = mutation({
+  args: {
+    userId: v.optional(v.string()),
+    name: v.optional(v.string()),
+    avatarGender: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const targetUserId = args.userId || identity.subject;
+    await assertCanAccessStudent(ctx, targetUserId);
+
+    let user = null;
+    try {
+      user = await ctx.db.get(targetUserId as Id<"users">);
+    } catch (e) {}
+    if (!user) {
+      user = await ctx.db
+        .query("users")
+        .withIndex("by_clerkId", (q) => q.eq("clerkId", targetUserId))
+        .first();
+    }
+    if (!user) throw new Error("User not found");
+
+    // Validate avatarGender: must be "female" or "male"
+    let validatedGender = user.mitraPreferences?.avatarGender || "female";
+    if (args.avatarGender !== undefined) {
+      const g = args.avatarGender.toLowerCase().trim();
+      if (g === "female" || g === "male") {
+        validatedGender = g;
+      } else {
+        validatedGender = "female";
+      }
+    }
+
+    // Validate and sanitize custom name (strip control characters, trim, max length 30)
+    let validatedName = user.mitraPreferences?.name || "Mitra";
+    if (args.name !== undefined) {
+      let clean = args.name.replace(/[\x00-\x1F\x7F]/g, "").trim();
+      if (clean.length > 30) clean = clean.substring(0, 30).trim();
+      validatedName = clean.length > 0 ? clean : "Mitra";
+    }
+
+    const updatedPrefs = {
+      name: validatedName,
+      avatarGender: validatedGender,
+      avatarVariant: "default",
+      updatedAt: Date.now(),
+    };
+
+    await ctx.db.patch(user._id, {
+      mitraPreferences: updatedPrefs,
+    });
+
+    return updatedPrefs;
+  },
+});
+
+/** Student: Update allowed profile information (alias, age, campus, department, year, demographic gender, emergency contacts) */
+export const updateStudentProfile = mutation({
+  args: {
+    userId: v.optional(v.string()),
+    alias: v.optional(v.string()),
+    age: v.optional(v.number()),
+    campus: v.optional(v.string()),
+    department: v.optional(v.string()),
+    year: v.optional(v.string()),
+    gender: v.optional(v.string()),
+    emergencyContactName: v.optional(v.string()),
+    emergencyContactPhone: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const targetUserId = args.userId || identity.subject;
+    await assertCanAccessStudent(ctx, targetUserId);
+
+    let user = null;
+    try {
+      user = await ctx.db.get(targetUserId as Id<"users">);
+    } catch (e) {}
+    if (!user) {
+      user = await ctx.db
+        .query("users")
+        .withIndex("by_clerkId", (q) => q.eq("clerkId", targetUserId))
+        .first();
+    }
+    if (!user) throw new Error("User not found");
+
+    const patch: Record<string, any> = {
+      updated_at: Date.now(),
+    };
+
+    if (args.alias !== undefined) {
+      let clean = args.alias.replace(/[\x00-\x1F\x7F]/g, "").trim();
+      if (clean.length > 50) clean = clean.substring(0, 50).trim();
+      if (clean.length === 0) throw new Error("Name cannot be empty");
+      patch.alias = clean;
+    }
+
+    if (args.age !== undefined) {
+      if (args.age < 10 || args.age > 120 || !Number.isInteger(args.age)) {
+        throw new Error("Age must be an integer between 10 and 120");
+      }
+      patch.age = args.age;
+    }
+
+    if (args.campus !== undefined) {
+      let clean = args.campus.replace(/[\x00-\x1F\x7F]/g, "").trim();
+      if (clean.length > 100) clean = clean.substring(0, 100).trim();
+      patch.campus = clean;
+    }
+
+    if (args.department !== undefined) {
+      let clean = args.department.replace(/[\x00-\x1F\x7F]/g, "").trim();
+      if (clean.length > 100) clean = clean.substring(0, 100).trim();
+      patch.department = clean;
+    }
+
+    if (args.year !== undefined) {
+      let clean = args.year.replace(/[\x00-\x1F\x7F]/g, "").trim();
+      if (clean.length > 30) clean = clean.substring(0, 30).trim();
+      patch.year = clean;
+    }
+
+    if (args.gender !== undefined) {
+      let clean = args.gender.replace(/[\x00-\x1F\x7F]/g, "").trim().toLowerCase();
+      const validGenders = ["female", "male", "non-binary", "other", "prefer-not-to-say"];
+      if (clean && !validGenders.includes(clean)) {
+        throw new Error("Invalid demographic gender option");
+      }
+      patch.gender = clean;
+    }
+
+    if (args.emergencyContactName !== undefined) {
+      let clean = args.emergencyContactName.replace(/[\x00-\x1F\x7F]/g, "").trim();
+      if (clean.length > 100) clean = clean.substring(0, 100).trim();
+      patch.emergencyContactName = clean;
+    }
+
+    if (args.emergencyContactPhone !== undefined) {
+      let clean = args.emergencyContactPhone.replace(/[\x00-\x1F\x7F]/g, "").trim();
+      if (clean.length > 25) clean = clean.substring(0, 25).trim();
+      patch.emergencyContactPhone = clean;
+    }
+
+    await ctx.db.patch(user._id, patch);
+
+    const changedKeys = Object.keys(patch).filter((k) => k !== "updated_at");
+    await logAuditEvent(
+      ctx,
+      identity.subject,
+      "STUDENT_PROFILE_UPDATE",
+      JSON.stringify({
+        targetUserId: user._id,
+        updatedFields: changedKeys,
+      })
+    );
+
+    return {
+      success: true,
+      updatedFields: changedKeys,
+    };
+  },
+});
+
 

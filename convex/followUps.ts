@@ -7,6 +7,9 @@ export const create = mutation({
     userId: v.optional(v.string()),
     type: v.string(),
     dueDate: v.number(),
+    sourceType: v.optional(v.string()),
+    attemptId: v.optional(v.id("screeningAttempts")),
+    triageId: v.optional(v.id("triages")),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
@@ -24,6 +27,9 @@ export const create = mutation({
       type: args.type,
       dueDate: args.dueDate,
       completed: false,
+      sourceType: args.sourceType || "counselor",
+      attemptId: args.attemptId,
+      triageId: args.triageId,
       createdAt: Date.now(),
     });
   },

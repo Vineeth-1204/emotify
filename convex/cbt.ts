@@ -2,6 +2,7 @@ import { v, ConvexError } from "convex/values";
 import { mutation, query, action, internalMutation } from "./_generated/server";
 import { api, internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
+import { assertCanAccessStudent } from "./authz";
 
 // Helper to sanitize inputs
 function sanitizeInput(input: string): string {
@@ -15,27 +16,15 @@ function sanitizeInput(input: string): string {
 // 1. PUBLIC QUERIES & MUTATIONS
 // ----------------------------------------------------
 
-/** Retrieve a CBT session by ID. Validates patient or admin status. */
+/** Retrieve a CBT session by ID. Validates patient or staff status. */
 export const getSession = query({
   args: { sessionId: v.id("cbtSessions") },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Unauthenticated");
-    const userId = identity.subject;
-
     const session = await ctx.db.get(args.sessionId);
     if (!session) return null;
 
-    // Allow the student or an admin to access the session
-    if (session.userId !== userId) {
-      const user = await ctx.db
-        .query("users")
-        .withIndex("by_clerkId", (q) => q.eq("clerkId", userId))
-        .first();
-      if (!user || user.role !== "admin") {
-        throw new Error("Unauthorized to access this session.");
-      }
-    }
+    // Enforce authorization: Student can only access their own CBT session; Staff can access student sessions
+    await assertCanAccessStudent(ctx, session.userId);
 
     return session;
   },
@@ -70,7 +59,12 @@ export const insertApiKey = mutation({
 
 /** Start a new CBT session, or resume an existing active session. */
 export const startSession = mutation({
-  args: { forceNew: v.boolean() },
+  args: {
+    forceNew: v.boolean(),
+    sourceType: v.optional(v.string()),
+    attemptId: v.optional(v.id("screeningAttempts")),
+    triageId: v.optional(v.id("triages")),
+  },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
@@ -93,6 +87,9 @@ export const startSession = mutation({
     const greeting = "Hello. I'm here to support you today. What's on your mind? Tell me a bit about what's been bothering you recently.";
     const sessionId = await ctx.db.insert("cbtSessions", {
       userId,
+      sourceType: args.sourceType || "self_initiated",
+      attemptId: args.attemptId,
+      triageId: args.triageId,
       conversation: [
         { role: "assistant", content: greeting, timestamp: Date.now() }
       ],
@@ -252,6 +249,9 @@ export const acceptGoal = mutation({
         skipped: false,
         createdAt: Date.now(),
         cbtSessionId: args.sessionId,
+        sourceType: "cbt",
+        attemptId: session.attemptId,
+        triageId: session.triageId,
         estimatedMinutes: chosenGoal.estimatedMinutes,
         targetEmotion: chosenGoal.targetEmotion,
         targetBehaviour: chosenGoal.targetBehaviour,

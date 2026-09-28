@@ -12,6 +12,7 @@ import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   BarChart, Bar, Cell
 } from "recharts";
+import { ClinicalTimelineView } from "../components/ClinicalTimelineView";
 
 /* ─── Avatar helper (same as PatientsList) ────────────────────── */
 function Avatar({ name, size = 44 }: { name: string; size?: number }) {
@@ -49,8 +50,8 @@ export default function PatientDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
 
-  // Tab state: "screenings" | "cbt"
-  const [activeTab, setActiveTab] = useState<"screenings" | "cbt">("screenings");
+  // Tab state: "screenings" | "timeline" | "cbt" | "somatic" | "gamification"
+  const [activeTab, setActiveTab] = useState<"screenings" | "timeline" | "cbt" | "somatic" | "gamification">("screenings");
   const [selectedSession, setSelectedSession] = useState<any | null>(null);
 
   // Unblock modal state
@@ -65,9 +66,24 @@ export default function PatientDetail() {
   const cbtAnalytics = useQuery(api.dashboard.getPatientCbtAnalytics, { userId: id || "" });
   // Load latest triage status for this patient
   const latestTriage = useQuery(api.triage.getLatestByUserId, { userId: id || "" });
+  // Load pending clinical safety alerts for this patient
+  const pendingAlerts = useQuery(api.alerts.getPending, { userId: id || "" });
 
   const unblockPatientMutation = useMutation(api.triage.unblockPatient);
   const triggerScreeningMutation = useMutation(api.triage.triggerScreeningTest);
+  const acknowledgeAlertMutation = useMutation(api.alerts.acknowledgeAlert);
+  const [acknowledgingAlertId, setAcknowledgingAlertId] = useState<string | null>(null);
+
+  const handleAcknowledgeAlert = async (alertId: any) => {
+    try {
+      setAcknowledgingAlertId(String(alertId));
+      await acknowledgeAlertMutation({ alertId });
+    } catch (e: any) {
+      alert("Error acknowledging alert: " + (e.message || e.toString()));
+    } finally {
+      setAcknowledgingAlertId(null);
+    }
+  };
 
   // Custom Trigger Screening Modal State
   const [showTriggerModal, setShowTriggerModal] = useState(false);
@@ -101,7 +117,7 @@ export default function PatientDetail() {
     }
   };
 
-  if (patient === undefined || testResults === undefined || cbtAnalytics === undefined) {
+  if (patient === undefined || testResults === undefined || cbtAnalytics === undefined || pendingAlerts === undefined) {
     return (
       <div style={{ display: "flex", minHeight: "60vh", alignItems: "center", justifyContent: "center", color: "var(--text-secondary)" }}>
         Loading patient profile and clinical data...
@@ -120,6 +136,7 @@ export default function PatientDetail() {
     );
   }
 
+  const canonicalStudentId = patient?._id ? String(patient._id) : (id || "");
   const currentLevel = latestTriage?.level || "mild";
   const isSevere = currentLevel === "severe" || currentLevel === "suicide_flag" || currentLevel === "psychosis_flag";
 
@@ -156,6 +173,149 @@ export default function PatientDetail() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }} className="animate-fade-in">
+
+      {/* ── Active Safety Alert Banner ── */}
+      {pendingAlerts && pendingAlerts.length > 0 && (
+        <div
+          className="glass-panel animate-fade-in"
+          style={{
+            background: "rgba(239, 68, 68, 0.06)",
+            border: "1.5px solid var(--danger, #ef4444)",
+            borderLeft: "6px solid var(--danger, #ef4444)",
+            borderRadius: "12px",
+            padding: "16px 20px",
+            display: "flex",
+            flexDirection: "column",
+            gap: "14px",
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              <div
+                style={{
+                  padding: "8px",
+                  borderRadius: "8px",
+                  background: "rgba(239, 68, 68, 0.15)",
+                  color: "var(--danger, #ef4444)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <AlertTriangle size={22} />
+              </div>
+              <div>
+                <h2
+                  style={{
+                    fontSize: "1.05rem",
+                    fontWeight: 800,
+                    color: "var(--danger, #b91c1c)",
+                    margin: 0,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px",
+                    letterSpacing: "0.02em",
+                    textTransform: "uppercase",
+                  }}
+                >
+                  Active Safety Alert{pendingAlerts.length > 1 ? `s (${pendingAlerts.length})` : ""}
+                </h2>
+                <span style={{ fontSize: "0.82rem", color: "var(--text-secondary)" }}>
+                  Operational alert requiring clinical review · Status: <strong>Pending</strong>
+                </span>
+              </div>
+            </div>
+
+            <button
+              onClick={() => navigate("/alerts")}
+              className="btn btn-secondary"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
+                padding: "6px 12px",
+                fontSize: "0.82rem",
+                fontWeight: 600,
+              }}
+            >
+              Alerts Center <ArrowRight size={14} />
+            </button>
+          </div>
+
+          {/* Alert items list */}
+          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+            {pendingAlerts.map((alert: any) => (
+              <div
+                key={alert._id}
+                style={{
+                  background: "#ffffff",
+                  border: "1px solid rgba(239, 68, 68, 0.25)",
+                  borderRadius: "8px",
+                  padding: "12px 16px",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  flexWrap: "wrap",
+                  gap: "12px",
+                }}
+              >
+                <div style={{ display: "flex", flexDirection: "column", gap: "4px", minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                    <span
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "4px",
+                        padding: "3px 8px",
+                        borderRadius: "12px",
+                        background: "rgba(239, 68, 68, 0.12)",
+                        color: "var(--danger, #dc2626)",
+                        fontSize: "0.72rem",
+                        fontWeight: 700,
+                        textTransform: "uppercase",
+                        letterSpacing: "0.04em",
+                      }}
+                    >
+                      Type: {alert.type || "Safety Alert"}
+                    </span>
+                    <span style={{ fontSize: "0.78rem", color: "var(--text-secondary)", display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                      <Clock size={13} />
+                      Created: {new Date(alert.createdAt).toLocaleString()}
+                    </span>
+                  </div>
+
+                  {/* Provenance identifiers */}
+                  <div style={{ fontSize: "0.72rem", color: "var(--text-secondary)", fontFamily: "monospace", display: "flex", gap: "12px", flexWrap: "wrap" }}>
+                    <span>Alert ID: {String(alert._id).slice(-8)}</span>
+                    {alert.attemptId && <span>Attempt ID: {String(alert.attemptId).slice(-8)}</span>}
+                    {alert.triageId && <span>Triage ID: {String(alert.triageId).slice(-8)}</span>}
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => handleAcknowledgeAlert(alert._id)}
+                  disabled={acknowledgingAlertId === String(alert._id)}
+                  className="btn btn-secondary"
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "6px",
+                    padding: "6px 14px",
+                    fontSize: "0.82rem",
+                    fontWeight: 600,
+                    color: "var(--accent-primary, #3b82f6)",
+                    borderColor: "var(--accent-primary, #3b82f6)",
+                    background: "rgba(59, 130, 246, 0.05)",
+                  }}
+                >
+                  <CheckCircle size={14} />
+                  {acknowledgingAlertId === String(alert._id) ? "Acknowledging..." : "Acknowledge Alert"}
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── Patient Header Bar ── */}
       <div
@@ -249,6 +409,7 @@ export default function PatientDetail() {
       <div style={{ display: "flex", gap: 8, borderBottom: "2px solid var(--border-color)", paddingBottom: 0, overflowX: "auto" }}>
         {([
           { key: "screenings", label: "📋 Clinical Assessments" },
+          { key: "timeline",   label: "⏱️ Clinical Timeline" },
           { key: "cbt",        label: "🧠 AI CBT & Recovery" },
           { key: "somatic",   label: "🧘 Somatic & JPMR" },
           { key: "gamification", label: "🏆 Gamification" },
@@ -439,6 +600,17 @@ export default function PatientDetail() {
               </table>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* RENDER TAB: LONGITUDINAL CLINICAL TIMELINE */}
+      {activeTab === "timeline" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+          <ClinicalTimelineView
+            studentId={canonicalStudentId}
+            maxHeight="750px"
+            showHeader={true}
+          />
         </div>
       )}
 
@@ -655,37 +827,12 @@ export default function PatientDetail() {
                   </div>
                 </div>
 
-                {/* Consolidated Recovery Milestones Timeline */}
-                <div className="glass-panel hud-panel" style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-                  <h4 style={{ fontSize: "1.0rem", margin: 0, color: "var(--text-primary)", display: "flex", alignItems: "center", gap: "6px" }}>
-                    <Clock size={16} color="var(--accent-primary)" />
-                    Unified Patient Recovery Timeline
-                  </h4>
-                  <div style={{ maxHeight: "250px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "10px", paddingRight: "8px" }}>
-                    {cbtAnalytics.recoveryTimeline.length === 0 ? (
-                      <span style={{ color: "var(--text-secondary)", fontSize: "0.85rem", fontStyle: "italic", textAlign: "center", padding: "16px" }}>
-                        No cbt or goal milestones logged yet.
-                      </span>
-                    ) : (
-                      cbtAnalytics.recoveryTimeline.map((item: any, idx: number) => (
-                        <div key={idx} style={{ display: "flex", gap: "12px", alignItems: "flex-start", padding: "8px 12px", background: "rgba(255,255,255,0.03)", borderRadius: "8px", border: "1px solid var(--border-color)" }}>
-                          <span style={{ fontSize: "1.1rem", padding: "4px" }}>
-                            {item.type === "session" ? "🧠" : "🎯"}
-                          </span>
-                          <div style={{ flex: 1 }}>
-                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                              <strong style={{ fontSize: "0.9rem", color: "var(--text-primary)" }}>{item.title}</strong>
-                              <span style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>
-                                {new Date(item.timestamp).toLocaleDateString()}
-                              </span>
-                            </div>
-                            <span style={{ fontSize: "0.82rem", color: "var(--text-secondary)", display: "block", marginTop: "2px" }}>{item.details}</span>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
+                {/* Authoritative Longitudinal Clinical Timeline (Replaces incomplete recoveryTimeline) */}
+                <ClinicalTimelineView
+                  studentId={canonicalStudentId}
+                  maxHeight="320px"
+                  showHeader={true}
+                />
               </div>
 
               {/* HIGH RISK TRIGGERS */}

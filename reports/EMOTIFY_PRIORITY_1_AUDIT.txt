@@ -1,0 +1,212 @@
+EMOTIFY - PRIORITY 1 EXISTING APP AUDIT
+Audit date: 2026-09-27
+Scope: Read-only source inspection of the repository. No application source was changed.
+
+EXECUTIVE SUMMARY
+-----------------
+This is an existing Expo Router / React Native student app backed by Convex, plus
+a separate React/Vite counselor/admin dashboard. Several requested features are
+already represented in screens, tables, and Convex functions. The student
+screening flow itself currently presents only PHQ-9 and GAD-7. PQ-16 questions
+and a PQ-16 scoring helper exist, but are not wired into that flow. WSAS and
+ReQoL-10 appear only as optional stored score fields / references, not as
+questionnaires. The student flow submits pq16_total as 0 and does not send
+WSAS/ReQoL scores. Triage, alerts, emotion check-ins, companion chat, and
+appointments have code and Convex persistence paths.
+
+This is a source audit, not a runtime acceptance test. No app was launched and
+no login, data persistence, or dashboard workflow was exercised against a live
+Convex deployment. Labels below describe the recommended action for future
+rework, not a code change made during this audit.
+
+REPOSITORY MAP
+--------------
+app/                 Expo Router app routes: auth, onboarding, tabs, tools.
+components/          Shared UI, questionnaire renderer, avatar and icon suites.
+constants/           Screening questions, emotions, interventions, theme data.
+context/             Language, mood theme, avatar, voice and loading contexts.
+convex/              Convex schema, auth, queries/mutations/actions and tests.
+dashboard/           Separate Vite/React counselor/admin interface.
+utils/               Client auth, screening scoring/triage, insights and helpers.
+assets/              App icons, avatars, and landing/splash video assets.
+
+STUDENT ROUTES AND CURRENT JOURNEY
+----------------------------------
+Route files show public login at app/(public)/login.tsx. There is no public
+student registration screen in the route tree. convex/users.ts exposes
+createUser as an admin operation, and the dashboard has user/patient creation
+controls. How student accounts are initially issued is therefore admin-led in
+the checked-in application code; no self-service registration path was found.
+
+First login / incomplete profile:
+  App launch (app/index.tsx)
+    -> public login if unauthenticated
+    -> change-password when is_first_login is true
+    -> onboarding welcome
+    -> consent
+    -> emergency contact
+    -> demographics saved to Convex
+    -> tabs route
+    -> tabs layout redirects to screening if screening is incomplete
+    -> student tabs/home
+
+Returning user:
+  App launch -> authenticated database user lookup -> tabs route when onboarding
+  is complete -> tabs layout enforces screening if incomplete or force_retest.
+
+After screening, the main tabs are Home, Tools, Insights and Profile. Tools and
+Insights are hidden from the tab bar until screening is complete. Home includes
+emotion check-in, assessment entry points, companion access, intervention/tool
+links and appointments. Exact onboarding and home behavior should be confirmed
+on a device before changing it; the flow above is inferred from route and
+redirect code.
+
+QUESTIONNAIRE / SCREENING FINDINGS
+---------------------------------
+- KEEP the reusable renderer at components/screening/Questionnaire.tsx as a
+  working shared component candidate. It supports question arrays, options,
+  progress/navigation, answer state and answer-change callbacks.
+- MODIFY app/(auth)/screening.tsx: its INSTRUMENTS array contains only PHQ-9 and
+  GAD-7, and its answer state has only those two instruments.
+- MODIFY constants/Screening.ts: PHQ-9 and GAD-7 question sets are defined;
+  PQ-16 questions/options/instruction are also defined. No WSAS or ReQoL-10
+  questionnaire definitions were found. SCREENING_ORDER lists phq9 and gad7.
+- MODIFY utils/scoring.ts: PHQ-9 and GAD-7 sum helpers exist; PQ-16 sum helper
+  exists but is unused by the student screening route. No WSAS/ReQoL scoring
+  helpers were found.
+- MODIFY convex/screening.ts and schema.ts: screening records store PHQ-9,
+  GAD-7, PQ-16, WSAS, ReQoL-10 and item-9 fields. The latter two score fields
+  are optional in the mutation arguments but are stored as zero when omitted.
+- Current screen submission calculates PHQ-9/GAD-7, submits pq16_total: 0,
+  omits WSAS/ReQoL, processes triage, schedules follow-up, marks screening
+  complete, then routes to tabs. Draft answers are saved in SecureStore.
+- Classification: questionnaires are not completely deleted. The screen and
+  renderer are present and reachable, while PQ-16 is partially implemented but
+  disconnected; WSAS/ReQoL-10 are absent as questionnaires in the inspected
+  source. This is a partial implementation, not merely a hidden route.
+
+DATA ARCHITECTURE / CONVEX INVENTORY
+-----------------------------------
+convex/schema.ts defines tables for users, sessions, appointments, screenings,
+triages, alerts, emotionLogs, jpmrLogs, microGoals, points, badges, streaks,
+reframes, reframeLogs, counsellorRequests, followUps, wellnessProfiles,
+emotionMaps, companionMessages, aiCompanionLogs, rateLimits, auditLogs,
+dailyCheckins, weeklyMissions, monthlyChallenges, cbtSessions, apiKeys,
+counsellors, clinicalTimelines, aiMonitoringLogs, notifications, loginHistory,
+systemSettings, trash and jpmrVideos.
+
+- User/profile and onboarding: convex/users.ts and users table include identity,
+  contact/login, role/status, alias, age, campus, department, consent,
+  emergency-contact, onboarding and screening-completion fields. The mobile
+  onboarding form calls completeOnboarding and the function writes these fields.
+- Assessment: convex/screening.ts saves aggregate scores and item-9 signal;
+  raw per-question answers are not included in the submitted record. Screening
+  retrieval is used by the student and dashboard.
+- Triage: utils/triage.ts has local rules for item-9 flag, PQ-16 threshold, and
+  PHQ/GAD severity. convex/triage.ts persists triage and may insert an alert.
+  In the current mobile flow, PQ-16 is hard-coded to zero, so its branch cannot
+  be reached from that submitted assessment.
+- Emotion logs: convex/emotionLogs.ts stores emotion, body regions, intensity
+  before/after and timestamp. The student home and tools call this API.
+- Mitra: app/(auth)/tools/companion.tsx uses Convex conversation queries,
+  mutations and an action for AI response generation. convex/companion.ts
+  persists messages/logs and is also coupled to emotion logging. Home links to
+  this route; Mitra is not the only app capability.
+- Appointments: convex/appointments.ts includes patient and admin/two-way
+  scheduling operations; student appointment UI calls Convex.
+- Alerts and counselor requests: convex/alerts.ts and
+  convex/counsellorRequests.ts define persistence/operations. Student
+  high-risk flow includes a safety view and a counselor-request action.
+- Access and identity need a dedicated later review: the codebase has custom
+  mobile/admin sessions and JWT auth configuration, and some functions use
+  ctx.auth.getUserIdentity().subject while others accept userId/clerkId-style
+  identifiers. This audit did not validate authorization behavior or deployment
+  configuration; do not treat the presence of auth helpers as a security signoff.
+
+DASHBOARD FINDINGS
+------------------
+- dashboard/ is a real Vite/React app, not just a placeholder. It has login,
+  protected routing, layout, overview, patient list/detail, alerts, sessions,
+  screening center, AI monitoring and notifications pages. Other source pages
+  include analytics, settings, audit logs, trash, counselors and counselor
+  requests.
+- Dashboard components use ConvexProviderWithAuth and call Convex queries and
+  mutations for patients, assessments, triage, alerts, appointments, analytics,
+  notifications and AI data. Student-to-dashboard data access is therefore
+  partly present in code.
+- Dashboard login calls Convex users.login and explicitly rejects any role
+  other than admin. It uses localStorage-backed custom token state.
+- App.tsx does not register every page found in dashboard/src/pages. For
+  example, Analytics, Settings, AuditLogs, TrashBin, Counsellors and
+  CounsellorRequests are present as source files, but were not found among the
+  active App.tsx routes inspected. DashboardLayout has navigation links that
+  need to be compared against registered routes before relying on them.
+- Classification: existing dashboard and Convex connectivity are KEEP/MODIFY
+  candidates. It is not an empty placeholder; “counselor dashboard complete”
+  cannot be concluded because the active route set is partial and login is
+  admin-only.
+
+FEATURE ACTION MAP
+------------------
+Feature                         Status observed                         Action
+Mobile login                    Present; custom session flow             KEEP / VERIFY
+Self-service registration       No public registration route found        REBUILD or confirm provisioning
+Admin user provisioning         users.createUser + dashboard controls     KEEP / VERIFY
+Onboarding                      Consent/contact/demographics screens      MODIFY
+User profile storage            Convex user table and onboarding mutation  KEEP / MODIFY
+PHQ-9                           Questions, renderer, scoring, persistence  KEEP / VERIFY
+GAD-7                           Questions, renderer, scoring, persistence  KEEP / VERIFY
+PQ-16                           Questions and helper; submitted as zero    MODIFY / CONNECT
+WSAS                            Schema score slot only; no questions found REBUILD
+ReQoL-10                        Schema score slot only; no questions found REBUILD
+Questionnaire renderer          Shared component exists                   KEEP / MODIFY
+Scoring                         PHQ/GAD/PQ sum helpers                    MODIFY / VALIDATE
+Triage                          Client rules and Convex persistence        KEEP / VERIFY
+Alerts                          Convex table and functions                KEEP / VERIFY
+Emotion check-in                Student UI and emotionLogs persistence    KEEP / MODIFY
+Mitra companion                 Screen, Convex logs/actions, home links    MOVE / MODIFY
+JPMR                            Tool route, logs/videos/backend            KEEP / VERIFY
+CBT / reframe                   Tool routes and backend modules            KEEP / VERIFY
+MicroGoals                      Tool route and Convex module               KEEP / VERIFY
+Emotion Map                     Tool route and Convex module               KEEP / VERIFY
+Appointments                    Student UI and two-way Convex operations   KEEP / MODIFY
+Student insights                Screen and insights modules                KEEP / VERIFY
+Counselor dashboard             Working separate web app; partial routes  MODIFY
+Security / audit logging        Auth helpers and audit-related tables      MODIFY / AUDIT
+Remove                           No feature shown to be safely obsolete    NONE IDENTIFIED
+
+PRIORITY 1 CONCLUSIONS
+----------------------
+1. The app already has a broad working-code footprint: retain the current
+   screens, tools, Convex modules and dashboard as the baseline for later work.
+2. The client concern that questionnaires “disappeared” is partly explained by
+   the code: PHQ-9/GAD-7 are active; PQ-16 is defined but bypassed; WSAS and
+   ReQoL-10 questions are missing from the inspected source.
+3. Registration is not exposed as a student route. Accounts appear to be
+   provisioned through admin flows, but actual account issuance should be
+   verified with the project owner/deployment.
+4. Dashboard pages read/write shared Convex data, but admin-only login and
+   route omissions mean counselor access/readiness is not established.
+5. No REMOVE recommendation is supported by this audit. Keep uncertain or
+   unused-looking code until references and product intent are reviewed.
+
+FILES INSPECTED (representative)
+-------------------------------
+app/_layout.tsx; app/index.tsx; app/(public)/login.tsx; app/(auth)/_layout.tsx;
+app/(auth)/(tabs)/_layout.tsx; app/(auth)/(tabs)/index.tsx;
+app/(auth)/screening.tsx; app/(auth)/onboarding/*; app/(auth)/tools/*;
+components/screening/Questionnaire.tsx; constants/Screening.ts; utils/auth.tsx;
+utils/scoring.ts; utils/triage.ts; convex/schema.ts; convex/users.ts;
+convex/screening.ts; convex/triage.ts; convex/emotionLogs.ts;
+convex/companion.ts; convex/appointments.ts; convex/alerts.ts;
+convex/counsellorRequests.ts; convex/dashboard.ts; dashboard/src/App.tsx;
+dashboard/src/main.tsx; dashboard/src/components/AuthContext.tsx;
+dashboard/src/layouts/DashboardLayout.tsx; dashboard/src/pages/*; package.json.
+The Convex AI guideline file was read before reviewing Convex source.
+
+WORKTREE NOTE
+-------------
+At audit start, git status showed pre-existing deletions under .claude/skills,
+deletions of several root-level files, and a modified app/index.tsx. The existing
+app/index.tsx diff changes splash video rendering/imports. Those changes were
+left untouched. This audit file is the only file created for this request.

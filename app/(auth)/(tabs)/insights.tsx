@@ -30,10 +30,25 @@ export default function InsightsScreen() {
     );
   }
 
-  // Data prep for charts
-  const rawEmotions = [...stats.emotionLogs].sort((a, b) => a.createdAt - b.createdAt).slice(-7);
-  const emotionLabels = rawEmotions.length > 0 ? rawEmotions.map((log: any) => new Date(log.createdAt).toLocaleDateString(undefined, { weekday: 'short' })) : ["-"];
-  const emotionData = rawEmotions.length > 0 ? rawEmotions.map((log: any) => log.preIntensity || 0) : [0];
+  // Data prep for 7-day daily mood trend chart
+  // Normalized telemetry: consume stats.recentDailyMood (authoritative daily check-ins), fallback defensively to compatibility stats.emotionLogs
+  const dailyMoodEntries = stats.recentDailyMood ?? (stats.emotionLogs ? [...stats.emotionLogs].sort((a: any, b: any) => a.createdAt - b.createdAt).slice(-7) : []);
+  const hasCheckins = dailyMoodEntries.length > 0;
+
+  const moodLabels = hasCheckins
+    ? dailyMoodEntries.map((entry: any) => {
+        if (entry.dateStr) {
+          const [year, month, day] = entry.dateStr.split("-").map(Number);
+          const d = new Date(year, month - 1, day);
+          return d.toLocaleDateString(undefined, { weekday: "short" });
+        }
+        return new Date(entry.createdAt).toLocaleDateString(undefined, { weekday: "short" });
+      })
+    : ["-"];
+
+  const moodData = hasCheckins
+    ? dailyMoodEntries.map((entry: any) => entry.intensity ?? entry.preIntensity ?? 0)
+    : [0];
 
   const chartConfig = {
     backgroundGradientFrom: colors.white,
@@ -103,7 +118,7 @@ export default function InsightsScreen() {
             <Ionicons name="trending-up-outline" size={18} color={colors.success} />
           </View>
           <Text style={styles.improvementText}>
-            {t("insights.weeklyProgressNote")}
+            {hasCheckins ? t("insights.weeklyProgressNote") : t("insights.subtitle")}
           </Text>
         </View>
 
@@ -111,26 +126,34 @@ export default function InsightsScreen() {
         <Text style={styles.sectionTitle}>{t("insights.moodTrendTitle")}</Text>
         <Text style={styles.sectionSubtitle}>{t("insights.moodTrendSubtitle")}</Text>
         <View style={styles.chartCard}>
-          <LineChart
-            data={{
-              labels: emotionLabels,
-              datasets: [{
-                data: emotionData,
-                color: (opacity = 1) => colors.primary,
-                strokeWidth: 4
-              }]
-            }}
-            width={width - Theme.spacing.lg * 2 - 32}
-            height={190}
-            chartConfig={chartConfig}
-            bezier
-            withHorizontalLines={true}
-            withVerticalLines={false}
-            withDots={true}
-            withInnerLines={false}
-            withOuterLines={false}
-            style={styles.chart}
-          />
+          {hasCheckins ? (
+            <LineChart
+              data={{
+                labels: moodLabels,
+                datasets: [{
+                  data: moodData,
+                  color: (opacity = 1) => colors.primary,
+                  strokeWidth: 4
+                }]
+              }}
+              width={width - Theme.spacing.lg * 2 - 32}
+              height={190}
+              chartConfig={chartConfig}
+              bezier={dailyMoodEntries.length > 1}
+              withHorizontalLines={true}
+              withVerticalLines={false}
+              withDots={true}
+              withInnerLines={false}
+              withOuterLines={false}
+              style={styles.chart}
+            />
+          ) : (
+            <View style={styles.emptyChartContainer}>
+              <Ionicons name="calendar-outline" size={28} color={colors.textSecondary} />
+              <Text style={styles.emptyChartText}>{t("insights.moodTrendTitle")}</Text>
+              <Text style={styles.emptyChartSubtext}>{t("insights.moodTrendSubtitle")}</Text>
+            </View>
+          )}
         </View>
 
         {/* Stats Grid */}
@@ -295,6 +318,25 @@ function stylesFactory(colors: any) {
     borderRadius: Theme.borderRadius.lg,
     marginLeft: -10,
   } as ViewStyle,
+  emptyChartContainer: {
+    height: 190,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: Theme.spacing.md,
+  } as ViewStyle,
+  emptyChartText: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: 14,
+    color: colors.text,
+    marginTop: 8,
+    marginBottom: 4,
+  } as TextStyle,
+  emptyChartSubtext: {
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: 12,
+    color: colors.textSecondary,
+    textAlign: 'center',
+  } as TextStyle,
   statsGrid: {
     flexDirection: 'row',
     gap: 10,

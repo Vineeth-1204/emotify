@@ -40,6 +40,14 @@ export default defineSchema({
     biometricEnabled: v.optional(v.boolean()),
     lastLoginAt: v.optional(v.number()),
     temp_password: v.optional(v.string()), // Transient plain-text password shown to admin after reset, cleared after viewing
+    mitraPreferences: v.optional(
+      v.object({
+        name: v.string(),
+        avatarGender: v.string(), // "female" | "male"
+        avatarVariant: v.optional(v.string()),
+        updatedAt: v.optional(v.number()),
+      })
+    ),
   })
     .index("by_clerkId", ["clerkId"])
     .index("by_mobile_number", ["mobile_number"])
@@ -61,6 +69,9 @@ export default defineSchema({
     description: v.optional(v.string()),
     status: v.string(), // "pending" | "waiting" | "accepted" | "rejected" | "completed" | "scheduled" | "cancelled"
     createdAt: v.number(),
+    sourceType: v.optional(v.string()), // "self_initiated" | "triage" | "counselor" | "screening"
+    attemptId: v.optional(v.id("screeningAttempts")),
+    triageId: v.optional(v.id("triages")),
 
     // New fields for two-way system
     title: v.optional(v.string()),
@@ -163,18 +174,23 @@ export default defineSchema({
     psychosisFlag: v.boolean(),
     triageId: v.optional(v.id("triages")),
     screeningId: v.optional(v.id("screenings")),
+    attemptType: v.optional(v.union(v.literal("baseline"), v.literal("reassessment"), v.literal("force_retest"))),
   })
     .index("by_userId", ["userId"])
     .index("by_status", ["status"])
-    .index("by_startedAt", ["startedAt"]),
+    .index("by_startedAt", ["startedAt"])
+    .index("by_triageId", ["triageId"]),
 
   triages: defineTable({
     userId: v.string(),
     level: v.string(),
     suicideFlag: v.boolean(),
     psychosisFlag: v.boolean(),
+    attemptId: v.optional(v.id("screeningAttempts")),
     createdAt: v.number(),
-  }).index("by_userId", ["userId"]),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_attemptId", ["attemptId"]),
 
   alerts: defineTable({
     userId: v.string(),
@@ -182,9 +198,13 @@ export default defineSchema({
     status: v.string(),
     createdAt: v.number(),
     acknowledgedAt: v.optional(v.number()),
+    attemptId: v.optional(v.id("screeningAttempts")),
+    triageId: v.optional(v.id("triages")),
   })
     .index("by_userId", ["userId"])
-    .index("by_status", ["status"]),
+    .index("by_status", ["status"])
+    .index("by_attemptId", ["attemptId"])
+    .index("by_triageId", ["triageId"]),
 
   emotionLogs: defineTable({
     userId: v.string(),
@@ -206,6 +226,9 @@ export default defineSchema({
     completedAt: v.optional(v.number()),
     createdAt: v.number(),
     duration: v.optional(v.number()), // Legacy
+    sourceType: v.optional(v.string()), // "self_initiated" | "routine" | "screening" | "triage" | "counselor"
+    attemptId: v.optional(v.id("screeningAttempts")),
+    triageId: v.optional(v.id("triages")),
   }).index("by_userId", ["userId"]),
 
   microGoals: defineTable({
@@ -236,6 +259,9 @@ export default defineSchema({
     isDailyChallenge: v.optional(v.boolean()),
     xpAwarded: v.optional(v.number()),
     coinsAwarded: v.optional(v.number()),
+    sourceType: v.optional(v.string()), // "cbt" | "self_initiated" | "routine" | "screening"
+    attemptId: v.optional(v.id("screeningAttempts")),
+    triageId: v.optional(v.id("triages")),
   }).index("by_userId", ["userId"]),
 
   points: defineTable({
@@ -285,6 +311,9 @@ export default defineSchema({
     saved_reframe_flag: v.boolean(),
     favorite: v.optional(v.boolean()),
     createdAt: v.number(),
+    sourceType: v.optional(v.string()), // "self_initiated" | "cbt" | "screening" | "counselor" | "routine"
+    attemptId: v.optional(v.id("screeningAttempts")),
+    triageId: v.optional(v.id("triages")),
   })
     .index("by_user", ["userId"])
     .index("by_createdAt", ["createdAt"]),
@@ -297,6 +326,9 @@ export default defineSchema({
     status: v.optional(v.string()), // "pending" | "scheduled" | "completed" | "dismissed"
     notes: v.optional(v.string()),
     updatedAt: v.optional(v.number()),
+    sourceType: v.optional(v.string()), // "self_initiated" | "cbt_crisis" | "screening" | "triage"
+    attemptId: v.optional(v.id("screeningAttempts")),
+    triageId: v.optional(v.id("triages")),
   }).index("by_user_id", ["user_id"]),
 
   followUps: defineTable({
@@ -305,6 +337,9 @@ export default defineSchema({
     dueDate: v.number(),
     completed: v.boolean(),
     createdAt: v.number(),
+    sourceType: v.optional(v.string()), // "screening" | "triage" | "counselor" | "appointment"
+    attemptId: v.optional(v.id("screeningAttempts")),
+    triageId: v.optional(v.id("triages")),
   }).index("by_userId", ["userId"]),
 
   wellnessProfiles: defineTable({
@@ -373,7 +408,9 @@ export default defineSchema({
     dateStr: v.string(), // "YYYY-MM-DD"
     mood: v.string(),
     createdAt: v.number(),
-  }).index("by_userId_and_dateStr", ["userId", "dateStr"]),
+  })
+    .index("by_userId_and_dateStr", ["userId", "dateStr"])
+    .index("by_userId", ["userId"]),
 
   weeklyMissions: defineTable({
     userId: v.string(),
@@ -405,6 +442,9 @@ export default defineSchema({
 
   cbtSessions: defineTable({
     userId: v.string(),
+    sourceType: v.optional(v.string()), // "self_initiated" | "screening" | "triage" | "counselor" | "routine"
+    attemptId: v.optional(v.id("screeningAttempts")),
+    triageId: v.optional(v.id("triages")),
     situation: v.optional(v.string()),
     automaticThought: v.optional(v.string()),
     emotion: v.optional(v.string()),

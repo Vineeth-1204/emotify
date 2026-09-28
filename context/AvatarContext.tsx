@@ -1,11 +1,12 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useQuery } from 'convex/react';
+import { useQuery, useMutation } from 'convex/react';
 import { api } from '@/convex/_generated/api';
 import { useAppAuth } from '@/utils/auth';
 import { AvatarState } from '@/components/avatar/MitraAvatar';
 
 export type HomeEmotionCard = 'good' | 'calm' | 'low' | 'heavy';
+export type AvatarGender = 'female' | 'male';
 
 export interface EmotionResolution {
   primaryEmotion: string; // 'happy' | 'calm' | 'sad' | 'worried'
@@ -17,6 +18,9 @@ export interface EmotionResolution {
 interface AvatarContextType {
   avatarName: string;
   setAvatarName: (name: string) => Promise<void>;
+  avatarGender: AvatarGender;
+  setAvatarGender: (gender: AvatarGender) => Promise<void>;
+  setMitraPreferences: (prefs: { name?: string; avatarGender?: AvatarGender }) => Promise<void>;
   avatarState: AvatarState;
   setAvatarState: (newState: AvatarState, priority?: number) => void;
   triggerSafetyState: () => void;
@@ -57,40 +61,138 @@ const PRIORITY_LEVELS: Record<AvatarState, number> = {
   idle: 5,      // Lowest
 };
 
+const ASYNC_KEY_NAME = '@emotify_avatar_name';
+const ASYNC_KEY_GENDER = '@emotify_avatar_gender';
+
 export const AvatarProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user } = useAppAuth();
   const dbUser = useQuery(api.users.getByClerkId, user?.id ? { clerkId: user.id } : 'skip');
   const latestTriage = useQuery(api.triage.getLatest, user?.id ? { userId: user.id } : 'skip');
   const userGoals = useQuery(api.microGoals.getUserGoals, user?.id ? { userId: user.id } : 'skip');
+  const backendPrefs = useQuery(
+    api.users.getMitraPreferences,
+    user?.id ? { userId: user.id } : 'skip'
+  );
+  const updateMitraPrefsMutation = useMutation(api.users.updateMitraPreferences);
 
   const [avatarState, setInternalAvatarState] = useState<AvatarState>('idle');
   const [avatarName, setAvatarNameState] = useState<string>('Mitra');
+  const [avatarGender, setAvatarGenderState] = useState<AvatarGender>('female');
   const [isSafetyActive, setIsSafetyActive] = useState(false);
   const [isCelebrating, setIsCelebrating] = useState(false);
 
+  // 1. Initial load from local AsyncStorage (instant rendering)
   useEffect(() => {
-    const loadAvatarName = async () => {
+    const loadCachedPrefs = async () => {
       try {
-        const stored = await AsyncStorage.getItem('@emotify_avatar_name');
-        if (stored && stored.trim().length > 0) {
-          setAvatarNameState(stored.trim());
+        const [cachedName, cachedGender] = await Promise.all([
+          AsyncStorage.getItem(ASYNC_KEY_NAME),
+          AsyncStorage.getItem(ASYNC_KEY_GENDER),
+        ]);
+        if (cachedName && cachedName.trim().length > 0) {
+          setAvatarNameState(cachedName.trim());
+        }
+        if (cachedGender === 'female' || cachedGender === 'male') {
+          setAvatarGenderState(cachedGender);
         }
       } catch (e) {
-        console.error('Failed to load avatar name:', e);
+        console.error('Failed to load cached avatar preferences:', e);
       }
     };
-    loadAvatarName();
+    loadCachedPrefs();
   }, []);
 
-  const setAvatarName = useCallback(async (name: string) => {
-    const cleanName = name.trim() || 'Mitra';
-    setAvatarNameState(cleanName);
-    try {
-      await AsyncStorage.setItem('@emotify_avatar_name', cleanName);
-    } catch (e) {
-      console.error('Failed to save avatar name:', e);
+  // 2. Synchronize with backend profile when available
+  useEffect(() => {
+    const prefs = backendPrefs || dbUser?.mitraPreferences;
+    if (prefs) {
+      if (prefs.name && prefs.name.trim().length > 0) {
+        setAvatarNameState(prefs.name);
+        AsyncStorage.setItem(ASYNC_KEY_NAME, prefs.name).catch(() => {});
+      }
+      if (prefs.avatarGender === 'female' || prefs.avatarGender === 'male') {
+        setAvatarGenderState(prefs.avatarGender);
+        AsyncStorage.setItem(ASYNC_KEY_GENDER, prefs.avatarGender).catch(() => {});
+      }
     }
-  }, []);
+  }, [backendPrefs, dbUser?.mitraPreferences]);
+
+  // Set avatar name persistently
+  const setAvatarName = useCallback(
+    async (name: string) => {
+      let cleanName = name.replace(/[\x00-\x1F\x7F]/g, '').trim();
+      if (cleanName.length > 30) cleanName = cleanName.substring(0, 30).trim();
+      if (!cleanName) cleanName = 'Mitra';
+
+      setAvatarNameState(cleanName);
+      try {
+        await AsyncStorage.setItem(ASYNC_KEY_NAME, cleanName);
+        if (user?.id) {
+          await updateMitraPrefsMutation({
+            userId: user.id,
+            name: cleanName,
+          });
+        }
+      } catch (e) {
+        console.error('Failed to save avatar name:', e);
+      }
+    },
+    [user?.id, updateMitraPrefsMutation]
+  );
+
+  // Set avatar gender persistently
+  const setAvatarGender = useCallback(
+    async (gender: AvatarGender) => {
+      const validGender: AvatarGender = gender === 'male' ? 'male' : 'female';
+      setAvatarGenderState(validGender);
+      try {
+        await AsyncStorage.setItem(ASYNC_KEY_GENDER, validGender);
+        if (user?.id) {
+          await updateMitraPrefsMutation({
+            userId: user.id,
+            avatarGender: validGender,
+          });
+        }
+      } catch (e) {
+        console.error('Failed to save avatar gender:', e);
+      }
+    },
+    [user?.id, updateMitraPrefsMutation]
+  );
+
+  // Set both simultaneously
+  const setMitraPreferences = useCallback(
+    async (prefs: { name?: string; avatarGender?: AvatarGender }) => {
+      let cleanName: string | undefined = undefined;
+      if (prefs.name !== undefined) {
+        let n = prefs.name.replace(/[\x00-\x1F\x7F]/g, '').trim();
+        if (n.length > 30) n = n.substring(0, 30).trim();
+        cleanName = n.length > 0 ? n : 'Mitra';
+        setAvatarNameState(cleanName);
+        await AsyncStorage.setItem(ASYNC_KEY_NAME, cleanName).catch(() => {});
+      }
+
+      let validGender: AvatarGender | undefined = undefined;
+      if (prefs.avatarGender !== undefined) {
+        validGender = prefs.avatarGender === 'male' ? 'male' : 'female';
+        setAvatarGenderState(validGender);
+        await AsyncStorage.setItem(ASYNC_KEY_GENDER, validGender).catch(() => {});
+      }
+
+      if (user?.id) {
+        try {
+          await updateMitraPrefsMutation({
+            userId: user.id,
+            name: cleanName,
+            avatarGender: validGender,
+          });
+        } catch (e) {
+          console.error('Failed to save preferences to Convex:', e);
+        }
+      }
+    },
+    [user?.id, updateMitraPrefsMutation]
+  );
 
   // Age Group detection: default to 13-18 if <=18 or undefined; 19-24 if >=19
   const ageGroup: '13-18' | '19-24' = useMemo(() => {
@@ -266,6 +368,9 @@ export const AvatarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       value={{
         avatarName,
         setAvatarName,
+        avatarGender,
+        setAvatarGender,
+        setMitraPreferences,
         avatarState,
         setAvatarState,
         triggerSafetyState,

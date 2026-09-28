@@ -1,17 +1,20 @@
 import { v } from "convex/values";
 import { query, mutation } from "./_generated/server";
 import { checkRateLimit } from "./rateLimiter";
+import { assertCanAccessStudent } from "./authz";
 
 export const getProfile = query({
   args: { userId: v.optional(v.string()) },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return null;
-    const userId = identity.subject;
+    const targetUserId = args.userId || identity.subject;
+
+    await assertCanAccessStudent(ctx, targetUserId);
 
     return await ctx.db
       .query("wellnessProfiles")
-      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .withIndex("by_userId", (q) => q.eq("userId", targetUserId))
       .unique();
   },
 });
@@ -19,6 +22,7 @@ export const getProfile = query({
 export const updateProfile = mutation({
   args: {
     userId: v.optional(v.string()),
+    timezoneOffsetMinutes: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
@@ -28,11 +32,28 @@ export const updateProfile = mutation({
     await checkRateLimit(ctx, userId, "journal_write", 5, 60000);
 
     // 1. Fetch all relevant data for generation
-    const screenings = await ctx.db
-      .query("screenings")
+    const attempts = await ctx.db
+      .query("screeningAttempts")
       .withIndex("by_userId", (q) => q.eq("userId", userId))
       .order("desc")
       .take(5);
+
+    let screenings: any[] = [];
+    const completed = attempts.filter((a) => a.status === "completed");
+    if (completed.length > 0) {
+      screenings = completed.map((a) => ({
+        phq9_total: a.results?.phq9?.score ?? 0,
+        gad7_total: a.results?.gad7?.score ?? 0,
+        pq16_total: a.results?.pq16?.score ?? 0,
+        createdAt: a.completedAt || a.startedAt,
+      }));
+    } else {
+      screenings = await ctx.db
+        .query("screenings")
+        .withIndex("by_userId", (q) => q.eq("userId", userId))
+        .order("desc")
+        .take(5);
+    }
 
     const emotionLogs = await ctx.db
       .query("emotionLogs")
@@ -83,10 +104,22 @@ export const updateProfile = mutation({
     if (jpmrLogs.length < 2) wellness_goals.push("Improve focus");
 
     // Energy pattern (mock logic based on creation times)
-    const morningLogs = emotionLogs.filter(log => {
-      const hour = new Date(log.createdAt).getHours();
-      return hour >= 5 && hour < 12;
-    }).length;
+    let morningLogs = 0;
+    if (args.timezoneOffsetMinutes !== undefined) {
+      // args.timezoneOffsetMinutes is JS getTimezoneOffset() in minutes (UTC - local)
+      morningLogs = emotionLogs.filter(log => {
+        const localTime = new Date(log.createdAt - args.timezoneOffsetMinutes! * 60000);
+        const hour = localTime.getUTCHours();
+        return hour >= 5 && hour < 12;
+      }).length;
+    } else {
+      // Documented architectural dependency: Without client-provided timezone offset
+      // or a user timezone database field, server runtime executes in UTC.
+      morningLogs = emotionLogs.filter(log => {
+        const hour = new Date(log.createdAt).getHours();
+        return hour >= 5 && hour < 12;
+      }).length;
+    }
     if (morningLogs > 3) energy_pattern = "Morning person";
     else energy_pattern = "Evening person";
 

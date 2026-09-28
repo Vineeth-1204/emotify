@@ -3,6 +3,7 @@ import { mutation, query, internalMutation } from "./_generated/server";
 import { checkRateLimit } from "./rateLimiter";
 import { logAuditEvent } from "./audit";
 import type { Id } from "./_generated/dataModel";
+import { assertCanAccessStudent } from "./authz";
 
 // ==========================================
 // 1. GOAL ENGINE & RECOMMENDATION TEMPLATES
@@ -71,12 +72,42 @@ export function getLevelForXp(xp: number): number {
   return 10;
 }
 
-async function ensureWeeklyMission(ctx: any, userId: string, now: Date) {
+function isValidCheckinDateStr(dateStr: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return false;
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const parsed = new Date(y, m - 1, d);
+  if (parsed.getFullYear() !== y || parsed.getMonth() !== m - 1 || parsed.getDate() !== d) {
+    return false;
+  }
+  // Max allowed future: up to 1 day ahead of UTC to account for timezones up to UTC+14
+  const maxAllowedFuture = new Date();
+  maxAllowedFuture.setUTCDate(maxAllowedFuture.getUTCDate() + 1);
+  const maxDateStr = maxAllowedFuture.toISOString().split("T")[0];
+  return dateStr <= maxDateStr;
+}
+
+function getPreviousDateStr(dateStr: string): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const date = new Date(y, m - 1, d);
+  date.setDate(date.getDate() - 1);
+  const prevY = date.getFullYear();
+  const prevM = String(date.getMonth() + 1).padStart(2, "0");
+  const prevD = String(date.getDate()).padStart(2, "0");
+  return `${prevY}-${prevM}-${prevD}`;
+}
+
+function getMondayDateStr(now: Date): string {
   const day = now.getDay();
   const diff = now.getDate() - day + (day === 0 ? -6 : 1); // adjust when day is sunday
-  const monday = new Date(now.getTime());
-  monday.setDate(diff);
-  const weekStart = monday.toISOString().split("T")[0];
+  const monday = new Date(now.getFullYear(), now.getMonth(), diff);
+  const y = monday.getFullYear();
+  const m = String(monday.getMonth() + 1).padStart(2, "0");
+  const d = String(monday.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+async function ensureWeeklyMission(ctx: any, userId: string, now: Date) {
+  const weekStart = getMondayDateStr(now);
 
   const mission = await ctx.db
     .query("weeklyMissions")
@@ -130,7 +161,11 @@ async function ensureMonthlyChallenge(ctx: any, userId: string, now: Date) {
 }
 
 // Check and resolve streak status dynamically, applying monthly freeze if needed
-async function checkAndFreezeStreak(ctx: any, userId: string): Promise<{ currentStreak: number; longestStreak: number; frozen: boolean }> {
+async function checkAndFreezeStreak(
+  ctx: any,
+  userId: string,
+  clientDateStr?: string
+): Promise<{ currentStreak: number; longestStreak: number; frozen: boolean }> {
   const streak = await ctx.db
     .query("streaks")
     .withIndex("by_userId", (q: any) => q.eq("userId", userId))
@@ -140,14 +175,16 @@ async function checkAndFreezeStreak(ctx: any, userId: string): Promise<{ current
     return { currentStreak: 0, longestStreak: 0, frozen: false };
   }
 
-  const todayStr = new Date().toISOString().split("T")[0];
+  const todayStr =
+    clientDateStr && isValidCheckinDateStr(clientDateStr)
+      ? clientDateStr
+      : new Date().toISOString().split("T")[0];
+
   if (streak.lastCompletionDate === todayStr || streak.streakFrozenToday) {
     return { currentStreak: streak.currentStreak, longestStreak: streak.longestStreak, frozen: !!streak.streakFrozenToday };
   }
 
-  const yesterday = new Date();
-  yesterday.setDate(yesterday.getDate() - 1);
-  const yesterdayStr = yesterday.toISOString().split("T")[0];
+  const yesterdayStr = getPreviousDateStr(todayStr);
 
   if (streak.lastCompletionDate === yesterdayStr) {
     return { currentStreak: streak.currentStreak, longestStreak: streak.longestStreak, frozen: false };
@@ -190,7 +227,7 @@ async function checkAndFreezeStreak(ctx: any, userId: string): Promise<{ current
 // 3. SERVICE: RECOMMENDATION ENGINE
 // ==========================================
 
-async function generateRecommendedGoals(ctx: any, userId: string, mood: string) {
+async function generateRecommendedGoals(ctx: any, userId: string, mood: string, dateStr?: string) {
   // Get latest clinical triage level
   const triage = await ctx.db
     .query("triages")
@@ -198,12 +235,6 @@ async function generateRecommendedGoals(ctx: any, userId: string, mood: string) 
     .order("desc")
     .first();
   const triageLevel = triage?.level || "mild";
-
-  const screenings = await ctx.db
-    .query("screenings")
-    .withIndex("by_userId", (q: any) => q.eq("userId", userId))
-    .order("desc")
-    .first();
   const isSevere = triageLevel === "severe" || triageLevel === "suicide_flag" || triageLevel === "psychosis_flag";
   const isModerate = triageLevel === "moderate";
 
@@ -228,7 +259,10 @@ async function generateRecommendedGoals(ctx: any, userId: string, mood: string) 
   const selectedLarge = shuffle(largeList).slice(0, 1);
   const selectedChallenge = shuffle(challengeList).slice(0, 1);
 
-  const todayStr = new Date().toISOString().split("T")[0];
+  const todayStr =
+    dateStr && isValidCheckinDateStr(dateStr)
+      ? dateStr
+      : new Date().toISOString().split("T")[0];
 
   // Store in database
   const insertedIds = [];
@@ -246,6 +280,7 @@ async function generateRecommendedGoals(ctx: any, userId: string, mood: string) 
       completed: false,
       skipped: false,
       createdAt: Date.now(),
+      sourceType: isChallenge ? "challenge" : "routine",
       goal: g.title, // legacy compatibility
       date: todayStr, // legacy compatibility
       isDailyChallenge: isChallenge,
@@ -277,19 +312,33 @@ async function generateRecommendedGoals(ctx: any, userId: string, mood: string) 
 // ==========================================
 
 export const getTodayGoals = query({
-  args: { userId: v.optional(v.string()) },
+  args: {
+    userId: v.optional(v.string()),
+    dateStr: v.optional(v.string()),
+  },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return [];
-    const userId = identity.subject;
+    const targetUserId = args.userId || identity.subject;
 
-    const now = new Date();
-    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-    const endOfDay = startOfDay + 24 * 60 * 60 * 1000;
+    await assertCanAccessStudent(ctx, targetUserId);
+
+    let startOfDay: number;
+    let endOfDay: number;
+
+    if (args.dateStr && isValidCheckinDateStr(args.dateStr)) {
+      const [y, m, d] = args.dateStr.split("-").map(Number);
+      startOfDay = new Date(y, m - 1, d, 0, 0, 0, 0).getTime();
+      endOfDay = startOfDay + 24 * 60 * 60 * 1000;
+    } else {
+      const now = new Date();
+      startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+      endOfDay = startOfDay + 24 * 60 * 60 * 1000;
+    }
 
     const goals = await ctx.db
       .query("microGoals")
-      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .withIndex("by_userId", (q) => q.eq("userId", targetUserId))
       .collect();
 
     return goals.filter((g) => g.createdAt >= startOfDay && g.createdAt < endOfDay);
@@ -301,24 +350,29 @@ export const getUserGoals = query({
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return [];
-    const userId = identity.subject;
+    const targetUserId = args.userId || identity.subject;
+
+    await assertCanAccessStudent(ctx, targetUserId);
 
     return await ctx.db
       .query("microGoals")
-      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .withIndex("by_userId", (q) => q.eq("userId", targetUserId))
       .order("desc")
       .collect();
   },
 });
 
 export const getTodayCheckin = query({
-  args: {},
-  handler: async (ctx) => {
+  args: { dateStr: v.optional(v.string()) },
+  handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return null;
     const userId = identity.subject;
 
-    const todayStr = new Date().toISOString().split("T")[0];
+    const todayStr =
+      args.dateStr && isValidCheckinDateStr(args.dateStr)
+        ? args.dateStr
+        : new Date().toISOString().split("T")[0];
     return await ctx.db
       .query("dailyCheckins")
       .withIndex("by_userId_and_dateStr", (q) => q.eq("userId", userId).eq("dateStr", todayStr))
@@ -331,11 +385,13 @@ export const getGoalHistory = query({
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return [];
-    const userId = identity.subject;
+    const targetUserId = args.userId || identity.subject;
+
+    await assertCanAccessStudent(ctx, targetUserId);
 
     return await ctx.db
       .query("microGoals")
-      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .withIndex("by_userId", (q) => q.eq("userId", targetUserId))
       .order("desc")
       .collect();
   },
@@ -378,12 +434,8 @@ export const getWeeklyMission = query({
     if (!identity) return null;
     const userId = identity.subject;
 
-    // Get current Monday representation YYYY-MM-DD
     const now = new Date();
-    const day = now.getDay();
-    const diff = now.getDate() - day + (day === 0 ? -6 : 1); // adjust when day is sunday
-    const monday = new Date(now.setDate(diff));
-    const weekStart = monday.toISOString().split("T")[0];
+    const weekStart = getMondayDateStr(now);
 
     const mission = await ctx.db
       .query("weeklyMissions")
@@ -441,29 +493,36 @@ export const getPoints = query({
 });
 
 export const getStreak = query({
-  args: { userId: v.optional(v.string()) },
+  args: {
+    userId: v.optional(v.string()),
+    dateStr: v.optional(v.string()),
+  },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return { currentStreak: 0, longestStreak: 0, frozen: false };
-    const userId = identity.subject;
+    const targetUserId = args.userId || identity.subject;
+
+    await assertCanAccessStudent(ctx, targetUserId);
 
     const record = await ctx.db
       .query("streaks")
-      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .withIndex("by_userId", (q) => q.eq("userId", targetUserId))
       .first();
 
     if (!record) {
       return { currentStreak: 0, longestStreak: 0, frozen: false };
     }
 
-    const todayStr = new Date().toISOString().split("T")[0];
+    const todayStr =
+      args.dateStr && isValidCheckinDateStr(args.dateStr)
+        ? args.dateStr
+        : new Date().toISOString().split("T")[0];
+
     if (record.lastCompletionDate === todayStr || record.streakFrozenToday) {
       return { currentStreak: record.currentStreak, longestStreak: record.longestStreak, frozen: !!record.streakFrozenToday };
     }
 
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    const yesterdayStr = yesterday.toISOString().split("T")[0];
+    const yesterdayStr = getPreviousDateStr(todayStr);
 
     if (record.lastCompletionDate === yesterdayStr) {
       return { currentStreak: record.currentStreak, longestStreak: record.longestStreak, frozen: false };
@@ -526,13 +585,22 @@ export const getGamificationStats = query({
 // ==========================================
 
 export const submitMorningCheckin = mutation({
-  args: { mood: v.string() },
+  args: {
+    mood: v.string(),
+    dateStr: v.optional(v.string()),
+    allowUpdate: v.optional(v.boolean()),
+  },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
     const userId = identity.subject;
+    if (args.dateStr) {
+      if (!isValidCheckinDateStr(args.dateStr)) {
+        throw new Error("Invalid check-in date: Date must be a valid calendar date (YYYY-MM-DD) and cannot be in the future.");
+      }
+    }
 
-    const todayStr = new Date().toISOString().split("T")[0];
+    const todayStr = args.dateStr || new Date().toISOString().split("T")[0];
 
     // Check if checkin already exists for today
     const existing = await ctx.db
@@ -541,6 +609,10 @@ export const submitMorningCheckin = mutation({
       .first();
 
     if (existing) {
+      if (args.allowUpdate) {
+        await ctx.db.patch(existing._id, { mood: args.mood });
+        return { success: true, updated: true, checkinId: existing._id };
+      }
       return { success: false, message: "Already checked in today." };
     }
 
@@ -573,10 +645,10 @@ export const submitMorningCheckin = mutation({
     }
 
     // Call goal recommendation engine
-    const insertedIds = await generateRecommendedGoals(ctx, userId, args.mood);
+    const insertedIds = await generateRecommendedGoals(ctx, userId, args.mood, todayStr);
 
     // Check and resolve streak freezes/resets in DB
-    await checkAndFreezeStreak(ctx, userId);
+    await checkAndFreezeStreak(ctx, userId, todayStr);
 
     // Ensure weekly and monthly missions exist
     const now = new Date();
@@ -642,7 +714,7 @@ export const snoozeGoal = mutation({
 
 async function completeGoalWithFeelingHelper(
   ctx: any,
-  args: { id: Id<"microGoals">; feelingAfter: string }
+  args: { id: Id<"microGoals">; feelingAfter: string; dateStr?: string }
 ) {
   const identity = await ctx.auth.getUserIdentity();
   if (!identity) throw new Error("Unauthenticated");
@@ -705,10 +777,14 @@ async function completeGoalWithFeelingHelper(
     level: currentLevel,
   });
 
-  // 3. Update Streaks
-  await checkAndFreezeStreak(ctx, userId);
+  const todayStr =
+    args.dateStr && isValidCheckinDateStr(args.dateStr)
+      ? args.dateStr
+      : new Date().toISOString().split("T")[0];
 
-  const todayStr = new Date().toISOString().split("T")[0];
+  // 3. Update Streaks
+  await checkAndFreezeStreak(ctx, userId, todayStr);
+
   const streakRecord = await ctx.db
     .query("streaks")
     .withIndex("by_userId", (q: any) => q.eq("userId", userId))
@@ -721,9 +797,7 @@ async function completeGoalWithFeelingHelper(
   if (streakRecord) {
     if (todayCompletedCount >= 2 && streakRecord.lastCompletionDate !== todayStr) {
       // Increment streak once 2 goals completed today
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
-      const yesterdayStr = yesterday.toISOString().split("T")[0];
+      const yesterdayStr = getPreviousDateStr(todayStr);
 
       if (streakRecord.lastCompletionDate === yesterdayStr) {
         currentStreak = streakRecord.currentStreak + 1;
@@ -870,6 +944,7 @@ export const completeGoalWithFeeling = mutation({
   args: {
     id: v.id("microGoals"),
     feelingAfter: v.string(),
+    dateStr: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     return await completeGoalWithFeelingHelper(ctx, args);
@@ -904,6 +979,10 @@ export const createGoal = mutation({
     category: v.string(),
     difficulty: v.string(),
     points: v.number(),
+    sourceType: v.optional(v.string()),
+    attemptId: v.optional(v.id("screeningAttempts")),
+    triageId: v.optional(v.id("triages")),
+    dateStr: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
@@ -912,7 +991,10 @@ export const createGoal = mutation({
 
     await checkRateLimit(ctx, userId, "journal_write", 5, 60000);
 
-    const todayStr = new Date().toISOString().split("T")[0];
+    const todayStr =
+      args.dateStr && isValidCheckinDateStr(args.dateStr)
+        ? args.dateStr
+        : new Date().toISOString().split("T")[0];
     return await ctx.db.insert("microGoals", {
       userId,
       goalId: args.goalId,
@@ -924,6 +1006,9 @@ export const createGoal = mutation({
       completed: false,
       skipped: false,
       createdAt: Date.now(),
+      sourceType: args.sourceType || "self_initiated",
+      attemptId: args.attemptId,
+      triageId: args.triageId,
       goal: args.goalTitle,
       date: todayStr,
       reminderStatus: "scheduled",
@@ -955,7 +1040,10 @@ export const scheduleGoal = mutation({
 });
 
 export const completeGoal = mutation({
-  args: { id: v.id("microGoals") },
+  args: {
+    id: v.id("microGoals"),
+    dateStr: v.optional(v.string()),
+  },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
@@ -969,7 +1057,7 @@ export const completeGoal = mutation({
     }
 
     // Redirect to default feeling mutation logic
-    const res = await completeGoalWithFeelingHelper(ctx, { id: args.id, feelingAfter: "same" });
+    const res = await completeGoalWithFeelingHelper(ctx, { id: args.id, feelingAfter: "same", dateStr: args.dateStr });
     return res;
   },
 });
@@ -981,6 +1069,9 @@ export const create = mutation({
     goal: v.string(),
     points: v.number(),
     date: v.string(),
+    sourceType: v.optional(v.string()),
+    attemptId: v.optional(v.id("screeningAttempts")),
+    triageId: v.optional(v.id("triages")),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
@@ -1000,6 +1091,9 @@ export const create = mutation({
       completed: false,
       skipped: false,
       createdAt: Date.now(),
+      sourceType: args.sourceType || "self_initiated",
+      attemptId: args.attemptId,
+      triageId: args.triageId,
       goal: args.goal,
       date: args.date,
       reminderStatus: "scheduled",

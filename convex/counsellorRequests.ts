@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation } from "./_generated/server";
 import { checkRateLimit } from "./rateLimiter";
+import { requireCounselorOrAdmin } from "./authz";
 
 export const create = mutation({
   args: {
@@ -8,6 +9,9 @@ export const create = mutation({
     thought_original: v.optional(v.string()),
     situation_text: v.optional(v.string()),
     timestamp: v.number(),
+    sourceType: v.optional(v.string()),
+    attemptId: v.optional(v.id("screeningAttempts")),
+    triageId: v.optional(v.id("triages")),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
@@ -22,6 +26,9 @@ export const create = mutation({
       situation_text: args.situation_text,
       timestamp: Date.now(),
       status: "pending",
+      sourceType: args.sourceType || "self_initiated",
+      attemptId: args.attemptId,
+      triageId: args.triageId,
     });
   },
 });
@@ -33,8 +40,7 @@ export const updateStatus = mutation({
     notes: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Unauthenticated");
+    await requireCounselorOrAdmin(ctx);
 
     await ctx.db.patch(args.requestId, {
       status: args.status,

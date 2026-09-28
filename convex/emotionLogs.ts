@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { checkRateLimit } from "./rateLimiter";
+import { assertCanAccessStudent } from "./authz";
 
 export const create = mutation({
   args: {
@@ -45,11 +46,13 @@ export const getRecent = query({
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return [];
-    const userId = identity.subject;
+    const targetUserId = args.userId || identity.subject;
+
+    await assertCanAccessStudent(ctx, targetUserId);
 
     return await ctx.db
       .query("emotionLogs")
-      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .withIndex("by_userId", (q) => q.eq("userId", targetUserId))
       .order("desc")
       .take(20);
   },

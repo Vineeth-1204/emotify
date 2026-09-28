@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { checkRateLimit } from "./rateLimiter";
+import { assertCanAccessStudent } from "./authz";
 
 export const create = mutation({
   args: {
@@ -18,18 +19,37 @@ export const create = mutation({
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Unauthenticated");
+    if (!identity || !identity.subject) throw new Error("Unauthenticated");
     const userId = identity.subject;
 
     await checkRateLimit(ctx, userId, "journal_write", 5, 60000);
 
     // Validation
-    if (args.averageIntensity < 0) {
-      throw new Error("Intensity cannot be negative.");
+    if (!args.emotionLabel || args.emotionLabel.trim().length === 0) {
+      throw new Error("Emotion label is required.");
     }
+
+    if (
+      typeof args.averageIntensity !== "number" ||
+      isNaN(args.averageIntensity) ||
+      args.averageIntensity < 1 ||
+      args.averageIntensity > 10
+    ) {
+      throw new Error("averageIntensity must be a valid number between 1 and 10.");
+    }
+
+    if (!Array.isArray(args.bodyRatings) || args.bodyRatings.length === 0) {
+      throw new Error("bodyRatings must be a non-empty array.");
+    }
+
     for (const rating of args.bodyRatings) {
-      if (rating.intensity < 0) {
-        throw new Error("Rating intensity cannot be negative.");
+      if (
+        typeof rating.intensity !== "number" ||
+        isNaN(rating.intensity) ||
+        rating.intensity < 1 ||
+        rating.intensity > 10
+      ) {
+        throw new Error(`Rating intensity for region '${rating.region}' must be a valid number between 1 and 10.`);
       }
     }
 
@@ -49,12 +69,15 @@ export const getRecentLogs = query({
   args: { userId: v.optional(v.string()) },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return [];
-    const userId = identity.subject;
+    if (!identity || !identity.subject) return [];
+    const targetUserId = args.userId || identity.subject;
+
+    // Enforce student isolation and authorized staff access
+    await assertCanAccessStudent(ctx, targetUserId);
 
     return await ctx.db
       .query("emotionMaps")
-      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .withIndex("by_userId", (q) => q.eq("userId", targetUserId))
       .order("desc")
       .take(50);
   },

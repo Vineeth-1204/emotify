@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { checkRateLimit } from "./rateLimiter";
+import { assertCanAccessStudent } from "./authz";
 
 export const create = mutation({
   args: {
@@ -12,6 +13,9 @@ export const create = mutation({
     newThought: v.string(),
     preIntensity: v.number(),
     postIntensity: v.number(),
+    sourceType: v.optional(v.string()),
+    attemptId: v.optional(v.id("screeningAttempts")),
+    triageId: v.optional(v.id("triages")),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
@@ -28,15 +32,26 @@ export const create = mutation({
       throw new Error("Text fields cannot be empty.");
     }
 
-    return await ctx.db.insert("reframes", {
+    // Redirect new writes to authoritative reframeLogs table
+    const improvementPercentage = args.preIntensity > 0
+      ? Math.max(0, Math.round(((args.preIntensity - args.postIntensity) / args.preIntensity) * 100))
+      : 0;
+
+    return await ctx.db.insert("reframeLogs", {
       userId,
-      situation: args.situation,
-      originalThought: args.originalThought,
-      thinkingTrap: args.thinkingTrap,
-      guidedAnswers: args.guidedAnswers,
-      newThought: args.newThought,
-      preIntensity: args.preIntensity,
-      postIntensity: args.postIntensity,
+      situation_text: args.situation,
+      thought_original: args.originalThought,
+      thinking_trap_choice: args.thinkingTrap,
+      guided_answers: args.guidedAnswers,
+      reframe_text: args.newThought,
+      pre_reframe_intensity: args.preIntensity,
+      post_reframe_intensity: args.postIntensity,
+      improvement_percentage: improvementPercentage,
+      saved_reframe_flag: true,
+      favorite: false,
+      sourceType: args.sourceType || "self_initiated",
+      attemptId: args.attemptId,
+      triageId: args.triageId,
       createdAt: Date.now(),
     });
   },
@@ -47,11 +62,36 @@ export const getRecent = query({
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return [];
-    const userId = identity.subject;
+    const targetUserId = args.userId || identity.subject;
 
+    await assertCanAccessStudent(ctx, targetUserId);
+
+    // Read from authoritative reframeLogs first
+    const logs = await ctx.db
+      .query("reframeLogs")
+      .withIndex("by_user", (q) => q.eq("userId", targetUserId))
+      .order("desc")
+      .take(20);
+
+    if (logs.length > 0) {
+      return logs.map((l) => ({
+        _id: l._id as any,
+        userId: l.userId,
+        situation: l.situation_text,
+        originalThought: l.thought_original,
+        thinkingTrap: l.thinking_trap_choice,
+        guidedAnswers: l.guided_answers,
+        newThought: l.reframe_text,
+        preIntensity: l.pre_reframe_intensity,
+        postIntensity: l.post_reframe_intensity,
+        createdAt: l.createdAt,
+      }));
+    }
+
+    // Historical fallback if user only has legacy reframes
     return await ctx.db
       .query("reframes")
-      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .withIndex("by_userId", (q) => q.eq("userId", targetUserId))
       .order("desc")
       .take(20);
   },
@@ -71,6 +111,9 @@ export const createLog = mutation({
     post_reframe_intensity: v.number(),
     improvement_percentage: v.number(),
     saved_reframe_flag: v.boolean(),
+    sourceType: v.optional(v.string()),
+    attemptId: v.optional(v.id("screeningAttempts")),
+    triageId: v.optional(v.id("triages")),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
@@ -99,6 +142,9 @@ export const createLog = mutation({
       improvement_percentage: args.improvement_percentage,
       saved_reframe_flag: args.saved_reframe_flag,
       favorite: false,
+      sourceType: args.sourceType || "self_initiated",
+      attemptId: args.attemptId,
+      triageId: args.triageId,
       createdAt: Date.now(),
     });
   },
@@ -171,11 +217,13 @@ export const getRecentLogs = query({
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return [];
-    const userId = identity.subject;
+    const targetUserId = args.userId || identity.subject;
+
+    await assertCanAccessStudent(ctx, targetUserId);
 
     return await ctx.db
       .query("reframeLogs")
-      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .withIndex("by_user", (q) => q.eq("userId", targetUserId))
       .order("desc")
       .collect();
   },

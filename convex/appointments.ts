@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { paginationOptsValidator } from "convex/server";
 import type { Id } from "./_generated/dataModel";
+import { assertCanAccessStudent, getAuthenticatedUser } from "./authz";
 
 /** Create an appointment (Admin only) with conflict check */
 export const createAppointment = mutation({
@@ -10,6 +11,9 @@ export const createAppointment = mutation({
     startTime: v.number(),
     endTime: v.number(),
     description: v.optional(v.string()),
+    sourceType: v.optional(v.string()),
+    attemptId: v.optional(v.id("screeningAttempts")),
+    triageId: v.optional(v.id("triages")),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
@@ -57,6 +61,9 @@ export const createAppointment = mutation({
       endTime: args.endTime,
       description: args.description,
       status: "scheduled",
+      sourceType: args.sourceType || "counselor",
+      attemptId: args.attemptId,
+      triageId: args.triageId,
       createdAt: Date.now(),
     });
 
@@ -64,15 +71,12 @@ export const createAppointment = mutation({
   },
 });
 
-/** List all appointments with patient details joined (Admin only) */
+/** List all appointments with patient details joined (Admin/Counselor) */
 export const listAllAppointments = query({
   args: {},
   handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return [];
-    
-    const caller = await ctx.db.get(identity.subject as Id<"users">);
-    if (!caller || caller.role !== "admin") return [];
+    const caller = await getAuthenticatedUser(ctx);
+    if (!caller || (caller.role !== "admin" && caller.role !== "counsellor")) return [];
 
     // Limit query to last 7 days of appointments up to future ones, and take max 100
     const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
@@ -103,6 +107,8 @@ export const listAllAppointments = query({
 export const getPatientAppointments = query({
   args: { userId: v.string() }, // Clerk userId or subject ID
   handler: async (ctx, args) => {
+    await assertCanAccessStudent(ctx, args.userId);
+
     let dbUser = await ctx.db.get(args.userId as Id<"users">);
     if (!dbUser) {
       dbUser = await ctx.db
@@ -232,6 +238,10 @@ export const updateAppointment = mutation({
 export const tempGetAppointments = query({
   args: {},
   handler: async (ctx) => {
+    const caller = await getAuthenticatedUser(ctx);
+    if (!caller || (caller.role !== "admin" && caller.role !== "counsellor")) {
+      throw new Error("Unauthorized: Staff access required.");
+    }
     return await ctx.db.query("appointments").collect();
   }
 });
@@ -247,6 +257,9 @@ export const createAppointmentRequest = mutation({
     date: v.string(), // YYYY-MM-DD
     time: v.string(), // 12-hour AM/PM
     reason: v.string(),
+    sourceType: v.optional(v.string()),
+    attemptId: v.optional(v.id("screeningAttempts")),
+    triageId: v.optional(v.id("triages")),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
@@ -272,6 +285,9 @@ export const createAppointmentRequest = mutation({
       time: args.time,
       reason: args.reason,
       status: "pending",
+      sourceType: args.sourceType || (args.createdBy === "admin" ? "counselor" : "self_initiated"),
+      attemptId: args.attemptId,
+      triageId: args.triageId,
       createdAt: Date.now(),
     });
 
@@ -406,11 +422,8 @@ export const completeAppointment = mutation({
 export const listAllTwoWayAppointments = query({
   args: {},
   handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return [];
-    
-    const caller = await ctx.db.get(identity.subject as Id<"users">);
-    if (!caller || caller.role !== "admin") return [];
+    const caller = await getAuthenticatedUser(ctx);
+    if (!caller || (caller.role !== "admin" && caller.role !== "counsellor")) return [];
 
     const appointments = await ctx.db.query("appointments").collect();
     
@@ -423,11 +436,8 @@ export const listAllTwoWayAppointments = query({
 export const listAllTwoWayAppointmentsPaginated = query({
   args: { paginationOpts: paginationOptsValidator },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return { page: [], isDone: true, continueCursor: "" };
-    
-    const caller = await ctx.db.get(identity.subject as Id<"users">);
-    if (!caller || caller.role !== "admin") return { page: [], isDone: true, continueCursor: "" };
+    const caller = await getAuthenticatedUser(ctx);
+    if (!caller || (caller.role !== "admin" && caller.role !== "counsellor")) return { page: [], isDone: true, continueCursor: "" };
 
     const results = await ctx.db.query("appointments")
       .order("desc")
@@ -443,6 +453,8 @@ export const listAllTwoWayAppointmentsPaginated = query({
 export const getTwoWayAppointmentsForPatient = query({
   args: { userId: v.string() }, // Clerk userId
   handler: async (ctx, args) => {
+    await assertCanAccessStudent(ctx, args.userId);
+
     let dbUser = await ctx.db.get(args.userId as Id<"users">);
     if (!dbUser) {
       dbUser = await ctx.db
@@ -466,6 +478,8 @@ export const getTwoWayAppointmentsForPatient = query({
 export const getTwoWayAppointmentsForPatientPaginated = query({
   args: { userId: v.string(), paginationOpts: paginationOptsValidator }, // Clerk userId
   handler: async (ctx, args) => {
+    await assertCanAccessStudent(ctx, args.userId);
+
     let dbUser = await ctx.db.get(args.userId as Id<"users">);
     if (!dbUser) {
       dbUser = await ctx.db

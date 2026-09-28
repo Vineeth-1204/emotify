@@ -1,6 +1,8 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
 import { checkRateLimit } from "./rateLimiter";
+import { assertCanAccessStudent } from "./authz";
 import {
   scorePHQ9Responses,
   scoreGAD7Responses,
@@ -31,10 +33,17 @@ export const submitScreeningAttempt = mutation({
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
-    const userId = identity?.subject || args.userId;
-    if (!userId) {
+    if (!identity || !identity.subject) {
       throw new Error("Unauthenticated: Must be logged in to submit screening.");
     }
+    const authSubject = identity.subject;
+
+    // Authoritative caller resolution: Student can only submit for their own identity.
+    // If a different args.userId is provided, caller MUST be authorized staff (admin/counselor).
+    if (args.userId && args.userId !== authSubject) {
+      await assertCanAccessStudent(ctx, args.userId);
+    }
+    const userId = (args.userId && args.userId !== authSubject) ? args.userId : authSubject;
 
     await checkRateLimit(ctx, userId, "journal_write", 5, 60000);
 
@@ -68,13 +77,21 @@ export const submitScreeningAttempt = mutation({
 
     const now = Date.now();
 
-    // 3. Resolve Patient ID if not explicitly supplied
+    // 3. Resolve Patient ID authoritatively via canonical users._id
     let patientId: string | undefined = args.patientId;
     if (!patientId) {
-      const user = await ctx.db
-        .query("users")
-        .filter((q) => q.eq(q.field("clerkId"), userId))
-        .first();
+      let user = null;
+      try {
+        user = await ctx.db.get(userId as Id<"users">);
+      } catch (e) {
+        // Not a valid Id<"users">, proceed to indexed fallback
+      }
+      if (!user) {
+        user = await ctx.db
+          .query("users")
+          .withIndex("by_clerkId", (q) => q.eq("clerkId", userId))
+          .first();
+      }
       if (user?.patientId) {
         patientId = user.patientId;
       }
@@ -84,21 +101,57 @@ export const submitScreeningAttempt = mutation({
     let requiresAlert = triage.requiresAlert;
     let alertType: string | undefined = triage.alertType;
 
-    const previousScreenings = await ctx.db
-      .query("screenings")
+    const priorAttempts = await ctx.db
+      .query("screeningAttempts")
       .withIndex("by_userId", (q) => q.eq("userId", userId))
       .order("desc")
       .take(1);
 
-    if (previousScreenings.length > 0) {
-      const last = previousScreenings[0];
-      if (phq9Result.score > last.phq9_total + 5 || gad7Result.score > last.gad7_total + 5) {
+    const lastCompleted = priorAttempts.find((a) => a.status === "completed");
+    if (lastCompleted && lastCompleted.results) {
+      const prevPhq = lastCompleted.results.phq9?.score ?? 0;
+      const prevGad = lastCompleted.results.gad7?.score ?? 0;
+      if (phq9Result.score > prevPhq + 5 || gad7Result.score > prevGad + 5) {
         requiresAlert = true;
         alertType = alertType || "escalation";
       }
+    } else {
+      const previousScreenings = await ctx.db
+        .query("screenings")
+        .withIndex("by_userId", (q) => q.eq("userId", userId))
+        .order("desc")
+        .take(1);
+
+      if (previousScreenings.length > 0) {
+        const last = previousScreenings[0];
+        if (phq9Result.score > last.phq9_total + 5 || gad7Result.score > last.gad7_total + 5) {
+          requiresAlert = true;
+          alertType = alertType || "escalation";
+        }
+      }
     }
 
-    // 5. Insert Triage record
+    // 5a. Server-Side Deterministic Attempt Type Classification
+    // Safe server-side logic:
+    // - If latest prior triage was "force_retest" -> "force_retest"
+    // - Else if user already has a prior completed screening attempt -> "reassessment"
+    // - Else (first approved screening) -> "baseline"
+    const latestPriorTriageDoc = await ctx.db
+      .query("triages")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .order("desc")
+      .first();
+
+    let attemptType: "baseline" | "reassessment" | "force_retest" = "baseline";
+    if (latestPriorTriageDoc?.level === "force_retest") {
+      attemptType = "force_retest";
+    } else if (lastCompleted) {
+      attemptType = "reassessment";
+    } else {
+      attemptType = "baseline";
+    }
+
+    // 5b. Insert Triage record
     const triageId = await ctx.db.insert("triages", {
       userId,
       level: triage.level,
@@ -107,21 +160,12 @@ export const submitScreeningAttempt = mutation({
       createdAt: now,
     });
 
-    // 6. Insert Alert if triggered by clinical flags
-    if (requiresAlert) {
-      await ctx.db.insert("alerts", {
-        userId,
-        type: alertType || "general",
-        status: "pending",
-        createdAt: now,
-      });
-    }
-
-    // 7. Insert authoritative Screening Attempt (supports multiple attempts non-destructively)
+    // 6. Insert authoritative Screening Attempt (supports multiple attempts non-destructively)
     const attemptId = await ctx.db.insert("screeningAttempts", {
       userId,
       patientId,
       status: "completed",
+      attemptType,
       startedAt: args.startedAt ?? now,
       completedAt: now,
       instrumentVersions: {
@@ -183,26 +227,29 @@ export const submitScreeningAttempt = mutation({
       triageId,
     });
 
-    // 8. Mirror to legacy screenings table for counselor dashboard & historical compatibility
-    const screeningId = await ctx.db.insert("screenings", {
-      userId,
-      phq9_total: phq9Result.score,
-      gad7_total: gad7Result.score,
-      pq16_total: pq16Result.score, // Genuine validated PQ-16 score (NOT 0)
-      wsas_total: wsasResult.administered ? wsasResult.score : undefined,
-      reqol10_total: reqol10Result.administered ? reqol10Result.score : undefined,
-      phq9_item9_flag: phq9Result.item9Flag ?? false,
-      phq9_item9_score: phq9Result.item9Score ?? 0,
-      createdAt: now,
-      attemptId: String(attemptId),
-    });
+    // 7. Establish deterministic provenance on Triage
+    await ctx.db.patch(triageId, { attemptId });
 
-    // Associate screeningId on the attempt
-    await ctx.db.patch(attemptId, { screeningId });
+    // 8. Insert Alert if triggered by clinical flags (with explicit provenance links)
+    if (requiresAlert) {
+      await ctx.db.insert("alerts", {
+        userId,
+        type: alertType || "general",
+        status: "pending",
+        createdAt: now,
+        attemptId,
+        triageId,
+      });
+    }
+
+    // 8. Legacy mirror write to screenings discontinued:
+    // All readers (dashboard.ts, PatientDetail.tsx via getAll, wellness.ts, triage.ts, insights.ts)
+    // now query authoritative screeningAttempts. Historical screenings records remain intact for fallback.
 
     return {
       attemptId,
-      screeningId,
+      attemptType,
+      screeningId: undefined,
       triageId,
       triageLevel: triage.level,
       suicideFlag: triage.suicideFlag,
@@ -263,6 +310,27 @@ export const getLatestAttempt = query({
     const identity = await ctx.auth.getUserIdentity();
     const targetUserId = args.userId || identity?.subject;
     if (!targetUserId) return null;
+    await assertCanAccessStudent(ctx, targetUserId);
+
+    const attempt = await ctx.db
+      .query("screeningAttempts")
+      .withIndex("by_userId", (q) => q.eq("userId", targetUserId))
+      .order("desc")
+      .filter((q) => q.eq(q.field("status"), "completed"))
+      .first();
+
+    return attempt ?? null;
+  },
+});
+
+/** Get raw latest attempt regardless of status (e.g. for resume or inspection of abandoned/in-progress attempts) */
+export const getLatestRawAttempt = query({
+  args: { userId: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    const targetUserId = args.userId || identity?.subject;
+    if (!targetUserId) return null;
+    await assertCanAccessStudent(ctx, targetUserId);
 
     const attempts = await ctx.db
       .query("screeningAttempts")
@@ -281,6 +349,7 @@ export const getAllAttempts = query({
     const identity = await ctx.auth.getUserIdentity();
     const targetUserId = args.userId || identity?.subject;
     if (!targetUserId) return [];
+    await assertCanAccessStudent(ctx, targetUserId);
 
     return await ctx.db
       .query("screeningAttempts")
@@ -294,58 +363,86 @@ export const getAllAttempts = query({
 export const getAttemptById = query({
   args: { attemptId: v.id("screeningAttempts") },
   handler: async (ctx, args) => {
-    return await ctx.db.get(args.attemptId);
+    const attempt = await ctx.db.get(args.attemptId);
+    if (!attempt) return null;
+    await assertCanAccessStudent(ctx, attempt.userId);
+    return attempt;
   },
 });
 
-/** Get latest screening for a user (backward compatible for dashboard) */
+/** Get latest screening for a user (reads authoritative screeningAttempts with legacy fallback) */
 export const getLatest = query({
   args: { userId: v.optional(v.string()) },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     let targetUserId = args.userId || identity?.subject;
     if (!targetUserId) return null;
+    await assertCanAccessStudent(ctx, targetUserId);
 
     // Resolve stable userId if passed ID is a user _id
+    let user: any = null;
     try {
-      const user: any = await ctx.db.get(targetUserId as any);
-      if (user && typeof user.clerkId === "string") {
-        targetUserId = user.clerkId;
-      }
+      user = await ctx.db.get(targetUserId as any);
     } catch (e) {}
 
-    if (!targetUserId) return null;
-    const finalUserId: string = targetUserId;
-    const screenings = await ctx.db
-      .query("screenings")
-      .withIndex("by_userId", (q) => q.eq("userId", finalUserId))
-      .order("desc")
-      .take(1);
+    const searchIds = new Set<string>();
+    if (targetUserId) searchIds.add(targetUserId);
+    if (user) {
+      if (user._id) searchIds.add(String(user._id));
+      if (user.clerkId) searchIds.add(user.clerkId);
+    }
 
-    if (screenings.length > 0) return screenings[0];
+    // 1. Primary: Check authoritative screeningAttempts (completed only)
+    for (const idToSearch of Array.from(searchIds)) {
+      const attempt = await ctx.db
+        .query("screeningAttempts")
+        .withIndex("by_userId", (q) => q.eq("userId", idToSearch))
+        .order("desc")
+        .filter((q) => q.eq(q.field("status"), "completed"))
+        .first();
 
-    // Fallback search with args.userId directly
-    const fallbackUserId = args.userId;
-    if (fallbackUserId && fallbackUserId !== finalUserId) {
-      const alt = await ctx.db
+      if (attempt) {
+        return {
+          _id: attempt._id as any,
+          userId: attempt.userId,
+          attemptType: attempt.attemptType,
+          phq9_total: attempt.results?.phq9?.score ?? 0,
+          gad7_total: attempt.results?.gad7?.score ?? 0,
+          pq16_total: attempt.results?.pq16?.score ?? 0,
+          wsas_total: attempt.results?.wsas?.administered ? attempt.results.wsas.score : undefined,
+          reqol10_total: attempt.results?.reqol10?.administered ? attempt.results.reqol10.score : undefined,
+          phq9_item9_flag: attempt.results?.phq9?.item9Flag ?? false,
+          phq9_item9_score: attempt.results?.phq9?.item9Score ?? 0,
+          createdAt: attempt.completedAt || attempt.startedAt,
+          attemptId: String(attempt._id),
+          status: "completed",
+        };
+      }
+    }
+
+    // 2. Historical fallback: check legacy screenings table
+    for (const idToSearch of Array.from(searchIds)) {
+      const screenings = await ctx.db
         .query("screenings")
-        .withIndex("by_userId", (q) => q.eq("userId", fallbackUserId))
+        .withIndex("by_userId", (q) => q.eq("userId", idToSearch))
         .order("desc")
         .take(1);
-      if (alt.length > 0) return alt[0];
+
+      if (screenings.length > 0) return screenings[0];
     }
 
     return null;
   },
 });
 
-/** Get all screenings for a user (backward compatible for dashboard) */
+/** Get all screenings for a user (reads authoritative screeningAttempts with legacy fallback) */
 export const getAll = query({
   args: { userId: v.optional(v.string()) },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     let targetUserId = args.userId || identity?.subject;
     if (!targetUserId) return [];
+    await assertCanAccessStudent(ctx, targetUserId);
 
     // Resolve stable userId / clerkId if passed ID is a database _id
     let user: any = null;
@@ -360,6 +457,44 @@ export const getAll = query({
       if (user.clerkId) searchIds.add(user.clerkId);
     }
 
+    // 1. Primary: Check authoritative screeningAttempts
+    const allAttempts = [];
+    for (const idToSearch of Array.from(searchIds)) {
+      const res = await ctx.db
+        .query("screeningAttempts")
+        .withIndex("by_userId", (q) => q.eq("userId", idToSearch))
+        .order("desc")
+        .collect();
+      allAttempts.push(...res);
+    }
+
+    const completedAttempts = allAttempts.filter((a) => a.status === "completed");
+    if (completedAttempts.length > 0) {
+      const seen = new Set();
+      const deduplicated = completedAttempts.filter((a) => {
+        if (seen.has(a._id)) return false;
+        seen.add(a._id);
+        return true;
+      });
+
+      return deduplicated
+        .sort((a, b) => (b.completedAt || b.startedAt) - (a.completedAt || a.startedAt))
+        .map((a) => ({
+          _id: a._id as any,
+          userId: a.userId,
+          phq9_total: a.results?.phq9?.score ?? 0,
+          gad7_total: a.results?.gad7?.score ?? 0,
+          pq16_total: a.results?.pq16?.score ?? 0,
+          wsas_total: a.results?.wsas?.administered ? a.results.wsas.score : undefined,
+          reqol10_total: a.results?.reqol10?.administered ? a.results.reqol10.score : undefined,
+          phq9_item9_flag: a.results?.phq9?.item9Flag ?? false,
+          phq9_item9_score: a.results?.phq9?.item9Score ?? 0,
+          createdAt: a.completedAt || a.startedAt,
+          attemptId: String(a._id),
+        }));
+    }
+
+    // 2. Historical fallback: check legacy screenings table
     const allResults = [];
     for (const idToSearch of Array.from(searchIds)) {
       const res = await ctx.db
@@ -379,5 +514,45 @@ export const getAll = query({
     });
 
     return deduplicated.sort((a, b) => b.createdAt - a.createdAt);
+  },
+});
+
+/** Provenance: Get screening attempt together with its causally linked triage record */
+export const getAttemptWithTriage = query({
+  args: { attemptId: v.id("screeningAttempts") },
+  handler: async (ctx, args) => {
+    const attempt = await ctx.db.get(args.attemptId);
+    if (!attempt) return null;
+
+    await assertCanAccessStudent(ctx, attempt.userId);
+
+    let triage = null;
+    if (attempt.triageId) {
+      triage = await ctx.db.get(attempt.triageId);
+    }
+    if (!triage) {
+      triage = await ctx.db
+        .query("triages")
+        .withIndex("by_attemptId", (q) => q.eq("attemptId", attempt._id))
+        .first();
+    }
+
+    return { attempt, triage };
+  },
+});
+
+/** Provenance: Get all alerts causally generated from this screening attempt */
+export const getAttemptAlerts = query({
+  args: { attemptId: v.id("screeningAttempts") },
+  handler: async (ctx, args) => {
+    const attempt = await ctx.db.get(args.attemptId);
+    if (!attempt) return [];
+
+    await assertCanAccessStudent(ctx, attempt.userId);
+
+    return await ctx.db
+      .query("alerts")
+      .withIndex("by_attemptId", (q) => q.eq("attemptId", attempt._id))
+      .collect();
   },
 });

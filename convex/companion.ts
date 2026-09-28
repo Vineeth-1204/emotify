@@ -116,17 +116,9 @@ export const createMessage = mutation({
     const userId = identity.subject;
     const createdAt = Date.now();
 
-    // Insert into aiCompanionLogs
+    // Insert into authoritative aiCompanionLogs table ONLY
+    // Legacy companionMessages mirror is deprecated: writes are discontinued to prevent duplication
     const id = await ctx.db.insert("aiCompanionLogs", {
-      messageId: args.messageId,
-      userId,
-      role: args.role,
-      content: args.content,
-      createdAt,
-    });
-
-    // Also mirror to companionMessages for backward compatibility
-    await ctx.db.insert("companionMessages", {
       messageId: args.messageId,
       userId,
       role: args.role,

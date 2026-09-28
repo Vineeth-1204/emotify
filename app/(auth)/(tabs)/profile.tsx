@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { View, Text, StyleSheet, ScrollView, ActivityIndicator, Alert, TouchableOpacity, Dimensions, ViewStyle, TextStyle, Switch, Linking, TextInput, Modal } from "react-native";
+import { View, Text, StyleSheet, ScrollView, ActivityIndicator, Alert, TouchableOpacity, Dimensions, ViewStyle, TextStyle, Switch, Linking, TextInput, Modal, KeyboardAvoidingView, Platform } from "react-native";
 import { useAppAuth } from "@/utils/auth";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
@@ -13,7 +13,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import * as SecureStore from "expo-secure-store";
 import * as LocalAuthentication from "expo-local-authentication";
-import { useAvatar } from "@/context/AvatarContext";
+import { useAvatar, AvatarGender } from "@/context/AvatarContext";
 import { MitraAvatar } from "@/components/avatar/MitraAvatar";
 import { useLanguage } from "@/context/LanguageContext";
 import { useVoice } from "@/context/VoiceContext";
@@ -32,22 +32,111 @@ export default function ProfileScreen() {
   const exportData = useQuery(api.insights.getDailyStats, userId ? { userId: userId } : "skip");
 
   const { t, language, setLanguage, supportedLanguages, activeLanguageOption } = useLanguage();
-  const { avatarName, setAvatarName } = useAvatar();
+  const { avatarName, avatarGender, setMitraPreferences } = useAvatar();
   const { voiceEnabled, setVoiceEnabled, selectedVoice } = useVoice();
   const [showRenameModal, setShowRenameModal] = useState(false);
   const [showLanguageModal, setShowLanguageModal] = useState(false);
   const [showVoiceModal, setShowVoiceModal] = useState(false);
+  const [selectedGender, setSelectedGender] = useState<AvatarGender>(avatarGender || "female");
   const [newCompanionName, setNewCompanionName] = useState(avatarName);
   const [isExporting, setIsExporting] = useState(false);
 
+  // Profile Editing State
+  const updateProfileMutation = useMutation(api.users.updateStudentProfile);
+  const [showEditProfileModal, setShowEditProfileModal] = useState(false);
+  const [editAlias, setEditAlias] = useState("");
+  const [editAge, setEditAge] = useState("");
+  const [editCampus, setEditCampus] = useState("");
+  const [editDepartment, setEditDepartment] = useState("");
+  const [editYear, setEditYear] = useState("");
+  const [editGender, setEditGender] = useState("");
+  const [editEmergencyName, setEditEmergencyName] = useState("");
+  const [editEmergencyPhone, setEditEmergencyPhone] = useState("");
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [profileFormError, setProfileFormError] = useState<string | null>(null);
+
+  const handleOpenEditProfile = () => {
+    if (dbUser) {
+      setEditAlias(dbUser.alias || dbUser.full_name || "");
+      setEditAge(dbUser.age !== undefined && dbUser.age !== null ? String(dbUser.age) : "");
+      setEditCampus(dbUser.campus || "");
+      setEditDepartment(dbUser.department || "");
+      setEditYear(dbUser.year || "");
+      setEditGender(dbUser.gender || "");
+      setEditEmergencyName(dbUser.emergencyContactName || "");
+      setEditEmergencyPhone(dbUser.emergencyContactPhone || "");
+      setProfileFormError(null);
+    }
+    setShowEditProfileModal(true);
+  };
+
+  const handleSaveProfile = async () => {
+    setProfileFormError(null);
+    const trimmedAlias = editAlias.trim();
+    if (!trimmedAlias) {
+      setProfileFormError(t("profile.invalidNameError"));
+      return;
+    }
+
+    let parsedAge: number | undefined = undefined;
+    if (editAge.trim()) {
+      const num = parseInt(editAge.trim(), 10);
+      if (isNaN(num) || num < 10 || num > 120) {
+        setProfileFormError(t("profile.invalidAgeError"));
+        return;
+      }
+      parsedAge = num;
+    }
+
+    setIsSavingProfile(true);
+    try {
+      await updateProfileMutation({
+        userId: userId,
+        alias: trimmedAlias,
+        age: parsedAge,
+        campus: editCampus.trim() || undefined,
+        department: editDepartment.trim() || undefined,
+        year: editYear.trim() || undefined,
+        gender: editGender.trim() || undefined,
+        emergencyContactName: editEmergencyName.trim() || undefined,
+        emergencyContactPhone: editEmergencyPhone.trim() || undefined,
+      });
+      setShowEditProfileModal(false);
+      Alert.alert(t("common.success"), t("profile.profileUpdatedSuccess"));
+    } catch (err: any) {
+      console.error("Profile save error:", err);
+      setProfileFormError(err.message || "Failed to update profile.");
+    } finally {
+      setIsSavingProfile(false);
+    }
+  };
+
+  React.useEffect(() => {
+    if (avatarGender) setSelectedGender(avatarGender);
+  }, [avatarGender]);
+
+  React.useEffect(() => {
+    if (avatarName) setNewCompanionName(avatarName);
+  }, [avatarName]);
+
   const handleSaveCompanionName = async () => {
-    if (newCompanionName.trim().length === 0) {
+    const trimmed = newCompanionName.trim();
+    if (trimmed.length === 0) {
       Alert.alert(t("common.error"), t("profile.renameErrorEmpty"));
       return;
     }
-    await setAvatarName(newCompanionName.trim());
-    setShowRenameModal(false);
-    Alert.alert(t("common.success"), t("profile.renameSuccess"));
+    const finalGender: AvatarGender = selectedGender === "male" ? "male" : "female";
+    try {
+      await setMitraPreferences({
+        name: trimmed,
+        avatarGender: finalGender,
+      });
+      setShowRenameModal(false);
+      Alert.alert(t("common.success"), t("profile.renameSuccess"));
+    } catch (err) {
+      console.error("Failed to update companion:", err);
+      Alert.alert(t("common.error"), "Failed to save changes.");
+    }
   };
 
   const wellnessProfile = useQuery(api.wellness.getProfile, { userId: userId ?? "" });
@@ -115,7 +204,7 @@ export default function ProfileScreen() {
 
   React.useEffect(() => {
     if (userId) {
-      updateWellness({ userId });
+      updateWellness({ userId, timezoneOffsetMinutes: new Date().getTimezoneOffset() });
     }
   }, [userId]);
 
@@ -249,20 +338,21 @@ export default function ProfileScreen() {
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
                 <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: colors.primary + '15', justifyContent: 'center', alignItems: 'center', flexShrink: 0 }}>
-                  <MitraAvatar state="happy" size="sm" />
+                  <MitraAvatar gender={avatarGender} state="happy" size="sm" />
                 </View>
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <Text style={{ fontFamily: Theme.fontFamily.bold, fontSize: 16, color: colors.text }} numberOfLines={1}>
                     {avatarName}
                   </Text>
                   <Text style={{ fontFamily: Theme.fontFamily.medium, fontSize: 12, color: colors.textSecondary, marginTop: 2 }} numberOfLines={1}>
-                    {t("profile.companionSubtitle")}
+                    {avatarGender === "male" ? t("profile.avatarBoy") : t("profile.avatarGirl")} • {t("profile.companionSubtitle")}
                   </Text>
                 </View>
               </View>
               <TouchableOpacity
                 onPress={() => {
-                  setNewCompanionName(avatarName);
+                  setSelectedGender(avatarGender || "female");
+                  setNewCompanionName(avatarName || "Mitra");
                   setShowRenameModal(true);
                 }}
                 style={{
@@ -277,10 +367,12 @@ export default function ProfileScreen() {
                   flexShrink: 0,
                 }}
                 activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel={t("profile.customizeCompanion")}
               >
-                <Ionicons name="pencil" size={13} color={colors.primary} />
+                <Ionicons name="sparkles" size={13} color={colors.primary} />
                 <Text style={{ fontFamily: Theme.fontFamily.bold, fontSize: 13, color: colors.primary }}>
-                  {t("profile.renameCompanion")}
+                  {t("profile.customizeCompanion")}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -335,13 +427,55 @@ export default function ProfileScreen() {
 
         {/* Account Details Section */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>{t("profile.accountDetailsTitle")}</Text>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: Theme.spacing.md }}>
+            <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>{t("profile.accountDetailsTitle")}</Text>
+            <TouchableOpacity
+              onPress={handleOpenEditProfile}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 5,
+                paddingHorizontal: 12,
+                paddingVertical: 6,
+                backgroundColor: colors.primary + '14',
+                borderRadius: 10,
+              }}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel={t("profile.editProfile")}
+            >
+              <Ionicons name="create-outline" size={14} color={colors.primary} />
+              <Text style={{ fontFamily: Theme.fontFamily.bold, fontSize: 12, color: colors.primary }}>
+                {t("profile.editProfile")}
+              </Text>
+            </TouchableOpacity>
+          </View>
           <View style={styles.premiumCard}>
-            <DetailRow icon="person-outline" label={t("profile.age")} value={dbUser.age?.toString() || "-"} colors={colors} styles={styles} />
+            <DetailRow icon="person-outline" label={t("profile.nameLabel")} value={dbUser.alias || dbUser.full_name || "-"} colors={colors} styles={styles} />
+            <View style={styles.divider} />
+            <DetailRow icon="calendar-outline" label={t("profile.age")} value={dbUser.age?.toString() || "-"} colors={colors} styles={styles} />
             <View style={styles.divider} />
             <DetailRow icon="school-outline" label={t("profile.campus")} value={dbUser.campus || "-"} colors={colors} styles={styles} />
             <View style={styles.divider} />
             <DetailRow icon="business-outline" label={t("profile.department")} value={dbUser.department || "-"} colors={colors} styles={styles} />
+            <View style={styles.divider} />
+            <DetailRow icon="ribbon-outline" label={t("profile.yearLabel")} value={dbUser.year || "-"} colors={colors} styles={styles} />
+            <View style={styles.divider} />
+            <DetailRow
+              icon="male-female-outline"
+              label={t("profile.genderLabel")}
+              value={dbUser.gender ? (t(`profile.gender_${dbUser.gender}`, { defaultValue: dbUser.gender })) : "-"}
+              colors={colors}
+              styles={styles}
+            />
+            <View style={styles.divider} />
+            <DetailRow
+              icon="call-outline"
+              label={t("profile.emergencyContactLabel")}
+              value={dbUser.emergencyContactName ? `${dbUser.emergencyContactName}${dbUser.emergencyContactPhone ? ` (${dbUser.emergencyContactPhone})` : ''}` : "-"}
+              colors={colors}
+              styles={styles}
+            />
           </View>
         </View>
 
@@ -456,7 +590,7 @@ export default function ProfileScreen() {
         <View style={{ height: 120 }} />
       </ScrollView>
 
-      {/* RENAME COMPANION MODAL */}
+      {/* CUSTOMIZE COMPANION MODAL */}
       <Modal
         visible={showRenameModal}
         transparent
@@ -466,21 +600,89 @@ export default function ProfileScreen() {
         <View style={styles.renameModalOverlay}>
           <View style={styles.renameModalCard}>
             <View style={{ alignItems: 'center', marginBottom: 16 }}>
-              <MitraAvatar state="thinking" size="md" />
+              <MitraAvatar gender={selectedGender} state="happy" size="md" />
             </View>
-            <Text style={styles.renameModalTitle}>{t("profile.renameModalTitle")}</Text>
+            <Text style={styles.renameModalTitle}>{t("profile.customizeModalTitle")}</Text>
             <Text style={styles.renameModalSubtitle}>
-              {t("profile.renameModalSubtitle")}
+              {t("profile.customizeModalSubtitle")}
             </Text>
 
+            {/* Avatar Gender Selection */}
+            <Text style={{ fontFamily: Theme.fontFamily.medium, fontSize: 11, color: colors.textSecondary, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>
+              {t("profile.chooseAvatar")}
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 12, marginBottom: 16 }}>
+              <TouchableOpacity
+                style={{
+                  flex: 1,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 8,
+                  paddingVertical: 10,
+                  paddingHorizontal: 8,
+                  borderRadius: 12,
+                  borderWidth: 2,
+                  borderColor: selectedGender === 'female' ? colors.primary : '#E2E8F0',
+                  backgroundColor: selectedGender === 'female' ? colors.primary + '14' : colors.surface,
+                }}
+                onPress={() => setSelectedGender('female')}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel={`${t("profile.avatarGirl")}, ${selectedGender === 'female' ? 'selected' : 'not selected'}`}
+              >
+                <MitraAvatar gender="female" size="xs" state="happy" />
+                <Text style={{
+                  fontFamily: selectedGender === 'female' ? Theme.fontFamily.bold : Theme.fontFamily.medium,
+                  fontSize: 14,
+                  color: selectedGender === 'female' ? colors.primary : colors.textSecondary,
+                }}>
+                  {t("profile.avatarGirl")}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={{
+                  flex: 1,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 8,
+                  paddingVertical: 10,
+                  paddingHorizontal: 8,
+                  borderRadius: 12,
+                  borderWidth: 2,
+                  borderColor: selectedGender === 'male' ? colors.primary : '#E2E8F0',
+                  backgroundColor: selectedGender === 'male' ? colors.primary + '14' : colors.surface,
+                }}
+                onPress={() => setSelectedGender('male')}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel={`${t("profile.avatarBoy")}, ${selectedGender === 'male' ? 'selected' : 'not selected'}`}
+              >
+                <MitraAvatar gender="male" size="xs" state="happy" />
+                <Text style={{
+                  fontFamily: selectedGender === 'male' ? Theme.fontFamily.bold : Theme.fontFamily.medium,
+                  fontSize: 14,
+                  color: selectedGender === 'male' ? colors.primary : colors.textSecondary,
+                }}>
+                  {t("profile.avatarBoy")}
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Companion Name */}
+            <Text style={{ fontFamily: Theme.fontFamily.medium, fontSize: 11, color: colors.textSecondary, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>
+              {t("profile.companionNameLabel")}
+            </Text>
             <TextInput
               style={[styles.renameInput, { borderColor: colors.primary + '40', color: colors.text }]}
               value={newCompanionName}
               onChangeText={setNewCompanionName}
               placeholder={t("profile.renameInputPlaceholder")}
               placeholderTextColor={colors.textSecondary}
-              maxLength={20}
-              autoFocus
+              maxLength={30}
+              accessibilityLabel={t("profile.companionNameLabel")}
             />
 
             <View style={styles.renameBtnRow}>
@@ -573,6 +775,208 @@ export default function ProfileScreen() {
             </TouchableOpacity>
           </View>
         </View>
+      </Modal>
+
+      {/* EDIT PROFILE MODAL */}
+      <Modal
+        visible={showEditProfileModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (!isSavingProfile) setShowEditProfileModal(false);
+        }}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={styles.editProfileModalOverlay}
+        >
+          <View style={styles.editProfileModalCard}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.editProfileTitle}>{t("profile.editProfileTitle")}</Text>
+                <Text style={styles.editProfileSubtitle}>{t("profile.editProfileSubtitle")}</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setShowEditProfileModal(false)}
+                disabled={isSavingProfile}
+                style={{ padding: 4 }}
+                accessibilityRole="button"
+                accessibilityLabel={t("common.close")}
+              >
+                <Ionicons name="close" size={22} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            {profileFormError && (
+              <View style={styles.editErrorBanner}>
+                <Ionicons name="alert-circle" size={16} color="#DC2626" />
+                <Text style={styles.editErrorBannerText}>{profileFormError}</Text>
+              </View>
+            )}
+
+            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 380 }} contentContainerStyle={{ paddingBottom: 16 }}>
+              {/* Alias / Full Name */}
+              <View style={styles.editFieldGroup}>
+                <Text style={styles.editFieldLabel}>{t("profile.nameLabel")} *</Text>
+                <TextInput
+                  style={styles.editInput}
+                  value={editAlias}
+                  onChangeText={setEditAlias}
+                  placeholder="e.g. John Doe"
+                  placeholderTextColor={colors.textSecondary}
+                  maxLength={50}
+                  accessibilityLabel={t("profile.nameLabel")}
+                />
+              </View>
+
+              {/* Age */}
+              <View style={styles.editFieldGroup}>
+                <Text style={styles.editFieldLabel}>{t("profile.age")}</Text>
+                <TextInput
+                  style={styles.editInput}
+                  value={editAge}
+                  onChangeText={setEditAge}
+                  placeholder="e.g. 19"
+                  placeholderTextColor={colors.textSecondary}
+                  keyboardType="numeric"
+                  maxLength={3}
+                  accessibilityLabel={t("profile.age")}
+                />
+              </View>
+
+              {/* Campus */}
+              <View style={styles.editFieldGroup}>
+                <Text style={styles.editFieldLabel}>{t("profile.campus")}</Text>
+                <TextInput
+                  style={styles.editInput}
+                  value={editCampus}
+                  onChangeText={setEditCampus}
+                  placeholder="e.g. Main Campus"
+                  placeholderTextColor={colors.textSecondary}
+                  maxLength={100}
+                  accessibilityLabel={t("profile.campus")}
+                />
+              </View>
+
+              {/* Department */}
+              <View style={styles.editFieldGroup}>
+                <Text style={styles.editFieldLabel}>{t("profile.department")}</Text>
+                <TextInput
+                  style={styles.editInput}
+                  value={editDepartment}
+                  onChangeText={setEditDepartment}
+                  placeholder="e.g. Computer Science"
+                  placeholderTextColor={colors.textSecondary}
+                  maxLength={100}
+                  accessibilityLabel={t("profile.department")}
+                />
+              </View>
+
+              {/* Academic Year */}
+              <View style={styles.editFieldGroup}>
+                <Text style={styles.editFieldLabel}>{t("profile.yearLabel")}</Text>
+                <TextInput
+                  style={styles.editInput}
+                  value={editYear}
+                  onChangeText={setEditYear}
+                  placeholder="e.g. 2nd Year / Sophomore"
+                  placeholderTextColor={colors.textSecondary}
+                  maxLength={30}
+                  accessibilityLabel={t("profile.yearLabel")}
+                />
+              </View>
+
+              {/* Demographic Gender Selection */}
+              <View style={styles.editFieldGroup}>
+                <Text style={styles.editFieldLabel}>{t("profile.genderLabel")}</Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4 }}>
+                  {[
+                    { key: "female", label: t("profile.gender_female") },
+                    { key: "male", label: t("profile.gender_male") },
+                    { key: "non-binary", label: t("profile.gender_non-binary") },
+                    { key: "other", label: t("profile.gender_other") },
+                    { key: "prefer-not-to-say", label: t("profile.gender_prefer-not-to-say") },
+                  ].map((g) => {
+                    const isSelected = editGender === g.key;
+                    return (
+                      <TouchableOpacity
+                        key={g.key}
+                        onPress={() => setEditGender(isSelected ? "" : g.key)}
+                        style={[
+                          styles.genderChip,
+                          isSelected && { backgroundColor: colors.primary + '18', borderColor: colors.primary }
+                        ]}
+                        activeOpacity={0.8}
+                        accessibilityRole="button"
+                        accessibilityLabel={g.label}
+                        accessibilityState={{ selected: isSelected }}
+                      >
+                        <Text style={[styles.genderChipText, isSelected && { color: colors.primary, fontFamily: Theme.fontFamily.bold }]}>
+                          {g.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+
+              {/* Emergency Contact Name */}
+              <View style={styles.editFieldGroup}>
+                <Text style={styles.editFieldLabel}>{t("profile.emergencyContactLabel")}</Text>
+                <TextInput
+                  style={styles.editInput}
+                  value={editEmergencyName}
+                  onChangeText={setEditEmergencyName}
+                  placeholder="e.g. Parent / Guardian"
+                  placeholderTextColor={colors.textSecondary}
+                  maxLength={100}
+                  accessibilityLabel={t("profile.emergencyContactLabel")}
+                />
+              </View>
+
+              {/* Emergency Contact Phone */}
+              <View style={styles.editFieldGroup}>
+                <Text style={styles.editFieldLabel}>{t("profile.emergencyPhoneLabel")}</Text>
+                <TextInput
+                  style={styles.editInput}
+                  value={editEmergencyPhone}
+                  onChangeText={setEditEmergencyPhone}
+                  placeholder="e.g. +91 9876543210"
+                  placeholderTextColor={colors.textSecondary}
+                  keyboardType="phone-pad"
+                  maxLength={25}
+                  accessibilityLabel={t("profile.emergencyPhoneLabel")}
+                />
+              </View>
+            </ScrollView>
+
+            <View style={styles.editBtnRow}>
+              <TouchableOpacity
+                style={[styles.renameCancelBtn, { borderColor: '#E2E8F0' }]}
+                onPress={() => setShowEditProfileModal(false)}
+                disabled={isSavingProfile}
+                accessibilityRole="button"
+                accessibilityLabel={t("common.cancel")}
+              >
+                <Text style={[styles.renameCancelBtnText, { color: colors.textSecondary }]}>{t("common.cancel")}</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.renameSaveBtn, { backgroundColor: colors.primary, opacity: isSavingProfile ? 0.7 : 1 }]}
+                onPress={handleSaveProfile}
+                disabled={isSavingProfile}
+                accessibilityRole="button"
+                accessibilityLabel={t("profile.saveProfile")}
+              >
+                {isSavingProfile ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.renameSaveBtnText}>{t("profile.saveProfile")}</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* VOICE SETTINGS MODAL */}
@@ -932,6 +1336,94 @@ function stylesFactory(colors: any) {
     fontSize: 14,
     color: '#FFFFFF',
   } as TextStyle,
+  // Edit Profile Modal Styles
+  editProfileModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.55)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: Theme.spacing.md,
+  } as ViewStyle,
+  editProfileModalCard: {
+    width: '100%',
+    maxWidth: 420,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 20,
+    ...Theme.shadows.primary,
+  } as ViewStyle,
+  editProfileTitle: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: 18,
+    color: colors.text,
+  } as TextStyle,
+  editProfileSubtitle: {
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: 12,
+    color: colors.textSecondary,
+    marginTop: 2,
+  } as TextStyle,
+  editErrorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#FEE2E2',
+    borderColor: '#FCA5A5',
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    marginBottom: 12,
+  } as ViewStyle,
+  editErrorBannerText: {
+    flex: 1,
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: 12,
+    color: '#B91C1C',
+  } as TextStyle,
+  editFieldGroup: {
+    marginBottom: 14,
+  } as ViewStyle,
+  editFieldLabel: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: 11,
+    color: colors.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    marginBottom: 6,
+  } as TextStyle,
+  editInput: {
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    fontSize: 14,
+    fontFamily: Theme.fontFamily.medium,
+    backgroundColor: '#F8FAFC',
+    color: colors.text,
+  } as TextStyle,
+  genderChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+  } as ViewStyle,
+  genderChipText: {
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: 12,
+    color: colors.textSecondary,
+  } as TextStyle,
+  editBtnRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  } as ViewStyle,
   };
 }
 

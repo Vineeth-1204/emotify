@@ -11,6 +11,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { CalmPointToken } from "@/components/svg/system";
+import { getLocalDateString } from "@/utils/date";
 
 const { width } = Dimensions.get("window");
 
@@ -26,7 +27,7 @@ export default function RecoveryPlanScreen() {
   const session = useQuery(api.cbt.getSession, activeSessionId ? { sessionId: activeSessionId as any } : "skip");
   const recommendGoal = useAction(api.cbt.recommendGoalAction);
   const acceptGoal = useMutation(api.cbt.acceptGoal);
-  const streakInfo = useQuery(api.microGoals.getStreak, { userId: session?.userId ?? "" });
+  const streakInfo = useQuery(api.microGoals.getStreak, { userId: session?.userId ?? "", dateStr: getLocalDateString() });
 
   // States
   const [goals, setGoals] = useState<any[]>([]);

@@ -27,34 +27,19 @@ export const updateProfile = mutation({
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
-    const userId = identity.subject;
+    const authSubject = identity.subject;
+
+    // Student can only update their own profile; staff can update for an authorized student
+    if (args.userId && args.userId !== authSubject) {
+      await assertCanAccessStudent(ctx, args.userId);
+    }
+    const userId = (args.userId && args.userId !== authSubject) ? args.userId : authSubject;
 
     await checkRateLimit(ctx, userId, "journal_write", 5, 60000);
 
-    // 1. Fetch all relevant data for generation
-    const attempts = await ctx.db
-      .query("screeningAttempts")
-      .withIndex("by_userId", (q) => q.eq("userId", userId))
-      .order("desc")
-      .take(5);
-
-    let screenings: any[] = [];
-    const completed = attempts.filter((a) => a.status === "completed");
-    if (completed.length > 0) {
-      screenings = completed.map((a) => ({
-        phq9_total: a.results?.phq9?.score ?? 0,
-        gad7_total: a.results?.gad7?.score ?? 0,
-        pq16_total: a.results?.pq16?.score ?? 0,
-        createdAt: a.completedAt || a.startedAt,
-      }));
-    } else {
-      screenings = await ctx.db
-        .query("screenings")
-        .withIndex("by_userId", (q) => q.eq("userId", userId))
-        .order("desc")
-        .take(5);
-    }
-
+    // 1. Fetch non-clinical telemetry and behavioral records
+    // NOTE: Clinical screening (PHQ-9, GAD-7, PQ-16) and triage records are STRICTLY EXCLUDED.
+    // Standardized clinical scores MUST NOT be used to infer personality traits, archetypes, or wellness goals.
     const emotionLogs = await ctx.db
       .query("emotionLogs")
       .withIndex("by_userId", (q) => q.eq("userId", userId))
@@ -73,49 +58,41 @@ export const updateProfile = mutation({
       .order("desc")
       .take(10);
 
-    // 2. Generate Profile Logic
-    let personality_traits = ["Reflective personality"];
-    let mood_pattern = "Mostly calm";
-    let wellness_goals = ["Reduce stress"];
-    let energy_pattern = "Active in evening";
+    // 2. Generate Non-Diagnostic Wellness Summary
+    let personality_traits = ["Self-reflective"];
+    let mood_pattern = "Mostly calm and stable";
+    let wellness_goals = ["Build daily habits", "Practice mindfulness"];
+    let energy_pattern = "Evening person";
 
-    const latestScreening = screenings[0];
-    const completedGoals = microGoals.filter(g => g.completed).length;
+    const completedGoals = microGoals.filter((g) => g.completed).length;
 
-    // Mood pattern logic
+    // Mood pattern logic: non-clinical descriptive summary of logged emotional intensity
     const avgIntensity = emotionLogs.length > 0 
-      ? emotionLogs.reduce((acc, log) => acc + (log.preIntensity || 0), 0) / emotionLogs.length 
+      ? emotionLogs.reduce((acc, log) => acc + (log.preIntensity || log.intensity || 0), 0) / emotionLogs.length 
       : 0;
     
-    if (avgIntensity > 7) mood_pattern = "Easily stressed during pressure";
+    if (avgIntensity > 7) mood_pattern = "Expressive emotional intensity";
     else if (avgIntensity > 4) mood_pattern = "Moderate emotional shifts";
     else mood_pattern = "Mostly calm and stable";
 
-    // Personality traits logic
+    // Personality traits logic: derived purely from positive behavioral habit engagement
     if (jpmrLogs.length > 3) personality_traits.push("Values relaxation");
     if (completedGoals > 3) personality_traits.push("Consistent and improving");
-    if (latestScreening?.gad7_total > 10) personality_traits.push("Sensitive to stress");
-    if (latestScreening?.phq9_total > 15) personality_traits.push("Needs gentle support");
 
-    // Wellness goals logic
-    if (latestScreening?.phq9_total > 10) wellness_goals.push("Gentle recovery");
-    if (latestScreening?.phq9_total > 5) wellness_goals.push("Improve mood");
-    if (latestScreening?.gad7_total > 5) wellness_goals.push("Build daily habits");
-    if (jpmrLogs.length < 2) wellness_goals.push("Improve focus");
+    // Wellness goals logic: non-clinical, behavioral habit orientation
+    if (jpmrLogs.length < 2) wellness_goals.push("Explore relaxation");
+    if (completedGoals > 0) wellness_goals.push("Maintain daily momentum");
 
-    // Energy pattern (mock logic based on creation times)
+    // Energy pattern (local-time calculation based on creation times)
     let morningLogs = 0;
     if (args.timezoneOffsetMinutes !== undefined) {
-      // args.timezoneOffsetMinutes is JS getTimezoneOffset() in minutes (UTC - local)
-      morningLogs = emotionLogs.filter(log => {
+      morningLogs = emotionLogs.filter((log) => {
         const localTime = new Date(log.createdAt - args.timezoneOffsetMinutes! * 60000);
         const hour = localTime.getUTCHours();
         return hour >= 5 && hour < 12;
       }).length;
     } else {
-      // Documented architectural dependency: Without client-provided timezone offset
-      // or a user timezone database field, server runtime executes in UTC.
-      morningLogs = emotionLogs.filter(log => {
+      morningLogs = emotionLogs.filter((log) => {
         const hour = new Date(log.createdAt).getHours();
         return hour >= 5 && hour < 12;
       }).length;
@@ -147,3 +124,4 @@ export const updateProfile = mutation({
     return profileData;
   },
 });
+

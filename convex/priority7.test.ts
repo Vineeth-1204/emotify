@@ -1089,11 +1089,15 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
     });
 
     const stats = await studentASession.query(api.insights.getDailyStats, { userId: studentAId });
-    expect(stats.screenings.length).toBe(1);
-    expect(stats.screenings[0].status).toBe("completed");
-    expect(stats.screenings[0].phq9_total).toBeDefined();
-    expect(stats.screenings[0].gad7_total).toBeDefined();
-    expect(stats.screenings[0].pq16_total).toBeDefined();
+    expect((stats as any).screenings).toBeUndefined();
+    expect((stats as any).triages).toBeUndefined();
+
+    const screenings = await studentASession.query(api.screening.getAll, { userId: studentAId });
+    expect(screenings.length).toBe(1);
+    expect((screenings[0] as any).status).toBe("completed");
+    expect(screenings[0].phq9_total).toBeDefined();
+    expect(screenings[0].gad7_total).toBeDefined();
+    expect(screenings[0].pq16_total).toBeDefined();
   });
 
   test("INSIGHT-3A-07: incomplete/abandoned screening attempts remain excluded", async () => {
@@ -1158,8 +1162,11 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
     });
 
     const stats = await studentASession.query(api.insights.getDailyStats, { userId: studentAId });
-    expect(stats.screenings.length).toBe(1);
-    expect(stats.screenings[0].status).toBe("completed");
+    expect((stats as any).screenings).toBeUndefined();
+
+    const screenings = await studentASession.query(api.screening.getAll, { userId: studentAId });
+    expect(screenings.length).toBe(1);
+    expect((screenings[0] as any).status).toBe("completed");
   });
 
   test("INSIGHT-3A-08: existing WSAS/ReQoL/Item9 fields are preserved when already stored", async () => {
@@ -1189,8 +1196,11 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
     });
 
     const stats = await studentASession.query(api.insights.getDailyStats, { userId: studentAId });
-    expect(stats.screenings.length).toBe(1);
-    const s = stats.screenings[0];
+    expect((stats as any).screenings).toBeUndefined();
+
+    const screenings = await studentASession.query(api.screening.getAll, { userId: studentAId });
+    expect(screenings.length).toBe(1);
+    const s = screenings[0];
     expect(s.phq9_total).toBe(14);
     expect(s.gad7_total).toBe(11);
     expect(s.pq16_total).toBe(3);
@@ -1281,10 +1291,13 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
     });
 
     const stats = await studentASession.query(api.insights.getDailyStats, { userId: studentAId });
-    expect(stats.screenings.length).toBe(1);
-    expect(stats.screenings[0]._id).toBe(legacyScreeningId);
+    expect((stats as any).screenings).toBeUndefined();
     expect(stats.totalCheckins).toBe(1);
     expect(stats.totalCalmPoints).toBe(10);
+
+    const screenings = await studentASession.query(api.screening.getAll, { userId: studentAId });
+    expect(screenings.length).toBe(1);
+    expect(screenings[0]._id).toBe(legacyScreeningId);
 
     // Verify raw database records are completely intact
     await t.run(async (ctx) => {
@@ -1405,9 +1418,12 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
     expect(stats.reframes.length).toBe(55);
     expect(stats.avgReframeDrop).toBe("4.0");
 
-    // Clinical screening history for CSV export / counselor review must NOT be truncated
-    expect(stats.screenings.length).toBe(55);
-    expect(stats.triages.length).toBe(55);
+    // Clinical screening history for CSV export / counselor review must NOT be in student insights payload (data minimization)
+    expect((stats as any).screenings).toBeUndefined();
+    expect((stats as any).triages).toBeUndefined();
+
+    const allScreenings = await studentASession.query(api.screening.getAll, { userId: studentAId });
+    expect(allScreenings.length).toBe(55);
 
     // Lifetime total checkins must NOT be truncated
     expect(stats.totalCheckins).toBe(35);
@@ -1595,7 +1611,7 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
     });
 
     const stats = await studentASession.query(api.insights.getDailyStats, { userId: studentAId });
-    expect(stats.totalCalmPoints).toBe(12 * 15); // 180 points
+    expect(stats.totalCalmPoints).toBe(8 * 15); // 120 points (completed goals only)
     expect(stats.completedGoalsCount).toBe(8);
     expect(stats.jpmrMinutes).toBe(6 * 5); // 30 minutes
     expect(stats.avgJpmrDrop).toBe("4.0");
@@ -1667,10 +1683,13 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
     });
 
     const stats = await studentASession.query(api.insights.getDailyStats, { userId: studentAId });
-    expect(stats.screenings.length).toBe(2);
-    expect(stats.screenings.every((s: any) => s.status === "completed")).toBe(true);
-    expect(stats.screenings[0].phq9_total).toBe(6);
-    expect(stats.screenings[0].gad7_total).toBe(5);
+    expect((stats as any).screenings).toBeUndefined();
+
+    const screenings = await studentASession.query(api.screening.getAll, { userId: studentAId });
+    expect(screenings.length).toBe(2);
+    expect(screenings.every((s: any) => s.status === "completed")).toBe(true);
+    expect(screenings[0].phq9_total).toBe(6);
+    expect(screenings[0].gad7_total).toBe(5);
   });
 
   test("INSIGHT-3B-07: Empty-state behavior does not create misleading activity", async () => {
@@ -1684,8 +1703,8 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
     expect(stats.completedGoalsCount).toBe(0);
     expect(stats.jpmrMinutes).toBe(0);
     expect(stats.reframesCount).toBe(0);
-    expect(stats.screenings.length).toBe(0);
-    expect(stats.triages.length).toBe(0);
+    expect((stats as any).screenings).toBeUndefined();
+    expect((stats as any).triages).toBeUndefined();
   });
 
   test("INSIGHT-3B-08: Student cannot access another student's Insights data", async () => {
@@ -1911,6 +1930,797 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
     expect(getWeekdayLabel("2026-10-01")).toBe("Thu");
     expect(getWeekdayLabel("2026-10-02")).toBe("Fri");
     expect(getWeekdayLabel("2026-10-03")).toBe("Sat");
+  });
+
+  // =========================================================================
+  // Priority 7 Phase 5 Step 3D — Counselor Daily Check-In Visibility Tests
+  // (COUNSELOR-CHECKIN-01 to COUNSELOR-CHECKIN-11)
+  // =========================================================================
+
+  test("COUNSELOR-CHECKIN-01: Counselor retrieves authorized student's recent check-ins", async () => {
+    const { t, studentAId, counselorId } = await setupTestEnvironment();
+    const counselorSession = t.withIdentity({ subject: counselorId });
+
+    // Seed daily check-ins for Student A
+    await t.run(async (ctx) => {
+      await ctx.db.insert("dailyCheckins", {
+        userId: studentAId,
+        dateStr: "2026-09-27",
+        mood: "calm",
+        createdAt: 1727400000000,
+      });
+      await ctx.db.insert("dailyCheckins", {
+        userId: studentAId,
+        dateStr: "2026-09-28",
+        mood: "good",
+        createdAt: 1727486400000,
+      });
+    });
+
+    const result = await counselorSession.query(api.insights.getCounselorStudentDailyCheckins, {
+      userId: studentAId,
+      lookbackDays: 14,
+    });
+
+    expect(result).toBeDefined();
+    expect(result.studentId).toBe(studentAId);
+    expect(result.totalCheckins).toBe(2);
+    expect(result.lookbackDays).toBe(14);
+    expect(result.checkins.length).toBe(2);
+    expect(result.checkins[0].dateStr).toBe("2026-09-27");
+    expect(result.checkins[0].mood).toBe("calm");
+    expect(result.checkins[1].dateStr).toBe("2026-09-28");
+    expect(result.checkins[1].mood).toBe("good");
+  });
+
+  test("COUNSELOR-CHECKIN-02: Admin retrieves student's recent check-ins", async () => {
+    const { t, studentAId, adminId } = await setupTestEnvironment();
+    const adminSession = t.withIdentity({ subject: adminId });
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert("dailyCheckins", {
+        userId: studentAId,
+        dateStr: "2026-09-28",
+        mood: "peaceful",
+        createdAt: 1727486400000,
+      });
+    });
+
+    const result = await adminSession.query(api.insights.getCounselorStudentDailyCheckins, {
+      userId: studentAId,
+    });
+
+    expect(result.totalCheckins).toBe(1);
+    expect(result.checkins[0].mood).toBe("peaceful");
+  });
+
+  test("COUNSELOR-CHECKIN-03: Student attempts cross-student access and is rejected", async () => {
+    const { t, studentAId, studentBId } = await setupTestEnvironment();
+    const studentASession = t.withIdentity({ subject: studentAId });
+
+    // Student attempting to call counselor endpoint on another student
+    await expect(
+      studentASession.query(api.insights.getCounselorStudentDailyCheckins, {
+        userId: studentBId,
+      })
+    ).rejects.toThrow(/Counselor or Admin access required/);
+
+    // Student attempting to call counselor endpoint on themselves is also rejected
+    // (must use standard student insights query)
+    await expect(
+      studentASession.query(api.insights.getCounselorStudentDailyCheckins, {
+        userId: studentAId,
+      })
+    ).rejects.toThrow(/Counselor or Admin access required/);
+  });
+
+  test("COUNSELOR-CHECKIN-04: Unauthenticated caller is rejected", async () => {
+    const { t, studentAId } = await setupTestEnvironment();
+
+    await expect(
+      t.query(api.insights.getCounselorStudentDailyCheckins, {
+        userId: studentAId,
+      })
+    ).rejects.toThrow(/Login required/);
+  });
+
+  test("COUNSELOR-CHECKIN-05: Canonical and legacy identity records are resolved and deduplicated by dateStr", async () => {
+    const { t, studentAId, counselorId } = await setupTestEnvironment();
+    const counselorSession = t.withIdentity({ subject: counselorId });
+
+    await t.run(async (ctx) => {
+      // Entry 1 under canonical users._id
+      await ctx.db.insert("dailyCheckins", {
+        userId: studentAId,
+        dateStr: "2026-09-25",
+        mood: "calm",
+        createdAt: 1727200000000,
+      });
+      // Entry 2 under legacy clerkId
+      await ctx.db.insert("dailyCheckins", {
+        userId: "clerk_student_a",
+        dateStr: "2026-09-26",
+        mood: "good",
+        createdAt: 1727300000000,
+      });
+      // Entry 3: Duplicate for 2026-09-26 under canonical ID (e.g. re-checkin)
+      await ctx.db.insert("dailyCheckins", {
+        userId: studentAId,
+        dateStr: "2026-09-26",
+        mood: "energized",
+        createdAt: 1727305000000,
+      });
+    });
+
+    const result = await counselorSession.query(api.insights.getCounselorStudentDailyCheckins, {
+      userId: studentAId,
+    });
+
+    // Should deduplicate 2026-09-26 to latest entry (energized) and return 2 distinct dates
+    expect(result.totalCheckins).toBe(2);
+    expect(result.checkins.length).toBe(2);
+    expect(result.checkins.map((c: any) => c.dateStr)).toEqual(["2026-09-25", "2026-09-26"]);
+    expect(result.checkins[1].mood).toBe("energized");
+  });
+
+  test("COUNSELOR-CHECKIN-06: Local dateStr remains unchanged across UTC midnight boundaries", async () => {
+    const { t, studentAId, counselorId } = await setupTestEnvironment();
+    const counselorSession = t.withIdentity({ subject: counselorId });
+
+    // In UTC, this timestamp is 02:00 on 2026-09-28.
+    // The student checked in at local date "2026-09-27".
+    const explicitDateStr = "2026-09-27";
+    await t.run(async (ctx) => {
+      await ctx.db.insert("dailyCheckins", {
+        userId: studentAId,
+        dateStr: explicitDateStr,
+        mood: "peaceful",
+        createdAt: new Date("2026-09-28T02:00:00Z").getTime(),
+      });
+    });
+
+    const result = await counselorSession.query(api.insights.getCounselorStudentDailyCheckins, {
+      userId: studentAId,
+    });
+
+    expect(result.checkins[0].dateStr).toBe(explicitDateStr);
+  });
+
+  test("COUNSELOR-CHECKIN-07: dailyCheckins and emotionLogs remain distinct", async () => {
+    const { t, studentAId, counselorId } = await setupTestEnvironment();
+    const counselorSession = t.withIdentity({ subject: counselorId });
+
+    await t.run(async (ctx) => {
+      // 1 daily check-in
+      await ctx.db.insert("dailyCheckins", {
+        userId: studentAId,
+        dateStr: "2026-09-28",
+        mood: "calm",
+        createdAt: Date.now(),
+      });
+      // 5 episodic emotion logs
+      for (let i = 0; i < 5; i++) {
+        await ctx.db.insert("emotionLogs", {
+          userId: studentAId,
+          emotion: "anxious",
+          bodyRegions: [],
+          createdAt: Date.now() + i * 1000,
+        });
+      }
+    });
+
+    const result = await counselorSession.query(api.insights.getCounselorStudentDailyCheckins, {
+      userId: studentAId,
+    });
+
+    // Checkin telemetry must contain ONLY the 1 dailyCheckin, never emotionLogs
+    expect(result.totalCheckins).toBe(1);
+    expect(result.checkins.length).toBe(1);
+    expect(result.checkins[0].mood).toBe("calm");
+  });
+
+  test("COUNSELOR-CHECKIN-08: No check-ins produces a clean empty state", async () => {
+    const { t, studentAId, counselorId } = await setupTestEnvironment();
+    const counselorSession = t.withIdentity({ subject: counselorId });
+
+    const result = await counselorSession.query(api.insights.getCounselorStudentDailyCheckins, {
+      userId: studentAId,
+    });
+
+    expect(result.totalCheckins).toBe(0);
+    expect(result.checkins).toEqual([]);
+    expect(result.lookbackDays).toBe(14);
+  });
+
+  test("COUNSELOR-CHECKIN-09: Daily check-in retrieval does not modify triages or alerts", async () => {
+    const { t, studentAId, counselorId } = await setupTestEnvironment();
+    const counselorSession = t.withIdentity({ subject: counselorId });
+
+    let triageId: Id<"triages">;
+    let alertId: Id<"alerts">;
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert("dailyCheckins", {
+        userId: studentAId,
+        dateStr: "2026-09-28",
+        mood: "low",
+        createdAt: Date.now(),
+      });
+      triageId = await ctx.db.insert("triages", {
+        userId: studentAId,
+        level: "mild",
+        suicideFlag: false,
+        psychosisFlag: false,
+        createdAt: Date.now(),
+      });
+      alertId = await ctx.db.insert("alerts", {
+        userId: studentAId,
+        type: "baseline_severe",
+        status: "pending",
+        createdAt: Date.now(),
+      });
+    });
+
+    // Query multiple times
+    await counselorSession.query(api.insights.getCounselorStudentDailyCheckins, { userId: studentAId });
+    await counselorSession.query(api.insights.getCounselorStudentDailyCheckins, { userId: studentAId });
+
+    // Verify triages and alerts are completely untouched
+    await t.run(async (ctx) => {
+      const triage = await ctx.db.get(triageId);
+      const alert = await ctx.db.get(alertId);
+      expect(triage?.level).toBe("mild");
+      expect(alert?.status).toBe("pending");
+      const allTriages = await ctx.db.query("triages").collect();
+      const allAlerts = await ctx.db.query("alerts").collect();
+      expect(allTriages.length).toBe(1);
+      expect(allAlerts.length).toBe(1);
+    });
+  });
+
+  test("COUNSELOR-CHECKIN-10: 14-day UI window does not delete or alter older historical records", async () => {
+    const { t, studentAId, counselorId } = await setupTestEnvironment();
+    const counselorSession = t.withIdentity({ subject: counselorId });
+
+    // Insert 25 daily check-ins
+    await t.run(async (ctx) => {
+      for (let i = 1; i <= 25; i++) {
+        const dayStr = String(i).padStart(2, "0");
+        await ctx.db.insert("dailyCheckins", {
+          userId: studentAId,
+          dateStr: `2026-08-${dayStr}`,
+          mood: "good",
+          createdAt: 1725148800000 + i * 86400000,
+        });
+      }
+    });
+
+    const result = await counselorSession.query(api.insights.getCounselorStudentDailyCheckins, {
+      userId: studentAId,
+      lookbackDays: 14,
+    });
+
+    // Lifetime total must reflect all 25 checkins
+    expect(result.totalCheckins).toBe(25);
+    // UI review slice must be bounded to 14
+    expect(result.checkins.length).toBe(14);
+
+    // Database must still have all 25 rows intact
+    await t.run(async (ctx) => {
+      const allInDb = await ctx.db
+        .query("dailyCheckins")
+        .withIndex("by_userId", (q: any) => q.eq("userId", studentAId))
+        .collect();
+      expect(allInDb.length).toBe(25);
+    });
+  });
+
+  test("COUNSELOR-CHECKIN-11: Existing Clinical Timeline Monitoring behavior remains unchanged", async () => {
+    const { t, studentAId, counselorId } = await setupTestEnvironment();
+    const counselorSession = t.withIdentity({ subject: counselorId });
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert("dailyCheckins", {
+        userId: studentAId,
+        dateStr: "2026-09-28",
+        mood: "calm",
+        createdAt: 1727500000000,
+      });
+    });
+
+    // Under default timeline view (no category filter), daily check-ins are excluded
+    const defaultTimeline = await counselorSession.query(api.timeline.getStudentClinicalTimeline, {
+      userId: studentAId,
+    });
+    expect(defaultTimeline.some((e: any) => e.eventType === "daily_mood_checkin")).toBe(false);
+
+    // Under monitoring filter, daily check-ins appear
+    const monitoringTimeline = await counselorSession.query(api.timeline.getStudentClinicalTimeline, {
+      userId: studentAId,
+      categoryFilter: "monitoring",
+    });
+    const checkinEvent = monitoringTimeline.find((e: any) => e.eventType === "daily_mood_checkin");
+    expect(checkinEvent).toBeDefined();
+    expect(checkinEvent?.title).toBe("Daily Mood: calm");
+    expect(checkinEvent?.category).toBe("monitoring");
+  });
+
+  // =========================================================================
+  // STEP 5A: FOLLOW-UP PROVENANCE & DEAD-CODE CLEANUP (FOLLOWUP-PROV-01 to 08)
+  // =========================================================================
+
+  test("FOLLOWUP-PROV-01: New screening-generated follow-up stores correct attemptId", async () => {
+    const { t, studentAId } = await setupTestEnvironment();
+    const studentSession = t.withIdentity({ subject: studentAId });
+
+    // Submit screening attempt
+    const attempt = await studentSession.mutation(api.screening.submitScreeningAttempt, {
+      responses: {
+        phq9: makePHQ9Responses(1, 0), // 8 (mild)
+        gad7: makeGAD7Responses(1), // 7 (mild)
+        pq16: makePQ16Responses(0),
+      },
+    });
+
+    // Schedule follow-up with attemptId and triageId
+    const followUpId = await studentSession.mutation(api.followUps.scheduleFollowUp, {
+      userId: studentAId,
+      level: attempt.triageLevel,
+      attemptId: attempt.attemptId,
+      triageId: attempt.triageId,
+    });
+
+    await t.run(async (ctx) => {
+      const followUp = await ctx.db.get(followUpId);
+      expect(followUp).not.toBeNull();
+      expect(followUp?.attemptId).toBe(attempt.attemptId);
+      expect(followUp?.sourceType).toBe("screening");
+    });
+  });
+
+  test("FOLLOWUP-PROV-02: New screening-generated follow-up stores correct triageId", async () => {
+    const { t, studentAId } = await setupTestEnvironment();
+    const studentSession = t.withIdentity({ subject: studentAId });
+
+    const attempt = await studentSession.mutation(api.screening.submitScreeningAttempt, {
+      responses: {
+        phq9: makePHQ9Responses(1, 0),
+        gad7: makeGAD7Responses(1),
+        pq16: makePQ16Responses(0),
+      },
+    });
+
+    const followUpId = await studentSession.mutation(api.followUps.scheduleFollowUp, {
+      userId: studentAId,
+      level: attempt.triageLevel,
+      attemptId: attempt.attemptId,
+      triageId: attempt.triageId,
+    });
+
+    await t.run(async (ctx) => {
+      const followUp = await ctx.db.get(followUpId);
+      expect(followUp).not.toBeNull();
+      expect(followUp?.triageId).toBe(attempt.triageId);
+    });
+  });
+
+  test("FOLLOWUP-PROV-03: attemptId and triageId point to the correct originating records", async () => {
+    const { t, studentAId } = await setupTestEnvironment();
+    const studentSession = t.withIdentity({ subject: studentAId });
+
+    const attempt = await studentSession.mutation(api.screening.submitScreeningAttempt, {
+      responses: {
+        phq9: makePHQ9Responses(2, 0), // 16 (severe)
+        gad7: makeGAD7Responses(1),
+        pq16: makePQ16Responses(0),
+      },
+    });
+
+    const followUpId = await studentSession.mutation(api.followUps.scheduleFollowUp, {
+      userId: studentAId,
+      level: attempt.triageLevel,
+      attemptId: attempt.attemptId,
+      triageId: attempt.triageId,
+    });
+
+    await t.run(async (ctx) => {
+      const followUp = await ctx.db.get(followUpId);
+      const attemptDoc = await ctx.db.get(followUp!.attemptId!);
+      const triageDoc = await ctx.db.get(followUp!.triageId!);
+
+      expect(attemptDoc).not.toBeNull();
+      expect(triageDoc).not.toBeNull();
+      expect(attemptDoc?._id).toBe(attempt.attemptId);
+      expect(triageDoc?._id).toBe(attempt.triageId);
+      // Cross-link verification: attempt and triage link each other
+      expect(attemptDoc?.triageId).toBe(triageDoc?._id);
+      expect(triageDoc?.attemptId).toBe(attemptDoc?._id);
+    });
+  });
+
+  test("FOLLOWUP-PROV-04: Historical followUps without provenance remain readable", async () => {
+    const { t, studentAId } = await setupTestEnvironment();
+    const studentSession = t.withIdentity({ subject: studentAId });
+
+    let legacyFollowUpId: Id<"followUps">;
+    await t.run(async (ctx) => {
+      legacyFollowUpId = await ctx.db.insert("followUps", {
+        userId: studentAId,
+        type: "screening_review",
+        dueDate: Date.now() + 14 * 86400000,
+        completed: false,
+        createdAt: Date.now() - 3600000,
+        // no attemptId, triageId, or sourceType
+      });
+    });
+
+    const pending = await studentSession.query(api.followUps.getPending, { userId: studentAId });
+    expect(pending.length).toBe(1);
+    expect(pending[0]._id).toBe(legacyFollowUpId!);
+    expect(pending[0].attemptId).toBeUndefined();
+    expect(pending[0].triageId).toBeUndefined();
+  });
+
+  test("FOLLOWUP-PROV-05: Manual/independent follow-up does not receive fabricated provenance", async () => {
+    const { t, studentAId } = await setupTestEnvironment();
+    const studentSession = t.withIdentity({ subject: studentAId });
+
+    // Independent scheduleFollowUp call without attemptId or triageId
+    const followUpId = await studentSession.mutation(api.followUps.scheduleFollowUp, {
+      userId: studentAId,
+      level: "moderate",
+    });
+
+    await t.run(async (ctx) => {
+      const followUp = await ctx.db.get(followUpId);
+      expect(followUp).not.toBeNull();
+      expect(followUp?.attemptId).toBeUndefined();
+      expect(followUp?.triageId).toBeUndefined();
+      expect(followUp?.sourceType).toBe("counselor");
+    });
+  });
+
+  test("FOLLOWUP-PROV-06: Existing follow-up dueDate behavior remains unchanged", async () => {
+    const { t, studentAId } = await setupTestEnvironment();
+    const studentSession = t.withIdentity({ subject: studentAId });
+
+    const before = Date.now();
+
+    // Mild: 30 days
+    const mildId = await studentSession.mutation(api.followUps.scheduleFollowUp, {
+      userId: studentAId,
+      level: "mild",
+    });
+
+    // Moderate: 7 days
+    const modId = await studentSession.mutation(api.followUps.scheduleFollowUp, {
+      userId: studentAId,
+      level: "moderate",
+    });
+
+    // Severe: 2 days
+    const sevId = await studentSession.mutation(api.followUps.scheduleFollowUp, {
+      userId: studentAId,
+      level: "severe",
+    });
+
+    // Default: 14 days
+    const defId = await studentSession.mutation(api.followUps.scheduleFollowUp, {
+      userId: studentAId,
+      level: "unknown_level",
+    });
+
+    const after = Date.now();
+
+    await t.run(async (ctx) => {
+      const mild = await ctx.db.get(mildId);
+      const mod = await ctx.db.get(modId);
+      const sev = await ctx.db.get(sevId);
+      const def = await ctx.db.get(defId);
+
+      const msDay = 86400000;
+      expect(mild!.dueDate).toBeGreaterThanOrEqual(before + 30 * msDay);
+      expect(mild!.dueDate).toBeLessThanOrEqual(after + 30 * msDay);
+
+      expect(mod!.dueDate).toBeGreaterThanOrEqual(before + 7 * msDay);
+      expect(mod!.dueDate).toBeLessThanOrEqual(after + 7 * msDay);
+
+      expect(sev!.dueDate).toBeGreaterThanOrEqual(before + 2 * msDay);
+      expect(sev!.dueDate).toBeLessThanOrEqual(after + 2 * msDay);
+
+      expect(def!.dueDate).toBeGreaterThanOrEqual(before + 14 * msDay);
+      expect(def!.dueDate).toBeLessThanOrEqual(after + 14 * msDay);
+    });
+  });
+
+  test("FOLLOWUP-PROV-07: Unauthorized users cannot use the change to access another student's records", async () => {
+    const { t, studentAId, studentBId } = await setupTestEnvironment();
+    const studentASession = t.withIdentity({ subject: studentAId });
+    const studentBSession = t.withIdentity({ subject: studentBId });
+
+    // Student A submits a screening attempt
+    const attemptA = await studentASession.mutation(api.screening.submitScreeningAttempt, {
+      responses: {
+        phq9: makePHQ9Responses(1, 0),
+        gad7: makeGAD7Responses(1),
+        pq16: makePQ16Responses(0),
+      },
+    });
+
+    // Student B attempts to schedule follow-up passing Student A's attemptId
+    await expect(
+      studentBSession.mutation(api.followUps.scheduleFollowUp, {
+        userId: studentBId,
+        level: "mild",
+        attemptId: attemptA.attemptId,
+      })
+    ).rejects.toThrow(/Unauthorized/);
+
+    // Student B attempts to query Student A's pending follow-ups
+    await expect(
+      studentBSession.query(api.followUps.getPending, { userId: studentAId })
+    ).rejects.toThrow(/Unauthorized/);
+  });
+
+  test("FOLLOWUP-PROV-08: No triage or alert behavior changes as a result of provenance persistence", async () => {
+    const { t, studentAId } = await setupTestEnvironment();
+    const studentSession = t.withIdentity({ subject: studentAId });
+
+    // Submit a high-risk attempt (PHQ item 9 = 2)
+    const attempt = await studentSession.mutation(api.screening.submitScreeningAttempt, {
+      responses: {
+        phq9: makePHQ9Responses(1, 2),
+        gad7: makeGAD7Responses(1),
+        pq16: makePQ16Responses(0),
+      },
+    });
+
+    expect(attempt.suicideFlag).toBe(true);
+
+    // Count triages and alerts before scheduleFollowUp
+    let triagesBefore = 0;
+    let alertsBefore = 0;
+    await t.run(async (ctx) => {
+      triagesBefore = (await ctx.db.query("triages").collect()).length;
+      alertsBefore = (await ctx.db.query("alerts").collect()).length;
+    });
+
+    // Schedule follow-up with provenance
+    await studentSession.mutation(api.followUps.scheduleFollowUp, {
+      userId: studentAId,
+      level: attempt.triageLevel,
+      attemptId: attempt.attemptId,
+      triageId: attempt.triageId,
+    });
+
+    // Verify triages and alerts count and contents are 100% unchanged
+    await t.run(async (ctx) => {
+      const triagesAfter = (await ctx.db.query("triages").collect()).length;
+      const alertsAfter = (await ctx.db.query("alerts").collect()).length;
+
+      expect(triagesAfter).toBe(triagesBefore);
+      expect(alertsAfter).toBe(alertsBefore);
+
+      const alert = await ctx.db
+        .query("alerts")
+        .withIndex("by_attemptId", (q: any) => q.eq("attemptId", attempt.attemptId))
+        .first();
+      expect(alert?.status).toBe("pending");
+      expect(alert?.type).toBe("suicide");
+    });
+  });
+
+  // =========================================================================
+  // STEP 5B: WELLNESS PROFILE CLINICAL DECOUPLING (WELLNESS-5B-01 to 08)
+  // =========================================================================
+
+  test("WELLNESS-5B-01: wellnessProfiles no longer derives personality traits from PHQ-9", async () => {
+    const { t, studentAId } = await setupTestEnvironment();
+    const studentSession = t.withIdentity({ subject: studentAId });
+
+    // Insert a severe PHQ-9 attempt (score 24 > 15)
+    await studentSession.mutation(api.screening.submitScreeningAttempt, {
+      responses: {
+        phq9: makePHQ9Responses(3, 0), // 24 (severe)
+        gad7: makeGAD7Responses(0),
+        pq16: makePQ16Responses(0),
+      },
+    });
+
+    // Update profile
+    await studentSession.mutation(api.wellness.updateProfile, { userId: studentAId });
+
+    const profile = await studentSession.query(api.wellness.getProfile, { userId: studentAId });
+    expect(profile).not.toBeNull();
+    // Prior behavior added "Needs gentle support" when phq9 > 15. This MUST NOT be present.
+    expect(profile?.personality_traits).not.toContain("Needs gentle support");
+  });
+
+  test("WELLNESS-5B-02: wellnessProfiles no longer derives personality traits from GAD-7", async () => {
+    const { t, studentAId } = await setupTestEnvironment();
+    const studentSession = t.withIdentity({ subject: studentAId });
+
+    // Insert a severe GAD-7 attempt (score 21 > 10)
+    await studentSession.mutation(api.screening.submitScreeningAttempt, {
+      responses: {
+        phq9: makePHQ9Responses(0, 0),
+        gad7: makeGAD7Responses(3), // 21 (severe)
+        pq16: makePQ16Responses(0),
+      },
+    });
+
+    await studentSession.mutation(api.wellness.updateProfile, { userId: studentAId });
+
+    const profile = await studentSession.query(api.wellness.getProfile, { userId: studentAId });
+    expect(profile).not.toBeNull();
+    // Prior behavior added "Sensitive to stress" when gad7 > 10. This MUST NOT be present.
+    expect(profile?.personality_traits).not.toContain("Sensitive to stress");
+  });
+
+  test("WELLNESS-5B-03: wellnessProfiles no longer derives wellness goals from PHQ/GAD scores", async () => {
+    const { t, studentAId } = await setupTestEnvironment();
+    const studentSession = t.withIdentity({ subject: studentAId });
+
+    // Insert severe PHQ-9 (24) and GAD-7 (21)
+    await studentSession.mutation(api.screening.submitScreeningAttempt, {
+      responses: {
+        phq9: makePHQ9Responses(3, 0),
+        gad7: makeGAD7Responses(3),
+        pq16: makePQ16Responses(0),
+      },
+    });
+
+    await studentSession.mutation(api.wellness.updateProfile, { userId: studentAId });
+
+    const profile = await studentSession.query(api.wellness.getProfile, { userId: studentAId });
+    expect(profile).not.toBeNull();
+    // Prior behavior added "Gentle recovery" (PHQ > 10) and "Improve mood" (PHQ > 5)
+    expect(profile?.wellness_goals).not.toContain("Gentle recovery");
+    expect(profile?.wellness_goals).not.toContain("Improve mood");
+  });
+
+  test("WELLNESS-5B-04: Non-clinical wellness data remains available where safely supported", async () => {
+    const { t, studentAId } = await setupTestEnvironment();
+    const studentSession = t.withIdentity({ subject: studentAId });
+
+    // Add 4 JPMR logs and 4 completed microGoals
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 4; i++) {
+        await ctx.db.insert("jpmrLogs", {
+          userId: studentAId,
+          completed: true,
+          preIntensity: 7,
+          postIntensity: 3,
+          durationSeconds: 600,
+          createdAt: Date.now() - i * 3600000,
+        });
+        await ctx.db.insert("microGoals", {
+          userId: studentAId,
+          goalId: `goal_${i}`,
+          goalTitle: `Goal ${i}`,
+          goalDescription: "Habit goal",
+          category: "routine",
+          difficulty: "easy",
+          points: 10,
+          completed: true,
+          skipped: false,
+          createdAt: Date.now() - i * 3600000,
+        });
+      }
+    });
+
+    await studentSession.mutation(api.wellness.updateProfile, { userId: studentAId });
+
+    const profile = await studentSession.query(api.wellness.getProfile, { userId: studentAId });
+    expect(profile).not.toBeNull();
+    // Non-clinical positive behavioral indicators are supported:
+    expect(profile?.personality_traits).toContain("Values relaxation");
+    expect(profile?.personality_traits).toContain("Consistent and improving");
+    expect(profile?.wellness_goals).toContain("Maintain daily momentum");
+  });
+
+  test("WELLNESS-5B-05: Student authorization remains enforced", async () => {
+    const { t, studentAId, studentBId } = await setupTestEnvironment();
+    const studentBSession = t.withIdentity({ subject: studentBId });
+
+    // Student B attempts to query Student A's wellness profile -> DENIED
+    await expect(
+      studentBSession.query(api.wellness.getProfile, { userId: studentAId })
+    ).rejects.toThrow(/Unauthorized/);
+
+    // Student B attempts to mutate Student A's wellness profile -> DENIED
+    await expect(
+      studentBSession.mutation(api.wellness.updateProfile, { userId: studentAId })
+    ).rejects.toThrow(/Unauthorized/);
+  });
+
+  test("WELLNESS-5B-06: Existing historical wellnessProfile records remain readable", async () => {
+    const { t, studentAId } = await setupTestEnvironment();
+    const studentSession = t.withIdentity({ subject: studentAId });
+
+    const pastTimestamp = Date.now() - 86400000;
+    await t.run(async (ctx) => {
+      await ctx.db.insert("wellnessProfiles", {
+        userId: studentAId,
+        personality_traits: ["Historical Explorer"],
+        mood_pattern: "Historical Stable",
+        wellness_goals: ["Historical Goal"],
+        energy_pattern: "Historical Morning",
+        last_updated: pastTimestamp,
+      });
+    });
+
+    const profile = await studentSession.query(api.wellness.getProfile, { userId: studentAId });
+    expect(profile).not.toBeNull();
+    expect(profile?.personality_traits).toEqual(["Historical Explorer"]);
+    expect(profile?.mood_pattern).toBe("Historical Stable");
+    expect(profile?.wellness_goals).toEqual(["Historical Goal"]);
+    expect(profile?.last_updated).toBe(pastTimestamp);
+  });
+
+  test("WELLNESS-5B-07: No screening/triage/alert records are modified by updateProfile", async () => {
+    const { t, studentAId } = await setupTestEnvironment();
+    const studentSession = t.withIdentity({ subject: studentAId });
+
+    // Submit screening attempt
+    const attempt = await studentSession.mutation(api.screening.submitScreeningAttempt, {
+      responses: {
+        phq9: makePHQ9Responses(1, 0),
+        gad7: makeGAD7Responses(1),
+        pq16: makePQ16Responses(0),
+      },
+    });
+
+    // Capture counts before updateProfile
+    let attemptsBefore = 0;
+    let triagesBefore = 0;
+    let alertsBefore = 0;
+    await t.run(async (ctx) => {
+      attemptsBefore = (await ctx.db.query("screeningAttempts").collect()).length;
+      triagesBefore = (await ctx.db.query("triages").collect()).length;
+      alertsBefore = (await ctx.db.query("alerts").collect()).length;
+    });
+
+    // Run updateProfile multiple times
+    await studentSession.mutation(api.wellness.updateProfile, { userId: studentAId });
+    await studentSession.mutation(api.wellness.updateProfile, { userId: studentAId });
+
+    // Verify clinical tables are completely untouched
+    await t.run(async (ctx) => {
+      const attemptsAfter = (await ctx.db.query("screeningAttempts").collect()).length;
+      const triagesAfter = (await ctx.db.query("triages").collect()).length;
+      const alertsAfter = (await ctx.db.query("alerts").collect()).length;
+
+      expect(attemptsAfter).toBe(attemptsBefore);
+      expect(triagesAfter).toBe(triagesBefore);
+      expect(alertsAfter).toBe(alertsBefore);
+
+      const attemptDoc = await ctx.db.get(attempt.attemptId);
+      expect(attemptDoc?.triageLevel).toBe(attempt.triageLevel);
+    });
+  });
+
+  test("WELLNESS-5B-08: No Priority 8 intervention/recommendation logic is introduced", async () => {
+    const { t, studentAId } = await setupTestEnvironment();
+    const studentSession = t.withIdentity({ subject: studentAId });
+
+    await studentSession.mutation(api.wellness.updateProfile, { userId: studentAId });
+    const profile = await studentSession.query(api.wellness.getProfile, { userId: studentAId });
+
+    expect(profile).not.toBeNull();
+    // Ensure only the established schema fields are returned without Priority 8 fields
+    const keys = Object.keys(profile!);
+    expect(keys).toContain("userId");
+    expect(keys).toContain("personality_traits");
+    expect(keys).toContain("mood_pattern");
+    expect(keys).toContain("wellness_goals");
+    expect(keys).toContain("energy_pattern");
+    expect(keys).toContain("last_updated");
+
+    // Strictly no recommendation / machine-learning triage fields
+    expect(profile).not.toHaveProperty("recommendations");
+    expect(profile).not.toHaveProperty("careLevelRecommendation");
+    expect(profile).not.toHaveProperty("prescribedModules");
   });
 });
 

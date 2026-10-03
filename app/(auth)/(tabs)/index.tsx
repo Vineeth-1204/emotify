@@ -19,7 +19,7 @@ import { useLanguage } from "@/context/LanguageContext";
 import { MitraAvatar } from "@/components/avatar/MitraAvatar";
 import { CalmPointToken, PlantProgress } from "@/components/svg/system";
 import { HappyEmotionIcon, CalmEmotionIcon, SadEmotionIcon, WorriedEmotionIcon, renderEmotionIcon } from "@/components/svg/emotions";
-import { MindfulnessActivityIcon, MuscleRelaxActivityIcon, JournalActivityIcon, HabitMicrogoalIcon } from "@/components/svg/activities";
+import { MindfulnessActivityIcon, MuscleRelaxActivityIcon, JournalActivityIcon, HabitMicrogoalIcon, BreathingIcon, GroundingIcon } from "@/components/svg/activities";
 import { ACTIVE_SCREENING_QUESTIONS_COUNT } from "@/constants/Screening";
 import { getLocalDateString } from "@/utils/date";
 
@@ -218,7 +218,12 @@ export default function DashboardScreen() {
   const { t } = useLanguage();
 
   const todayCheckin = useQuery(api.microGoals.getTodayCheckin, { dateStr: getLocalDateString() });
+  const suggestedGoal = useQuery(api.microGoals.getMitraSuggestedGoal, { dateStr: getLocalDateString() });
   const submitMorningCheckin = useMutation(api.microGoals.submitMorningCheckin);
+
+  // Phase 5: Local session dismissal state for guided follow-ups (respects user agency without database clutter)
+  const [dismissedEmotionFollowup, setDismissedEmotionFollowup] = React.useState(false);
+  const [dismissedGoalFollowup, setDismissedGoalFollowup] = React.useState(false);
 
   const [hasCheckedInToday, setHasCheckedInToday] = React.useState(true);
   const [isEditingCheckIn, setIsEditingCheckIn] = React.useState(false);
@@ -299,6 +304,31 @@ export default function DashboardScreen() {
   const appointments = useQuery(api.appointments.getTwoWayAppointmentsForPatient, user?.id ? { userId: user.id } : "skip");
   const streakInfo = useQuery(api.microGoals.getStreak, user?.id ? { userId: user.id, dateStr: getLocalDateString() } : "skip");
   const gamification = useQuery(api.microGoals.getGamificationStats);
+
+  // Phase 5: Determine single primary Mitra next action derived from existing state
+  const todayDateStr = getLocalDateString();
+  const hasLoggedEmotionToday = React.useMemo(() => {
+    if (!recentEmotions || recentEmotions.length === 0) return false;
+    const latest = recentEmotions[0];
+    if (!latest?.createdAt) return false;
+    const latestDateStr = new Date(latest.createdAt).toISOString().split("T")[0];
+    return latestDateStr === todayDateStr;
+  }, [recentEmotions, todayDateStr]);
+
+  type MitraNextActionType = "checkin" | "emotion_followup" | "goal_suggestion" | "all_caught_up";
+
+  const currentMitraAction: MitraNextActionType = React.useMemo(() => {
+    if (!hasCheckedInToday) {
+      return "checkin";
+    }
+    if (!hasLoggedEmotionToday && !dismissedEmotionFollowup) {
+      return "emotion_followup";
+    }
+    if (suggestedGoal && suggestedGoal.status !== "all_completed" && !dismissedGoalFollowup) {
+      return "goal_suggestion";
+    }
+    return "all_caught_up";
+  }, [hasCheckedInToday, hasLoggedEmotionToday, dismissedEmotionFollowup, suggestedGoal, dismissedGoalFollowup]);
 
   const updateWellness = useMutation(api.wellness.updateProfile);
 
@@ -449,6 +479,22 @@ export default function DashboardScreen() {
       locked: !isScreeningComplete 
     },
     { 
+      id: 'breathing', 
+      title: 'Breathing', 
+      sub: 'Mindfulness', 
+      renderIcon: (c: string) => <BreathingIcon size={24} color={c} />, 
+      route: '/(auth)/tools/breathing', 
+      locked: !isScreeningComplete 
+    },
+    { 
+      id: 'grounding', 
+      title: 'Grounding', 
+      sub: 'Sensory', 
+      renderIcon: (c: string) => <GroundingIcon size={24} color={c} />, 
+      route: '/(auth)/tools/grounding', 
+      locked: !isScreeningComplete 
+    },
+    { 
       id: 'jpmr', 
       title: 'Relax Now', 
       sub: 'Relaxation', 
@@ -470,7 +516,7 @@ export default function DashboardScreen() {
       title: 'MicroGoals', 
       sub: 'Habits', 
       renderIcon: (c: string) => <HabitMicrogoalIcon size={24} color={c} />, 
-      route: '/(auth)/tools/microgoals', 
+      route: '/(auth)/tools/mitra-goal', 
       locked: !isScreeningComplete 
     }
   ];
@@ -878,17 +924,19 @@ export default function DashboardScreen() {
         )}
 
         {/* Mitra Interactive Hero Card */}
-        <TouchableOpacity
-          style={styles.mitraHeroCard}
-          activeOpacity={0.88}
-          onPress={() => router.push('/(auth)/tools/companion' as any)}
-        >
+        <View style={styles.mitraHeroCard}>
           <LinearGradient
             colors={['#FFFFFF', '#F8FAFC'] as any}
             style={StyleSheet.absoluteFill}
           />
           <View style={styles.mitraHeroContent}>
-            <View style={styles.mitraAvatarCol}>
+            <TouchableOpacity
+              style={styles.mitraAvatarCol}
+              activeOpacity={0.8}
+              onPress={() => router.push('/(auth)/tools/companion' as any)}
+              accessibilityRole="button"
+              accessibilityLabel={`Chat with ${avatarName}`}
+            >
               <MitraAvatar 
                 gender={avatarGender}
                 state={avatarState} 
@@ -897,23 +945,101 @@ export default function DashboardScreen() {
               <View style={[styles.avatarNameBadge, { backgroundColor: colors.primary + '15' }]}>
                 <Text style={[styles.avatarNameBadgeText, { color: colors.primary }]}>{avatarName}</Text>
               </View>
-            </View>
+            </TouchableOpacity>
+
             <View style={styles.mitraBubbleCol}>
               <View style={styles.mitraSpeechBubble}>
+                {/* Contextual Speech Text */}
                 <Text style={styles.mitraSpeechText}>
-                  {hasCheckedInToday
-                    ? (activeEmotionObj ? `You logged feeling ${activeEmotionObj.label.toLowerCase()} today. I'm right here with you.` : getDialogue("checkinPrompt"))
-                    : getDialogue("greeting")}
+                  {currentMitraAction === "checkin"
+                    ? `${getGreeting()}, ${alias}. Take a moment to check in with how you're feeling today.`
+                    : currentMitraAction === "emotion_followup"
+                    ? "Thanks for checking in! Would you like to tell me a little more about how you're feeling?"
+                    : currentMitraAction === "goal_suggestion"
+                    ? "I've got a small thing you could try today."
+                    : "You're all caught up for today! Feel free to rest, or explore any tool below whenever you like."}
                 </Text>
 
-                {/* Instant Action CTA Pill */}
-                <View style={[styles.chatCtaPill, { backgroundColor: colors.primary + '12' }]}>
+                {/* Primary Mitra Next Action (At most ONE at a time) */}
+                {currentMitraAction === "emotion_followup" && (
+                  <View style={styles.mitraContextualActionRow}>
+                    <TouchableOpacity
+                      style={[styles.mitraActionBtnPrimary, { backgroundColor: colors.primary }]}
+                      activeOpacity={0.85}
+                      onPress={() => router.push('/(auth)/tools/emotion-map' as any)}
+                      accessibilityRole="button"
+                      accessibilityLabel="Talk to me about how you feel"
+                    >
+                      <Ionicons name="chatbubbles" size={13} color="#FFFFFF" />
+                      <Text style={styles.mitraActionBtnTextPrimary}>Talk to me</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.mitraActionBtnSecondary}
+                      activeOpacity={0.7}
+                      onPress={() => setDismissedEmotionFollowup(true)}
+                      accessibilityRole="button"
+                      accessibilityLabel="Maybe later"
+                    >
+                      <Text style={[styles.mitraActionBtnTextSecondary, { color: colors.textSecondary }]}>Maybe later</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                {currentMitraAction === "goal_suggestion" && suggestedGoal && (
+                  <View style={styles.mitraGoalContainer}>
+                    <View style={styles.mitraGoalTitleRow}>
+                      <Ionicons name="sparkles" size={13} color="#16A34A" />
+                      <Text style={[styles.mitraGoalPillTitle, { color: '#15803D' }]} numberOfLines={1}>
+                        {suggestedGoal.goalTitle}
+                      </Text>
+                    </View>
+                    <View style={styles.mitraContextualActionRow}>
+                      <TouchableOpacity
+                        style={[styles.mitraActionBtnPrimary, { backgroundColor: '#16A34A' }]}
+                        activeOpacity={0.85}
+                        onPress={() => router.push('/(auth)/tools/mitra-goal' as any)}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Try goal: ${suggestedGoal.goalTitle}`}
+                      >
+                        <Text style={styles.mitraActionBtnTextPrimary}>Let's do it</Text>
+                        <Ionicons name="arrow-forward" size={12} color="#FFFFFF" />
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.mitraActionBtnSecondary}
+                        activeOpacity={0.7}
+                        onPress={() => setDismissedGoalFollowup(true)}
+                        accessibilityRole="button"
+                        accessibilityLabel="Not now"
+                      >
+                        <Text style={[styles.mitraActionBtnTextSecondary, { color: colors.textSecondary }]}>Not now</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
+
+                {currentMitraAction === "all_caught_up" && (
+                  <View style={[styles.mitraGoalPill, { backgroundColor: '#F0FDF4', borderColor: '#BBF7D0', borderWidth: 1 }]}>
+                    <Ionicons name="checkmark-circle" size={12} color="#16A34A" />
+                    <Text style={[styles.mitraGoalPillTitle, { color: '#15803D' }]}>
+                      Daily routine goal complete!
+                    </Text>
+                  </View>
+                )}
+
+                {/* Instant Action CTA Pill to open companion */}
+                <TouchableOpacity
+                  style={[styles.chatCtaPill, { backgroundColor: colors.primary + '12' }]}
+                  activeOpacity={0.8}
+                  onPress={() => router.push('/(auth)/tools/companion' as any)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Chat with ${avatarName}`}
+                >
                   <Ionicons name="chatbubble-ellipses" size={13} color={colors.primary} />
                   <Text style={[styles.chatCtaText, { color: colors.primary }]}>
                     {t("home.companionCta", { companionName: avatarName })}
                   </Text>
                   <Ionicons name="chevron-forward" size={13} color={colors.primary} />
-                </View>
+                </TouchableOpacity>
               </View>
               <View style={styles.growthRow}>
                 <PlantProgress 
@@ -934,7 +1060,7 @@ export default function DashboardScreen() {
               </View>
             </View>
           </View>
-        </TouchableOpacity>
+        </View>
 
         {/* Onboarding Banner Card (If screening not complete) */}
         {!isScreeningComplete && (
@@ -1478,6 +1604,34 @@ function stylesFactory(colors: any) {
     fontFamily: Theme.fontFamily.bold,
     fontSize: 11,
   },
+  mitraGoalPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 10,
+    marginTop: 8,
+    alignSelf: 'stretch',
+  } as const,
+  mitraGoalPillTitle: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: 12,
+  },
+  mitraGoalPillAction: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  } as const,
+  mitraGoalPillActionText: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: 11,
+    color: '#16A34A',
+  },
   mitraBubbleCol: {
     flex: 1,
   } as const,
@@ -1496,6 +1650,49 @@ function stylesFactory(colors: any) {
     color: colors.text,
     lineHeight: 18,
   },
+  mitraContextualActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 8,
+  } as const,
+  mitraActionBtnPrimary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 10,
+    ...Theme.shadows.tertiary,
+  } as const,
+  mitraActionBtnTextPrimary: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: 12,
+    color: '#FFFFFF',
+  },
+  mitraActionBtnSecondary: {
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 10,
+  } as const,
+  mitraActionBtnTextSecondary: {
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: 12,
+  },
+  mitraGoalContainer: {
+    marginTop: 8,
+    backgroundColor: '#F0FDF4',
+    borderColor: '#BBF7D0',
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 10,
+  } as const,
+  mitraGoalTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
+  } as const,
   growthRow: {
     flexDirection: 'row',
     alignItems: 'center',

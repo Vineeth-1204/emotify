@@ -1,10 +1,12 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import { requireAdmin } from "./authz";
 
-/** Clear all existing JPMR video records and storage files */
+/** Clear all existing JPMR video records and storage files (Admin only) */
 export const clearAllJpmrVideos = mutation({
   args: {},
   handler: async (ctx) => {
+    await requireAdmin(ctx);
     const existing = await ctx.db.query("jpmrVideos").collect();
     for (const item of existing) {
       try {
@@ -18,15 +20,16 @@ export const clearAllJpmrVideos = mutation({
   },
 });
 
-/** Generate an upload URL for uploading files to Convex Storage */
+/** Generate an upload URL for uploading files to Convex Storage (Admin only) */
 export const generateUploadUrl = mutation({
   args: {},
   handler: async (ctx) => {
+    await requireAdmin(ctx);
     return await ctx.storage.generateUploadUrl();
   },
 });
 
-/** Save video record after uploading file to Convex Storage */
+/** Save video record after uploading file to Convex Storage (Admin only) */
 export const saveVideoRecord = mutation({
   args: {
     stepIndex: v.number(),
@@ -34,6 +37,7 @@ export const saveVideoRecord = mutation({
     storageId: v.id("_storage"),
   },
   handler: async (ctx, args) => {
+    await requireAdmin(ctx);
     const existing = await ctx.db
       .query("jpmrVideos")
       .withIndex("by_stepIndex", (q) => q.eq("stepIndex", args.stepIndex))

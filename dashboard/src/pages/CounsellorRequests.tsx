@@ -1,12 +1,52 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { MessageSquare, Phone, Calendar, Clock, User, Sparkles, Search, CheckCircle2, PhoneCall, Check, XCircle } from "lucide-react";
-import { useQuery, useMutation } from "convex/react";
+import { useQuery, useMutation, useConvex } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { useNavigate, Link } from "react-router-dom";
 
 export default function CounsellorRequests() {
   const navigate = useNavigate();
-  const requests = useQuery(api.dashboard.getCounsellorRequests);
+  const convex = useConvex();
+  const reqPage1 = useQuery(api.dashboard.getCounsellorRequests, { paginate: true });
+  const [extraRequests, setExtraRequests] = useState<any[]>([]);
+  const [reqCursorState, setReqCursorState] = useState<string | null | undefined>(undefined);
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  const effectiveReqCursor = reqCursorState !== undefined ? reqCursorState : reqPage1?.nextCursor ?? null;
+  const hasMore = Boolean(effectiveReqCursor);
+
+  const requests = useMemo(() => {
+    if (!reqPage1) return undefined;
+    const base = reqPage1.requests || [];
+    const map = new Map<string, any>();
+    for (const r of base) {
+      map.set(r._id, r);
+    }
+    for (const r of extraRequests) {
+      map.set(r._id, r);
+    }
+    return Array.from(map.values());
+  }, [reqPage1, extraRequests]);
+
+  const handleLoadMore = async () => {
+    if (!effectiveReqCursor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const res = await convex.query(api.dashboard.getCounsellorRequests, {
+        cursor: effectiveReqCursor,
+        paginate: true,
+      });
+      if (res && res.requests) {
+        setExtraRequests((prev) => [...prev, ...res.requests]);
+        setReqCursorState(res.nextCursor);
+      }
+    } catch (err) {
+      console.error("Failed to load more requests", err);
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
   const updateStatus = useMutation(api.counsellorRequests.updateStatus);
 
   const [searchTerm, setSearchTerm] = useState("");
@@ -310,6 +350,19 @@ export default function CounsellorRequests() {
                 </div>
               );
             })
+          )}
+
+          {hasMore && (
+            <div style={{ padding: "16px 24px", borderTop: "1px solid var(--border-color)", display: "flex", justifyContent: "center", background: "#f8fafc", borderRadius: "0 0 12px 12px" }}>
+              <button
+                onClick={handleLoadMore}
+                disabled={loadingMore}
+                className="btn btn-secondary"
+                style={{ padding: "8px 24px", fontSize: "0.85rem", display: "inline-flex", alignItems: "center", gap: "8px" }}
+              >
+                {loadingMore ? "Loading more requests..." : "Load More Requests"}
+              </button>
+            </div>
           )}
         </div>
       </div>

@@ -9,51 +9,17 @@ import { assertCanAccessStudent } from "./authz";
 // 1. GOAL ENGINE & RECOMMENDATION TEMPLATES
 // ==========================================
 
-export interface GoalTemplate {
-  id: string;
-  title: string;
-  description: string;
-  points: number; // legacy points
-  category: string;
-  difficulty: "easy" | "medium" | "very_small" | "large";
-  whyItHelps: string;
-  estimatedTime: string;
-}
+import {
+  GoalTemplate,
+  TEMPLATES,
+  ROUTINE_HABIT_CATALOG,
+  selectDailyRoutineGoalsDeterministically,
+  type AssignedGoalRecord,
+} from "../common/interventions";
 
-const TEMPLATES: Record<string, GoalTemplate[]> = {
-  small: [
-    { id: "water", title: "Drink a glass of water", description: "Stay hydrated to improve focus and alertness.", points: 10, category: "Hydration", difficulty: "easy", whyItHelps: "Hydration keeps your mind and body active.", estimatedTime: "1 min" },
-    { id: "stretch_5", title: "Stretch for 5 minutes", description: "Do a few gentle body stretches.", points: 10, category: "Exercise", difficulty: "easy", whyItHelps: "Stretching releases physical tension accumulated from stress.", estimatedTime: "5 mins" },
-    { id: "breathe", title: "Take 3 deep belly breaths", description: "Take slow, deep belly breaths to calm down.", points: 10, category: "Breathing", difficulty: "easy", whyItHelps: "Deep breathing lowers your heart rate and activates calm.", estimatedTime: "3 mins" },
-    { id: "outside_brief", title: "Stand by an open window", description: "Stand outside or look at the sky for a moment.", points: 10, category: "Mindfulness", difficulty: "easy", whyItHelps: "Natural sunlight regulates sleep and raises serotonin.", estimatedTime: "5 mins" },
-    { id: "music", title: "Listen to calming music", description: "Play some of your favorite relaxing music.", points: 10, category: "Relaxation", difficulty: "easy", whyItHelps: "Music activates neural pathways associated with pleasure.", estimatedTime: "5 mins" },
-    { id: "gratitude_1", title: "Write one gratitude entry", description: "Jot down one thing you are grateful for today.", points: 10, category: "Gratitude", difficulty: "easy", whyItHelps: "Expressing gratitude rewires the brain to focus on safety.", estimatedTime: "2 mins" },
-    { id: "dim_screens", title: "Dim screen brightness", description: "Reduce screen glare to prepare your eyes.", points: 10, category: "Sleep", difficulty: "easy", whyItHelps: "Low blue-light exposure supports natural sleep cycles.", estimatedTime: "1 min" },
-    { id: "wash_face", title: "Splash face with cold water", description: "Splash cold water on your face.", points: 10, category: "Self Care", difficulty: "easy", whyItHelps: "Cool water stimulates the vagus nerve and aids alertness.", estimatedTime: "1 min" }
-  ],
-  medium: [
-    { id: "journal_5", title: "Journal for 5 minutes", description: "Write down your current thoughts and feelings.", points: 25, category: "Journaling", difficulty: "medium", whyItHelps: "Journaling brings awareness to your emotional state.", estimatedTime: "5 mins" },
-    { id: "breathe_478", title: "Practice 4-7-8 breathing", description: "Practice the 4-7-8 breathing technique for 3 minutes.", points: 25, category: "Breathing", difficulty: "medium", whyItHelps: "Rhythmic breathing provides an instant physiological pause.", estimatedTime: "3 mins" },
-    { id: "nutrition_fruit", title: "Eat a healthy fruit or snack", description: "Eat a serving of fresh fruit or nuts.", points: 25, category: "Nutrition", difficulty: "medium", whyItHelps: "Nourishing your body supports emotional regulation.", estimatedTime: "10 mins" },
-    { id: "study_review", title: "Review notes from one class", description: "Open a notebook and read over a single page.", points: 25, category: "Study Balance", difficulty: "medium", whyItHelps: "Reviewing a single page makes academic progress feel doable.", estimatedTime: "10 mins" },
-    { id: "doodle_5", title: "Doodle or sketch for 5 mins", description: "Doodle or sketch on a piece of paper.", points: 25, category: "Creativity", difficulty: "medium", whyItHelps: "Creative expression relaxes the brain and improves focus.", estimatedTime: "5 mins" },
-    { id: "friend_msg", title: "Message a friend", description: "Send a quick check-in message to a friend.", points: 25, category: "Social Connection", difficulty: "medium", whyItHelps: "Social connection counteracts isolating tendencies.", estimatedTime: "2 mins" }
-  ],
-  large: [
-    { id: "jpmr_full", title: "Practice guided JPMR", description: "Do a quick guided muscle relaxation block.", points: 50, category: "Relaxation", difficulty: "large", whyItHelps: "JPMR systematically reduces deep muscle tension.", estimatedTime: "15 mins" },
-    { id: "walk_20", title: "Walk outdoors for 20 minutes", description: "Go for a brisk walk around your neighborhood.", points: 50, category: "Exercise", difficulty: "large", whyItHelps: "Gentle aerobic exercise decreases stress hormones.", estimatedTime: "20 mins" },
-    { id: "meditate_15", title: "15-minute body scan meditation", description: "Complete a 15-minute body scan mindfulness track.", points: 50, category: "Mindfulness", difficulty: "large", whyItHelps: "Mindfulness strengthens emotional resilience.", estimatedTime: "15 mins" },
-    { id: "friend_call", title: "Call a family member/friend", description: "Call a loved one for a quick catch-up.", points: 50, category: "Social Connection", difficulty: "large", whyItHelps: "Verbal conversations foster a deep sense of belonging.", estimatedTime: "20 mins" },
-    { id: "cook_healthy", title: "Cook a fresh healthy meal", description: "Prepare a nourishing meal using fresh ingredients.", points: 50, category: "Nutrition", difficulty: "large", whyItHelps: "Healthy eating promotes holistic physical and mental health.", estimatedTime: "30 mins" },
-    { id: "hobby_30", title: "Spend 30 mins on a hobby", description: "Focus on a creative project or hobby you enjoy.", points: 50, category: "Creativity", difficulty: "large", whyItHelps: "Engaging in hobbies builds identity and reduces pressure.", estimatedTime: "30 mins" }
-  ],
-  challenge: [
-    { id: "steps_5k", title: "Walk 5,000 steps today", description: "Hit 5,000 steps on your pedometer/phone tracker.", points: 75, category: "Exercise", difficulty: "large", whyItHelps: "Staying active releases dopamine and supports focus.", estimatedTime: "Daily" },
-    { id: "detox_2h", title: "No social media for 2 hours", description: "Avoid browsing social media applications for a solid 2 hours.", points: 75, category: "Digital Detox", difficulty: "medium", whyItHelps: "Disconnecting from feeds lowers comparison anxiety.", estimatedTime: "2 hours" },
-    { id: "water_2l", title: "Drink 2 liters of water", description: "Make sure you drink a full 2 liters of fluids today.", points: 75, category: "Hydration", difficulty: "medium", whyItHelps: "Optimal hydration maintains cell energy levels.", estimatedTime: "Daily" },
-    { id: "sleep_11", title: "Sleep before 11:00 PM", description: "Wind down and turn off lights before 11:00 PM tonight.", points: 75, category: "Sleep", difficulty: "large", whyItHelps: "Early sleep cycles optimize deep REM restorative recovery.", estimatedTime: "Night" }
-  ]
-};
+export type { GoalTemplate };
+export { TEMPLATES, ROUTINE_HABIT_CATALOG };
+
 
 // ==========================================
 // 2. HELPER: STREAK FREEZE & ACCOUNT LEVEL
@@ -228,41 +194,39 @@ async function checkAndFreezeStreak(
 // ==========================================
 
 async function generateRecommendedGoals(ctx: any, userId: string, mood: string, dateStr?: string) {
-  // Get latest clinical triage level
-  const triage = await ctx.db
-    .query("triages")
-    .withIndex("by_userId", (q: any) => q.eq("userId", userId))
-    .order("desc")
-    .first();
-  const triageLevel = triage?.level || "mild";
-  const isSevere = triageLevel === "severe" || triageLevel === "suicide_flag" || triageLevel === "psychosis_flag";
-  const isModerate = triageLevel === "moderate";
-
-  // Adapt lists based on clinical severity
-  let smallList = [...TEMPLATES.small];
-  let mediumList = [...TEMPLATES.medium];
-  let largeList = [...TEMPLATES.large];
-  let challengeList = [...TEMPLATES.challenge];
-
-  // If severe, ease difficulty: large goals become medium, medium goals become small
-  if (isSevere) {
-    smallList = [...TEMPLATES.small];
-    mediumList = [...TEMPLATES.small]; // downgrade medium to small
-    largeList = [...TEMPLATES.medium]; // downgrade large to medium
-  }
-
-  // Shuffle selections using seeded or dynamic random
-  const shuffle = (arr: any[]) => arr.sort(() => 0.5 - Math.random());
-
-  const selectedSmall = shuffle(smallList).slice(0, 2);
-  const selectedMedium = shuffle(mediumList).slice(0, 1);
-  const selectedLarge = shuffle(largeList).slice(0, 1);
-  const selectedChallenge = shuffle(challengeList).slice(0, 1);
+  // Goal templates list (standard non-clinical recommendation)
+  // NOTE: Clinical triage levels (mild/moderate/severe/flags) and screening scores
+  // are strictly excluded to preserve medical domain separation (P8-F02).
+  // NOTE: args.mood is preserved for signature compatibility but intentionally unused (P8-MOOD-01).
 
   const todayStr =
     dateStr && isValidCheckinDateStr(dateStr)
       ? dateStr
       : new Date().toISOString().split("T")[0];
+
+  // Fetch non-clinical assignment history for 7-day cooldown
+  const allUserGoals = await ctx.db
+    .query("microGoals")
+    .withIndex("by_userId", (q: any) => q.eq("userId", userId))
+    .collect();
+
+  const assignedHistory: AssignedGoalRecord[] = allUserGoals.map((g: any) => ({
+    goalId: g.goalId || g.id,
+    createdAt: g.createdAt,
+    date: g.date,
+  }));
+
+  const {
+    selectedSmall,
+    selectedMedium,
+    selectedLarge,
+    selectedChallenge,
+  } = selectDailyRoutineGoalsDeterministically({
+    userId,
+    dateStr: todayStr,
+    assignedHistory,
+    cooldownDays: 7,
+  });
 
   // Store in database
   const insertedIds = [];
@@ -624,8 +588,16 @@ export const submitMorningCheckin = mutation({
     });
 
     // Clear uncompleted today goals first if user re-checks in or to refresh
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
+    let startOfDayTime: number;
+    if (todayStr && isValidCheckinDateStr(todayStr)) {
+      const [y, m, d] = todayStr.split("-").map(Number);
+      startOfDayTime = new Date(y, m - 1, d, 0, 0, 0, 0).getTime();
+    } else {
+      const startOfDay = new Date();
+      startOfDay.setHours(0, 0, 0, 0);
+      startOfDayTime = startOfDay.getTime();
+    }
+
     const todayGoals = await ctx.db
       .query("microGoals")
       .withIndex("by_userId", (q) => q.eq("userId", userId))
@@ -633,7 +605,7 @@ export const submitMorningCheckin = mutation({
 
     const uncompletedToday = todayGoals.filter(
       (g) =>
-        g.createdAt >= startOfDay.getTime() &&
+        g.createdAt >= startOfDayTime &&
         !g.completed &&
         !g.skipped &&
         !g.cbtSessionId &&
@@ -1119,3 +1091,244 @@ export const markComplete = mutation({
     await completeGoalWithFeelingHelper(ctx, { id: args.id, feelingAfter: "same" });
   },
 });
+
+// ==========================================
+// 6. PHASE 4: MITRA-LED MICROGOAL ORCHESTRATION
+// ==========================================
+
+export const getMitraSuggestedGoal = query({
+  args: {
+    dateStr: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+    const userId = identity.subject;
+
+    const todayStr =
+      args.dateStr && isValidCheckinDateStr(args.dateStr)
+        ? args.dateStr
+        : new Date().toISOString().split("T")[0];
+
+    let startOfDay: number;
+    let endOfDay: number;
+    if (todayStr && isValidCheckinDateStr(todayStr)) {
+      const [y, m, d] = todayStr.split("-").map(Number);
+      startOfDay = new Date(y, m - 1, d, 0, 0, 0, 0).getTime();
+      endOfDay = startOfDay + 24 * 60 * 60 * 1000;
+    } else {
+      const now = new Date();
+      startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+      endOfDay = startOfDay + 24 * 60 * 60 * 1000;
+    }
+
+    const allUserGoals = await ctx.db
+      .query("microGoals")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .collect();
+
+    const todayGoals = allUserGoals.filter((g) => g.createdAt >= startOfDay && g.createdAt < endOfDay);
+
+    // 1. If an active uncompleted and unskipped goal exists for today in DB:
+    const activeGoal = todayGoals.find((g) => !g.completed && !g.skipped);
+    if (activeGoal) {
+      return {
+        persisted: true,
+        _id: activeGoal._id,
+        goalId: activeGoal.goalId || (activeGoal as any).id || "water",
+        goalTitle: activeGoal.goalTitle || (activeGoal as any).goal || "Drink a glass of water",
+        goalDescription: activeGoal.goalDescription || "",
+        category: activeGoal.category,
+        difficulty: activeGoal.difficulty,
+        points: activeGoal.points || activeGoal.xpAwarded || 10,
+        completed: false,
+        skipped: false,
+        status: "active" as const,
+      };
+    }
+
+    // 2. If all today's goals are completed:
+    const completedGoals = todayGoals.filter((g) => g.completed);
+    if (todayGoals.length > 0 && completedGoals.length === todayGoals.length) {
+      const lastCompleted = completedGoals[completedGoals.length - 1];
+      return {
+        persisted: true,
+        _id: lastCompleted._id,
+        goalId: lastCompleted.goalId || (lastCompleted as any).id || "water",
+        goalTitle: lastCompleted.goalTitle || (lastCompleted as any).goal || "Drink a glass of water",
+        goalDescription: lastCompleted.goalDescription || "",
+        category: lastCompleted.category,
+        difficulty: lastCompleted.difficulty,
+        points: lastCompleted.points || lastCompleted.xpAwarded || 10,
+        completed: true,
+        skipped: false,
+        status: "all_completed" as const,
+      };
+    }
+
+    // 3. Otherwise, deterministically select today's small routine goal from the catalog:
+    const assignedHistory: AssignedGoalRecord[] = allUserGoals.map((g: any) => ({
+      goalId: g.goalId || g.id,
+      createdAt: g.createdAt,
+      date: g.date,
+    }));
+
+    const { selectedSmall } = selectDailyRoutineGoalsDeterministically({
+      userId,
+      dateStr: todayStr,
+      assignedHistory,
+      cooldownDays: 7,
+    });
+
+    const template = selectedSmall[0];
+    if (!template) return null;
+
+    return {
+      persisted: false,
+      goalId: template.id,
+      goalTitle: template.title,
+      goalDescription: template.description,
+      category: template.category,
+      difficulty: template.difficulty,
+      points: template.points,
+      whyItHelps: template.whyItHelps,
+      estimatedTime: template.estimatedTime,
+      completed: false,
+      skipped: false,
+      status: "suggested" as const,
+    };
+  },
+});
+
+export const acceptMitraGoal = mutation({
+  args: {
+    goalId: v.optional(v.string()),
+    dateStr: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new ConvexError("Unauthenticated");
+    const userId = identity.subject;
+
+    const todayStr =
+      args.dateStr && isValidCheckinDateStr(args.dateStr)
+        ? args.dateStr
+        : new Date().toISOString().split("T")[0];
+
+    let startOfDay: number;
+    let endOfDay: number;
+    if (todayStr && isValidCheckinDateStr(todayStr)) {
+      const [y, m, d] = todayStr.split("-").map(Number);
+      startOfDay = new Date(y, m - 1, d, 0, 0, 0, 0).getTime();
+      endOfDay = startOfDay + 24 * 60 * 60 * 1000;
+    } else {
+      const now = new Date();
+      startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+      endOfDay = startOfDay + 24 * 60 * 60 * 1000;
+    }
+
+    const allUserGoals = await ctx.db
+      .query("microGoals")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .collect();
+
+    const todayGoals = allUserGoals.filter((g) => g.createdAt >= startOfDay && g.createdAt < endOfDay);
+
+    // If a matching goal is already in DB for today:
+    if (args.goalId) {
+      const existingMatch = todayGoals.find((g: any) => (g.goalId === args.goalId || g._id === args.goalId) && !g.completed && !g.skipped);
+      if (existingMatch) {
+        return {
+          id: existingMatch._id,
+          goalId: existingMatch.goalId,
+          goalTitle: existingMatch.goalTitle,
+          goalDescription: existingMatch.goalDescription,
+          points: existingMatch.points,
+          category: existingMatch.category,
+        };
+      }
+    }
+
+    // If any active uncompleted goal exists:
+    const activeGoal = todayGoals.find((g: any) => !g.completed && !g.skipped);
+    if (activeGoal) {
+      return {
+        id: activeGoal._id,
+        goalId: activeGoal.goalId,
+        goalTitle: activeGoal.goalTitle,
+        goalDescription: activeGoal.goalDescription,
+        points: activeGoal.points,
+        category: activeGoal.category,
+      };
+    }
+
+    // Otherwise, generate today's standard recommended goals via existing deterministic engine:
+    const insertedIds = await generateRecommendedGoals(ctx, userId, "okay", todayStr);
+    const firstGoal = (await ctx.db.get(insertedIds[0])) as any;
+    if (!firstGoal) throw new ConvexError("Failed to initialize recommended goal");
+    return {
+      id: firstGoal._id,
+      goalId: firstGoal.goalId,
+      goalTitle: firstGoal.goalTitle,
+      goalDescription: firstGoal.goalDescription,
+      points: firstGoal.points,
+      category: firstGoal.category,
+    };
+  },
+});
+
+export const skipMitraGoal = mutation({
+  args: {
+    id: v.optional(v.id("microGoals")),
+    goalId: v.optional(v.string()),
+    dateStr: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new ConvexError("Unauthenticated");
+    const userId = identity.subject;
+
+    if (args.id) {
+      const goal = await ctx.db.get(args.id);
+      if (!goal) throw new ConvexError("Goal not found");
+      if (goal.userId !== userId) throw new ConvexError("Unauthorized");
+      await ctx.db.patch(args.id, { skipped: true, reminderStatus: "missed" });
+      return { success: true, message: "No problem. We can try something else later." };
+    }
+
+    // If goal is referenced by goalId
+    if (args.goalId) {
+      const todayStr =
+        args.dateStr && isValidCheckinDateStr(args.dateStr)
+          ? args.dateStr
+          : new Date().toISOString().split("T")[0];
+
+      let startOfDay: number;
+      let endOfDay: number;
+      if (todayStr && isValidCheckinDateStr(todayStr)) {
+        const [y, m, d] = todayStr.split("-").map(Number);
+        startOfDay = new Date(y, m - 1, d, 0, 0, 0, 0).getTime();
+        endOfDay = startOfDay + 24 * 60 * 60 * 1000;
+      } else {
+        const now = new Date();
+        startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+        endOfDay = startOfDay + 24 * 60 * 60 * 1000;
+      }
+
+      const allUserGoals = await ctx.db
+        .query("microGoals")
+        .withIndex("by_userId", (q) => q.eq("userId", userId))
+        .collect();
+
+      const todayGoals = allUserGoals.filter((g) => g.createdAt >= startOfDay && g.createdAt < endOfDay);
+      const match = todayGoals.find((g: any) => g.goalId === args.goalId && !g.completed && !g.skipped);
+      if (match) {
+        if (match.userId !== userId) throw new ConvexError("Unauthorized");
+        await ctx.db.patch(match._id, { skipped: true, reminderStatus: "missed" });
+      }
+    }
+
+    return { success: true, message: "No problem. We can try something else later." };
+  },
+});
+

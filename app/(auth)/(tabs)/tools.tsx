@@ -7,7 +7,7 @@ import { Theme } from "@/constants/Theme";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { MitraAvatar } from "@/components/avatar/MitraAvatar";
-import { MindfulnessActivityIcon, MuscleRelaxActivityIcon, JournalActivityIcon, HabitMicrogoalIcon } from "@/components/svg/activities";
+import { MindfulnessActivityIcon, MuscleRelaxActivityIcon, JournalActivityIcon, HabitMicrogoalIcon, GroundingIcon } from "@/components/svg/activities";
 import { CounsellorBadgeIcon } from "@/components/svg/system";
 
 const { width } = Dimensions.get('window');
@@ -120,6 +120,16 @@ export default function ToolsScreen() {
       categoryText: t("tools.jpmrTag"),
     },
     {
+      id: "grounding",
+      title: t("tools.groundingTitle"),
+      description: t("tools.groundingDesc"),
+      renderIcon: (color: string) => <GroundingIcon size={26} color={color} />,
+      route: "/(auth)/tools/grounding" as const,
+      color: "#16A34A",
+      category: "mindfulness",
+      categoryText: t("tools.groundingTag"),
+    },
+    {
       id: "reframe",
       title: t("tools.reframeTitle"),
       description: t("tools.reframeDesc"),
@@ -211,7 +221,7 @@ export default function ToolsScreen() {
               tool={tool}
               colors={colors}
               styles={styles}
-              onPress={() => router.push(tool.route)}
+              onPress={() => router.push(tool.route as any)}
             />
           ))}
           {filteredTools.length === 0 && (

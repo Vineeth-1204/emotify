@@ -26,6 +26,9 @@ import * as Haptics from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAvatar } from "@/context/AvatarContext";
 import { MitraAvatar } from "@/components/avatar/MitraAvatar";
+import { BreathingPlayer } from "@/components/breathing/BreathingPlayer";
+import { BREATHING_PROTOCOLS } from "@/constants/BreathingProtocols";
+import { SensoryGroundingPlayer } from "@/components/grounding/SensoryGroundingPlayer";
 import { CounsellorBadgeIcon, CalmPointToken } from "@/components/svg/system";
 import {
   SightSensoryIcon,
@@ -205,6 +208,7 @@ export default function ReframeScreen() {
   const submitEmotionAfterRating = useMutation(api.cbt.submitEmotionAfterRating);
   const acceptGoal = useMutation(api.cbt.acceptGoal);
   const skipGoal = useMutation(api.cbt.skipGoal);
+  const skipQuestionMutation = useMutation(api.cbt.skipQuestion);
   const endSession = useMutation(api.cbt.endSession);
   const submitMessage = useAction(api.cbt.submitMessage);
   const recommendGoal = useAction(api.cbt.recommendGoalAction);
@@ -225,8 +229,6 @@ export default function ReframeScreen() {
 
   // Support mode states
   const [supportTab, setSupportTab] = useState<string | null>(null);
-  const [breathStage, setBreathStage] = useState("Breathe In...");
-  const breathAnim = useRef(new Animated.Value(1)).current;
 
   const scrollRef = useRef<ScrollView>(null);
 
@@ -276,35 +278,6 @@ export default function ReframeScreen() {
     }, 100);
   }, [activeSession?.conversation, aiLoading]);
 
-  // Support Mode Breathing Animation loop
-  useEffect(() => {
-    if (supportTab === "breathing") {
-      runBreathingCycle();
-    }
-  }, [supportTab]);
-
-  const runBreathingCycle = () => {
-    setBreathStage("Breathe In...");
-    Animated.timing(breathAnim, {
-      toValue: 2.2,
-      duration: 4000,
-      useNativeDriver: true
-    }).start(({ finished }) => {
-      if (!finished) return;
-      
-      setBreathStage("Hold...");
-      setTimeout(() => {
-        setBreathStage("Breathe Out...");
-        Animated.timing(breathAnim, {
-          toValue: 1.0,
-          duration: 4000,
-          useNativeDriver: true
-        }).start(({ finished: f }) => {
-          if (f) runBreathingCycle();
-        });
-      }, 3000);
-    });
-  };
 
   // Submit dynamic user message
   const handleSendMessage = async (msgOverride?: string) => {
@@ -338,9 +311,22 @@ export default function ReframeScreen() {
     }
   };
 
-  // Skip a challenge question in Guided Discovery
-  const handleSkipQuestion = () => {
-    handleSendMessage("I want to skip this question.");
+  // Skip a challenge question in Guided Discovery without sending fake user messages
+  const handleSkipQuestion = async () => {
+    if (!activeSession) return;
+    setAiLoading(true);
+    try {
+      await skipQuestionMutation({ sessionId: activeSession._id });
+      const updated = await startSession({ forceNew: false });
+      if (updated?.session) {
+        setActiveSession(updated.session);
+      }
+    } catch (e) {
+      console.error(e);
+      Alert.alert("Unable to skip", "Could not skip this question. Please try again.");
+    } finally {
+      setAiLoading(false);
+    }
   };
 
   // Select a balanced thought and edit it
@@ -628,38 +614,36 @@ export default function ReframeScreen() {
               </TouchableOpacity>
 
               {supportTab === "breathing" && (
-                <View style={{ alignItems: "center", paddingVertical: 30 }}>
-                  <Animated.View style={[styles.breathCircle, { transform: [{ scale: breathAnim }] }]}>
-                    <Text style={styles.breathLabel}>{breathStage}</Text>
-                  </Animated.View>
-                  <Text style={styles.breathTip}>Sync your breathing with the circle.</Text>
+                <View style={{ alignItems: "center", paddingVertical: 10 }}>
+                  <BreathingPlayer
+                    protocol={BREATHING_PROTOCOLS.calming_434}
+                    sourceType="cbt_support"
+                    attemptId={activeSession?.attemptId}
+                    triageId={activeSession?.triageId}
+                    title="Gentle Pause Breath"
+                    subtitle="Take a few moments to breathe before continuing"
+                    themeColor="#16A34A"
+                    onClose={() => setSupportTab(null)}
+                  />
                 </View>
               )}
 
               {supportTab === "grounding" && (
-                <View style={{ paddingVertical: 10, gap: 12 }}>
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-                    <SightSensoryIcon size={24} color="#16A34A" />
-                    <Text style={[styles.groundingStep, { flex: 1 }]}>5 things you can SEE around you.</Text>
-                  </View>
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-                    <TouchSensoryIcon size={24} color="#16A34A" />
-                    <Text style={[styles.groundingStep, { flex: 1 }]}>4 things you can TOUCH physically.</Text>
-                  </View>
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-                    <SoundSensoryIcon size={24} color="#16A34A" />
-                    <Text style={[styles.groundingStep, { flex: 1 }]}>3 things you can HEAR in the environment.</Text>
-                  </View>
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-                    <SmellSensoryIcon size={24} color="#16A34A" />
-                    <Text style={[styles.groundingStep, { flex: 1 }]}>2 things you can SMELL.</Text>
-                  </View>
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-                    <TasteSensoryIcon size={24} color="#16A34A" />
-                    <Text style={[styles.groundingStep, { flex: 1 }]}>1 thing you can TASTE.</Text>
-                  </View>
-                  <Text style={styles.breathTip}>Take your time to focus on each sense slowly.</Text>
-                </View>
+                <SensoryGroundingPlayer
+                  mode="overview"
+                  sourceType="cbt_support"
+                  attemptId={activeSession?.attemptId}
+                  triageId={activeSession?.triageId}
+                  title="5-4-3-2-1 Sensory Grounding"
+                  subtitle="Take a gentle pause to focus on your senses"
+                  themeColor="#16A34A"
+                  onComplete={() => {
+                    // Grounding completion is recorded independently via groundingLogs.
+                    // Keep surrounding CBT session semantically intact.
+                    setSupportTab(null);
+                  }}
+                  onClose={() => setSupportTab(null)}
+                />
               )}
 
               {supportTab === "writing" && (
@@ -973,7 +957,15 @@ export default function ReframeScreen() {
                   placeholderTextColor={Colors.textMuted}
                   multiline
                 />
-                
+                {(currentStep === "guided_discovery" || currentStep === "clarification") && (
+                  <TouchableOpacity
+                    onPress={handleSkipQuestion}
+                    disabled={aiLoading}
+                    style={styles.skipQuestionBtn}
+                  >
+                    <Text style={styles.skipBtnText}>Skip</Text>
+                  </TouchableOpacity>
+                )}
 
                 <TouchableOpacity
                   onPress={() => handleSendMessage()}

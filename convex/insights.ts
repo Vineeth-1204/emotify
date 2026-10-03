@@ -1,11 +1,11 @@
 import { v } from "convex/values";
 import { query } from "./_generated/server";
-import { assertCanAccessStudent } from "./authz";
+import { assertCanAccessStudent, requireCounselorOrAdmin } from "./authz";
 import type { Id } from "./_generated/dataModel";
 
 /**
  * Maps categorical daily check-in mood to a standard 1-10 intensity scale
- * for backward-compatible rendering in trend charts.
+ * for backward-compatible rendering in legacy callers.
  */
 function moodToIntensity(mood: string): number {
   switch (mood?.toLowerCase()) {
@@ -26,7 +26,10 @@ function moodToIntensity(mood: string): number {
 }
 
 export const getDailyStats = query({
-  args: { userId: v.optional(v.string()) },
+  args: {
+    userId: v.optional(v.string()),
+    referenceDate: v.optional(v.string()),
+  },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity || !identity.subject) {
@@ -56,15 +59,41 @@ export const getDailyStats = query({
     if (user?.clerkId) searchUserIds.add(user.clerkId);
 
     // 1. Daily Check-ins (Authoritative source for daily check-in count and daily mood trend)
-    // Preserves complete user history for lifetime check-in totals without arbitrary record caps.
-    const rawDailyCheckins = await Promise.all(
-      Array.from(searchUserIds).map((id) =>
-        ctx.db
-          .query("dailyCheckins")
-          .withIndex("by_userId", (q) => q.eq("userId", id))
-          .collect()
-      )
-    );
+    // Priority 11 Step 5A: Query bounded to exact 7-day calendar window when referenceDate is provided,
+    // using the existing compound index ["userId", "dateStr"] to eliminate lifetime user scans.
+    let rawDailyCheckins: any[][] = [];
+
+    if (args.referenceDate && /^\d{4}-\d{2}-\d{2}$/.test(args.referenceDate)) {
+      const [refY, refM, refD] = args.referenceDate.split("-").map(Number);
+      const dStart = new Date(refY, refM - 1, refD - 6, 12, 0, 0);
+      const startY = dStart.getFullYear();
+      const startM = String(dStart.getMonth() + 1).padStart(2, "0");
+      const startD = String(dStart.getDate()).padStart(2, "0");
+      const startDateStr = `${startY}-${startM}-${startD}`;
+      const endDateStr = args.referenceDate;
+
+      rawDailyCheckins = await Promise.all(
+        Array.from(searchUserIds).map((id) =>
+          ctx.db
+            .query("dailyCheckins")
+            .withIndex("by_userId_and_dateStr", (q) =>
+              q.eq("userId", id).gte("dateStr", startDateStr).lte("dateStr", endDateStr)
+            )
+            .collect()
+        )
+      );
+    } else {
+      // Legacy fallback when no referenceDate is provided (preserves Priority 7 backward compatibility)
+      rawDailyCheckins = await Promise.all(
+        Array.from(searchUserIds).map((id) =>
+          ctx.db
+            .query("dailyCheckins")
+            .withIndex("by_userId", (q) => q.eq("userId", id))
+            .collect()
+        )
+      );
+    }
+
     const seenCheckinIds = new Set<string>();
     const seenDates = new Set<string>();
     const deduplicatedCheckins: any[] = [];
@@ -96,24 +125,71 @@ export const getDailyStats = query({
 
     const totalCheckins = deduplicatedCheckins.length;
 
-    // 7-day daily mood history (semantically bounded to 7 most recent distinct daily check-ins, sorted chronologically ascending)
-    const recent7Checkins = deduplicatedCheckins
-      .slice(0, 7)
-      .sort((a, b) => {
-        if (a.dateStr && b.dateStr && a.dateStr !== b.dateStr) {
-          return a.dateStr.localeCompare(b.dateStr);
-        }
-        return (a.createdAt || 0) - (b.createdAt || 0);
-      });
+    // Strict 7-calendar-day daily mood history
+    // When referenceDate is provided: window rule is reference date minus 6 calendar days through reference date.
+    // Categorical values only, no numeric intensity, explicit empty slots for missing days.
+    let recentDailyMood: any[] = [];
 
-    const recentDailyMood = recent7Checkins.map((c) => ({
-      _id: c._id,
-      userId: c.userId,
-      dateStr: c.dateStr,
-      mood: c.mood,
-      intensity: moodToIntensity(c.mood),
-      createdAt: c.createdAt,
-    }));
+    if (args.referenceDate && /^\d{4}-\d{2}-\d{2}$/.test(args.referenceDate)) {
+      const checkinByDate = new Map<string, any>();
+      for (const c of deduplicatedCheckins) {
+        if (c.dateStr && !checkinByDate.has(c.dateStr)) {
+          checkinByDate.set(c.dateStr, c);
+        }
+      }
+
+      const [refY, refM, refD] = args.referenceDate.split("-").map(Number);
+      const weekdayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+      for (let offset = -6; offset <= 0; offset++) {
+        // Explicit local calendar construction anchored safely at local noon (12:00:00)
+        // to prevent UTC midnight boundary rollover.
+        const d = new Date(refY, refM - 1, refD + offset, 12, 0, 0);
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, "0");
+        const day = String(d.getDate()).padStart(2, "0");
+        const dateStr = `${y}-${m}-${day}`;
+        const label = weekdayNames[d.getDay()];
+
+        const matchedCheckin = checkinByDate.get(dateStr);
+        if (matchedCheckin) {
+          recentDailyMood.push({
+            dateStr,
+            mood: matchedCheckin.mood,
+            label,
+            hasCheckin: true,
+            _id: matchedCheckin._id,
+            createdAt: matchedCheckin.createdAt,
+          });
+        } else {
+          recentDailyMood.push({
+            dateStr,
+            mood: null,
+            label,
+            hasCheckin: false,
+          });
+        }
+      }
+    } else {
+      // Legacy fallback when no referenceDate is provided (preserves Priority 7 backward compatibility)
+      const recent7Checkins = deduplicatedCheckins
+        .slice(0, 7)
+        .sort((a, b) => {
+          if (a.dateStr && b.dateStr && a.dateStr !== b.dateStr) {
+            return a.dateStr.localeCompare(b.dateStr);
+          }
+          return (a.createdAt || 0) - (b.createdAt || 0);
+        });
+
+      recentDailyMood = recent7Checkins.map((c) => ({
+        _id: c._id,
+        userId: c.userId,
+        dateStr: c.dateStr,
+        mood: c.mood,
+        intensity: moodToIntensity(c.mood),
+        createdAt: c.createdAt,
+      }));
+    }
 
     // MicroGoals (Lifetime aggregate for totalCalmPoints and completedGoalsCount)
     const rawGoals = await Promise.all(
@@ -128,10 +204,11 @@ export const getDailyStats = query({
       return true;
     });
     
-    const totalCalmPoints = goals.reduce((acc, g) => acc + (g.points || 0), 0);
-    const completedGoalsCount = goals.filter(g => g.completed).length;
+    const completedGoals = goals.filter((g) => g.completed === true);
+    const totalCalmPoints = completedGoals.reduce((acc, g) => acc + (g.points || 0), 0);
+    const completedGoalsCount = completedGoals.length;
 
-    // JPMR Logs (Lifetime aggregate for jpmrMinutes and avgJpmrDrop)
+    // JPMR Logs (Lifetime aggregate for jpmrMinutes, jpmrSessions, and avgJpmrDrop)
     const rawJpmr = await Promise.all(
       Array.from(searchUserIds).map((id) =>
         ctx.db.query("jpmrLogs").withIndex("by_userId", (q) => q.eq("userId", id)).collect()
@@ -144,14 +221,87 @@ export const getDailyStats = query({
       return true;
     });
     
+    const jpmrSessionsCompleted = jpmrLogs.length;
     const jpmrMinutes = jpmrLogs.reduce((acc, log) => acc + Math.round((log.durationSeconds ?? (log.duration ?? 0)) / 60), 0);
     
     // Average Intensity Drop in JPMR
     let totalJpmrDrop = 0;
+    let validJpmrDrops = 0;
     jpmrLogs.forEach(log => {
-      totalJpmrDrop += (log.preIntensity - log.postIntensity);
+      if (typeof log.preIntensity === "number" && typeof log.postIntensity === "number") {
+        totalJpmrDrop += (log.preIntensity - log.postIntensity);
+        validJpmrDrops++;
+      }
     });
-    const avgJpmrDrop = jpmrLogs.length > 0 ? (totalJpmrDrop / jpmrLogs.length).toFixed(1) : "0";
+    const avgJpmrDrop = validJpmrDrops > 0 ? (totalJpmrDrop / validJpmrDrops).toFixed(1) : "0";
+
+    // Breathing Logs (Lifetime aggregate for Mindful Relaxation)
+    // Completion criteria: status === "completed" AND completedAt !== undefined AND cyclesCompleted >= targetCycles
+    const rawBreathing = await Promise.all(
+      Array.from(searchUserIds).map((id) =>
+        ctx.db.query("breathingLogs").withIndex("by_userId", (q) => q.eq("userId", id)).collect()
+      )
+    );
+    const seenBreathingIds = new Set<string>();
+    const breathingLogs = rawBreathing.flat().filter((l) => {
+      if (seenBreathingIds.has(l._id)) return false;
+      seenBreathingIds.add(l._id);
+      return true;
+    });
+
+    const completedBreathing = breathingLogs.filter(
+      (l) => l.status === "completed" && l.completedAt !== undefined && l.cyclesCompleted >= l.targetCycles
+    );
+    const breathingSessionsCompleted = completedBreathing.length;
+    const breathingDurationMinutes = Math.round(
+      completedBreathing.reduce((acc, l) => acc + (l.durationSeconds ?? 0), 0) / 60
+    );
+
+    // Grounding Logs (Lifetime aggregate for Mindful Relaxation)
+    // Completion criteria: status === "completed" AND completedAt !== undefined AND stepsCompleted === totalSteps
+    const rawGrounding = await Promise.all(
+      Array.from(searchUserIds).map((id) =>
+        ctx.db.query("groundingLogs").withIndex("by_userId", (q) => q.eq("userId", id)).collect()
+      )
+    );
+    const seenGroundingIds = new Set<string>();
+    const groundingLogs = rawGrounding.flat().filter((l) => {
+      if (seenGroundingIds.has(l._id)) return false;
+      seenGroundingIds.add(l._id);
+      return true;
+    });
+
+    const completedGrounding = groundingLogs.filter(
+      (l) => l.status === "completed" && l.completedAt !== undefined && l.stepsCompleted === l.totalSteps
+    );
+    const groundingSessionsCompleted = completedGrounding.length;
+    const groundingDurationMinutes = Math.round(
+      completedGrounding.reduce((acc, l) => acc + (l.durationSeconds ?? 0), 0) / 60
+    );
+
+    // Mindful Relaxation (Combined Behavioral Wellness Aggregate)
+    // Non-clinical behavioral telemetry combining guided somatic interventions
+    const mindfulRelaxationMinutes = jpmrMinutes + breathingDurationMinutes + groundingDurationMinutes;
+    const mindfulRelaxationSessions = jpmrSessionsCompleted + breathingSessionsCompleted + groundingSessionsCompleted;
+
+    const mindfulRelaxation = {
+      totalMinutes: mindfulRelaxationMinutes,
+      totalSessions: mindfulRelaxationSessions,
+      breakdown: {
+        breathing: {
+          sessionsCompleted: breathingSessionsCompleted,
+          minutes: breathingDurationMinutes,
+        },
+        grounding: {
+          sessionsCompleted: groundingSessionsCompleted,
+          minutes: groundingDurationMinutes,
+        },
+        jpmr: {
+          sessionsCompleted: jpmrSessionsCompleted,
+          minutes: jpmrMinutes,
+        },
+      },
+    };
 
     // Reframes - read authoritative reframeLogs primarily, fallback to legacy reframes (Lifetime aggregate)
     const rawReframeLogs = await Promise.all(
@@ -167,6 +317,7 @@ export const getDailyStats = query({
     });
 
     let totalReframeDrop = 0;
+    let validReframeDrops = 0;
     let reframes: any[] = [];
 
     if (reframeLogs.length > 0) {
@@ -183,7 +334,10 @@ export const getDailyStats = query({
         createdAt: l.createdAt,
       }));
       reframes.forEach((r) => {
-        totalReframeDrop += (r.preIntensity - r.postIntensity);
+        if (typeof r.preIntensity === "number" && typeof r.postIntensity === "number") {
+          totalReframeDrop += (r.preIntensity - r.postIntensity);
+          validReframeDrops++;
+        }
       });
     } else {
       const rawLegacyReframes = await Promise.all(
@@ -193,10 +347,13 @@ export const getDailyStats = query({
       );
       reframes = rawLegacyReframes.flat();
       reframes.forEach((r) => {
-        totalReframeDrop += (r.preIntensity - r.postIntensity);
+        if (typeof r.preIntensity === "number" && typeof r.postIntensity === "number") {
+          totalReframeDrop += (r.preIntensity - r.postIntensity);
+          validReframeDrops++;
+        }
       });
     }
-    const avgReframeDrop = reframes.length > 0 ? (totalReframeDrop / reframes.length).toFixed(1) : "0";
+    const avgReframeDrop = validReframeDrops > 0 ? (totalReframeDrop / validReframeDrops).toFixed(1) : "0";
 
     // Episodic Emotion Logs (Clean separation from daily mood trend)
     const rawEmotionLogs = await Promise.all(
@@ -211,12 +368,9 @@ export const getDailyStats = query({
       return true;
     });
 
-    // Compatibility representation for existing student Insights UI:
-    // Existing UI (`app/(auth)/(tabs)/insights.tsx`) expects `stats.emotionLogs` with { createdAt, preIntensity }.
-    // When dailyCheckins are present, map the 7-day daily mood history into compatibility items so the mood trend chart displays properly.
-    // If no dailyCheckins exist, fall back to any episodic emotionLogs.
+    // Compatibility representation for legacy callers
     const compatibilityEmotionLogs = deduplicatedCheckins.length > 0
-      ? recent7Checkins.map((c) => ({
+      ? deduplicatedCheckins.slice(0, 7).map((c) => ({
           _id: c._id,
           userId: c.userId,
           emotion: c.mood,
@@ -228,80 +382,135 @@ export const getDailyStats = query({
         }))
       : episodicEmotionLogs;
 
-    // Screenings - read complete authoritative completed screeningAttempts without arbitrary limits to prevent CSV export truncation
-    const rawAttempts = await Promise.all(
-      Array.from(searchUserIds).map((id) =>
-        ctx.db.query("screeningAttempts").withIndex("by_userId", (q) => q.eq("userId", id)).collect()
-      )
-    );
-    const seenAttemptIds = new Set<string>();
-    const attempts = rawAttempts.flat().filter((a) => {
-      if (seenAttemptIds.has(a._id)) return false;
-      seenAttemptIds.add(a._id);
-      return true;
-    }).sort((a, b) => (b.completedAt || b.startedAt) - (a.completedAt || a.startedAt));
-
-    let screenings: any[] = [];
-    const completedAttempts = attempts.filter((a) => a.status === "completed");
-    if (completedAttempts.length > 0) {
-      screenings = completedAttempts.map((a) => ({
-        _id: a._id,
-        userId: a.userId,
-        phq9_total: a.results?.phq9?.score ?? 0,
-        gad7_total: a.results?.gad7?.score ?? 0,
-        pq16_total: a.results?.pq16?.score ?? 0,
-        wsas_total: a.results?.wsas?.administered ? a.results.wsas.score : (a.results?.wsas?.score ?? undefined),
-        reqol10_total: a.results?.reqol10?.administered ? a.results.reqol10.score : (a.results?.reqol10?.score ?? undefined),
-        phq9_item9_flag: a.results?.phq9?.item9Flag ?? (a as any).phq9_item9_flag ?? false,
-        phq9_item9_score: a.results?.phq9?.item9Score ?? (a as any).phq9_item9_score ?? 0,
-        createdAt: a.completedAt || a.startedAt,
-        attemptId: String(a._id),
-        status: "completed",
-      }));
-    } else {
-      const rawLegacyScreenings = await Promise.all(
-        Array.from(searchUserIds).map((id) =>
-          ctx.db.query("screenings").withIndex("by_userId", (q) => q.eq("userId", id)).collect()
-        )
-      );
-      const seenLegacyIds = new Set<string>();
-      screenings = rawLegacyScreenings.flat().filter((s) => {
-        if (seenLegacyIds.has(s._id)) return false;
-        seenLegacyIds.add(s._id);
-        return true;
-      });
-    }
-
-    // Triages (Complete clinical history)
-    const rawTriages = await Promise.all(
-      Array.from(searchUserIds).map((id) =>
-        ctx.db.query("triages").withIndex("by_userId", (q) => q.eq("userId", id)).collect()
-      )
-    );
-    const seenTriageIds = new Set<string>();
-    const triages = rawTriages.flat().filter((t) => {
-      if (seenTriageIds.has(t._id)) return false;
-      seenTriageIds.add(t._id);
-      return true;
-    });
-
     return {
       totalCalmPoints,
       completedGoalsCount,
       jpmrMinutes,
+      jpmrSessions: jpmrSessionsCompleted,
       avgJpmrDrop,
       reframesCount: reframes.length,
       avgReframeDrop,
       totalCheckins,
       dailyCheckins: deduplicatedCheckins,
       recentDailyMood,
+      mindfulRelaxation,
       emotionLogs: compatibilityEmotionLogs,
       episodicEmotionLogs,
       microGoals: goals,
       jpmrLogs,
       reframes,
-      screenings,
-      triages,
+    };
+  },
+});
+
+
+/**
+ * Focused query for counselors and administrators to inspect a student's
+ * recent daily check-in (self-reported wellness telemetry) history.
+ *
+ * Strictly non-diagnostic: does not alter screening, triage, or alert state.
+ */
+export const getCounselorStudentDailyCheckins = query({
+  args: {
+    userId: v.string(),
+    lookbackDays: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    // 1. Role enforcement: Caller must be a Counselor or Admin
+    await requireCounselorOrAdmin(ctx);
+
+    // 2. Student authorization: Ensure caller can access target student
+    await assertCanAccessStudent(ctx, args.userId);
+
+    // 3. Resolve canonical user identity and legacy clerkId
+    let user = null;
+    try {
+      user = await ctx.db.get(args.userId as Id<"users">);
+    } catch {
+      // args.userId might be a string or clerkId
+    }
+    if (!user) {
+      user = await ctx.db
+        .query("users")
+        .withIndex("by_clerkId", (q: any) => q.eq("clerkId", args.userId))
+        .first();
+    }
+
+    const canonicalUserId = user ? String(user._id) : args.userId;
+    const searchUserIds = new Set<string>([canonicalUserId, args.userId]);
+    if (user?.clerkId) searchUserIds.add(user.clerkId);
+
+    // 4. Retrieve dailyCheckins across all matching identities
+    const rawDailyCheckins = await Promise.all(
+      Array.from(searchUserIds).map((id) =>
+        ctx.db
+          .query("dailyCheckins")
+          .withIndex("by_userId", (q) => q.eq("userId", id))
+          .collect()
+      )
+    );
+
+    const seenCheckinIds = new Set<string>();
+    const seenDates = new Set<string>();
+    const deduplicatedCheckins: Array<{
+      _id: Id<"dailyCheckins">;
+      userId: string;
+      dateStr: string;
+      mood: string;
+      createdAt: number;
+    }> = [];
+
+    // Sort combined checkins newest first before deduplicating
+    const allCheckinsSorted = rawDailyCheckins
+      .flat()
+      .filter((c) => {
+        const idStr = String(c._id);
+        if (seenCheckinIds.has(idStr)) return false;
+        seenCheckinIds.add(idStr);
+        return true;
+      })
+      .sort((a, b) => {
+        if (b.dateStr && a.dateStr && b.dateStr !== a.dateStr) {
+          return b.dateStr.localeCompare(a.dateStr);
+        }
+        return (b.createdAt || 0) - (a.createdAt || 0);
+      });
+
+    // Deduplicate by dateStr: if multiple entries exist for the same calendar date, keep the latest
+    for (const c of allCheckinsSorted) {
+      if (c.dateStr) {
+        if (seenDates.has(c.dateStr)) continue;
+        seenDates.add(c.dateStr);
+      }
+      deduplicatedCheckins.push({
+        _id: c._id,
+        userId: c.userId,
+        dateStr: c.dateStr,
+        mood: c.mood,
+        createdAt: c.createdAt,
+      });
+    }
+
+    const totalCheckins = deduplicatedCheckins.length;
+
+    // Validate lookback window (default 14, min 1, max 90)
+    const lookback = Math.min(Math.max(args.lookbackDays ?? 14, 1), 90);
+
+    // Slice the most recent distinct calendar days and sort chronologically ascending for timeline review
+    const recentCheckins = deduplicatedCheckins
+      .slice(0, lookback)
+      .sort((a, b) => {
+        if (a.dateStr && b.dateStr && a.dateStr !== b.dateStr) {
+          return a.dateStr.localeCompare(b.dateStr);
+        }
+        return (a.createdAt || 0) - (b.createdAt || 0);
+      });
+
+    return {
+      studentId: canonicalUserId,
+      totalCheckins,
+      lookbackDays: lookback,
+      checkins: recentCheckins,
     };
   },
 });

@@ -57,3 +57,30 @@ export function getPreviousDateStr(dateStr: string): string {
   return getLocalDateString(prev);
 }
 
+/**
+ * Explicit local date construction anchored safely at local noon (12:00:00).
+ * Prevents UTC timezone crossing and daylight-saving midnight boundary shifts.
+ */
+export function parseLocalDateNoon(dateStr: string): Date {
+  const [year, month, day] = dateStr.split("-").map(Number);
+  return new Date(year, month - 1, day, 12, 0, 0);
+}
+
+/**
+ * Returns a strict 7-calendar-day window of YYYY-MM-DD date strings ending on referenceDateStr.
+ * Evaluates in chronological order (referenceDateStr - 6 days through referenceDateStr).
+ * Anchored at local noon to guarantee that month and year rollovers occur cleanly without timezone shifts.
+ */
+export function getSevenDayLocalWindow(referenceDateStr: string): string[] {
+  const [year, month, day] = referenceDateStr.split("-").map(Number);
+  const dates: string[] = [];
+  for (let offset = -6; offset <= 0; offset++) {
+    const d = new Date(year, month - 1, day + offset, 12, 0, 0);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const dt = String(d.getDate()).padStart(2, "0");
+    dates.push(`${y}-${m}-${dt}`);
+  }
+  return dates;
+}
+

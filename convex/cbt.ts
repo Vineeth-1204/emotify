@@ -57,6 +57,8 @@ export const insertApiKey = mutation({
   }
 });
 
+export const STALE_SESSION_THRESHOLD_MS = 24 * 60 * 60 * 1000; // 24 hours
+
 /** Start a new CBT session, or resume an existing active session. */
 export const startSession = mutation({
   args: {
@@ -69,6 +71,9 @@ export const startSession = mutation({
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
     const userId = identity.subject;
+    const now = Date.now();
+
+    let previousSessionExpired = false;
 
     if (!args.forceNew) {
       // Find the latest active session
@@ -79,7 +84,20 @@ export const startSession = mutation({
         .first();
 
       if (activeSession && activeSession.sessionStatus === "active") {
-        return { session: activeSession, resumed: true };
+        const lastActivity = activeSession.timestamp || activeSession._creationTime;
+        const isStale = (now - lastActivity) > STALE_SESSION_THRESHOLD_MS;
+
+        if (isStale) {
+          // Stale active session (>24h inactivity): mark expired; preserved in database as historical record
+          await ctx.db.patch(activeSession._id, {
+            sessionStatus: "expired",
+            timestamp: now,
+          });
+          previousSessionExpired = true;
+          // Do not resume: proceed to create a fresh session below
+        } else {
+          return { session: activeSession, resumed: true, previousSessionExpired: false };
+        }
       }
     }
 
@@ -91,17 +109,17 @@ export const startSession = mutation({
       attemptId: args.attemptId,
       triageId: args.triageId,
       conversation: [
-        { role: "assistant", content: greeting, timestamp: Date.now() }
+        { role: "assistant", content: greeting, timestamp: now }
       ],
       stepIndex: 0,
-      timestamp: Date.now(),
+      timestamp: now,
       sessionStatus: "active",
       currentStep: "understanding",
       riskFlags: [],
     });
 
     const newSession = await ctx.db.get(sessionId);
-    return { session: newSession, resumed: false };
+    return { session: newSession, resumed: false, previousSessionExpired };
   },
 });
 
@@ -177,7 +195,62 @@ export const submitBeliefRating = mutation({
   },
 });
 
-/** Store the post-CBT emotion intensity. Sets currentStep to recovery_coach. */
+/**
+ * Authoritative bridge helper: synchronizes a completed CBT/reframe session to the canonical reframeLogs table.
+ * Idempotent: ensures at most one reframeLog per CBT session.
+ * Requires genuine completion of the reframe workflow (valid balancedThought and situation/thought).
+ */
+async function syncCbtReframeToLog(ctx: any, session: any, overrideEmotionAfter?: number): Promise<Id<"reframeLogs"> | null> {
+  const balancedThought = session.balancedThought?.trim();
+  const situation = session.situation?.trim();
+  const originalThought = session.automaticThought?.trim();
+
+  // Validate minimum required fields for a valid reframeLog
+  if (!balancedThought || !situation || !originalThought) {
+    return null;
+  }
+
+  // Idempotency: verify if a reframeLog already exists for this CBT session
+  const existingLog = await ctx.db
+    .query("reframeLogs")
+    .withIndex("by_cbtSessionId", (q: any) => q.eq("cbtSessionId", session._id))
+    .first();
+
+  if (existingLog) {
+    return existingLog._id;
+  }
+
+  const preIntensity = session.emotionBefore ?? 5;
+  const postIntensity = overrideEmotionAfter ?? session.emotionAfter ?? preIntensity;
+
+  const improvementPercentage = preIntensity > 0
+    ? Math.max(0, Math.round(((preIntensity - postIntensity) / preIntensity) * 100))
+    : 0;
+
+  const thinkingTrapChoice = session.cbtDistortion || session.thinkingStyle || "General Trap";
+  const guidedAnswers = session.challengeAnswers || [];
+
+  return await ctx.db.insert("reframeLogs", {
+    userId: session.userId,
+    situation_text: situation,
+    thought_original: originalThought,
+    thinking_trap_choice: thinkingTrapChoice,
+    guided_answers: guidedAnswers,
+    reframe_text: balancedThought,
+    pre_reframe_intensity: preIntensity,
+    post_reframe_intensity: postIntensity,
+    improvement_percentage: improvementPercentage,
+    saved_reframe_flag: true,
+    favorite: false,
+    sourceType: session.sourceType || "cbt",
+    attemptId: session.attemptId,
+    triageId: session.triageId,
+    cbtSessionId: session._id,
+    createdAt: Date.now(),
+  });
+}
+
+/** Store the post-CBT emotion intensity. Sets currentStep to recovery_coach and bridges finalized reframe to reframeLogs. */
 export const submitEmotionAfterRating = mutation({
   args: { sessionId: v.id("cbtSessions"), intensity: v.number() },
   handler: async (ctx, args) => {
@@ -195,6 +268,9 @@ export const submitEmotionAfterRating = mutation({
       currentStep: "recovery_coach",
       timestamp: Date.now(),
     });
+
+    // Bridge the completed balanced thought to canonical reframeLogs
+    await syncCbtReframeToLog(ctx, session, args.intensity);
 
     return { success: true };
   },
@@ -271,7 +347,114 @@ export const acceptGoal = mutation({
       timestamp: Date.now(),
     });
 
+    // Ensure reframe is bridged to reframeLogs
+    await syncCbtReframeToLog(ctx, session);
+
     return { success: true };
+  },
+});
+
+/** Skips the current question in an active CBT session and advances state appropriately without generating fake chat messages. */
+export const skipQuestion = mutation({
+  args: { sessionId: v.id("cbtSessions") },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+
+    const session = await ctx.db.get(args.sessionId);
+    if (!session) throw new Error("CBT session not found.");
+
+    // Enforce authorization: Student can only skip questions in their own CBT session
+    await assertCanAccessStudent(ctx, session.userId);
+
+    if (session.sessionStatus !== "active") {
+      throw new Error(`This session is no longer active (Status: ${session.sessionStatus}).`);
+    }
+
+    const now = Date.now();
+
+    if (session.currentStep === "guided_discovery") {
+      const answers = session.challengeAnswers || [];
+      answers.push("(Question skipped)");
+      const index = session.stepIndex;
+
+      if (index < 2) {
+        const nextIndex = index + 1;
+        const nextQuestion = session.challengeQuestions?.[nextIndex] || "Could you tell me more about how you view this?";
+        const assistantMsg = `No problem, let's explore this from another angle:\n\n${nextQuestion}`;
+        const updated = [...session.conversation, { role: "assistant", content: assistantMsg, timestamp: now }];
+
+        await ctx.db.patch(args.sessionId, {
+          conversation: updated,
+          challengeAnswers: answers,
+          stepIndex: nextIndex,
+          timestamp: now,
+        });
+
+        return { responseMessage: assistantMsg, step: "guided_discovery", stepIndex: nextIndex };
+      } else {
+        const reflectionPrompt = "No problem. Reflecting on everything we've explored so far, what do you think now?";
+        const updated = [...session.conversation, { role: "assistant", content: reflectionPrompt, timestamp: now }];
+
+        await ctx.db.patch(args.sessionId, {
+          conversation: updated,
+          challengeAnswers: answers,
+          currentStep: "reflection",
+          timestamp: now,
+        });
+
+        return { responseMessage: reflectionPrompt, step: "reflection" };
+      }
+    } else if (session.currentStep === "clarification") {
+      const challengeQuestions = [
+        "What evidence supports this thought?",
+        "What evidence goes against it?",
+        "What would you tell a close friend who had this thought?"
+      ];
+      const firstQuestion = challengeQuestions[0];
+      const assistantMsg = `That's completely fine. Let's explore this thought together:\n\n${firstQuestion}`;
+      const updated = [...session.conversation, { role: "assistant", content: assistantMsg, timestamp: now }];
+
+      await ctx.db.patch(args.sessionId, {
+        conversation: updated,
+        currentStep: "guided_discovery",
+        cbtDistortion: "General Trap",
+        challengeQuestions,
+        challengeAnswers: [],
+        stepIndex: 0,
+        timestamp: now,
+      });
+
+      return { responseMessage: assistantMsg, step: "guided_discovery", stepIndex: 0 };
+    } else if (session.currentStep === "understanding") {
+      const challengeQuestions = [
+        "What evidence supports this idea?",
+        "What evidence goes against it?",
+        "What would you tell a friend in this situation?"
+      ];
+      const firstQuestion = challengeQuestions[0];
+      const assistantMsg = `No problem. Let's start examining what you've shared:\n\n${firstQuestion}`;
+      const updated = [...session.conversation, { role: "assistant", content: assistantMsg, timestamp: now }];
+
+      await ctx.db.patch(args.sessionId, {
+        conversation: updated,
+        situation: session.situation || "Stressful situation",
+        automaticThought: session.automaticThought || "I'm worried about this",
+        emotion: session.emotion || "Stress",
+        emotionBefore: session.emotionBefore || 5,
+        thinkingStyle: session.thinkingStyle || "I'm being hard on myself",
+        cbtDistortion: "General Trap",
+        challengeQuestions,
+        challengeAnswers: [],
+        stepIndex: 0,
+        currentStep: "guided_discovery",
+        timestamp: now,
+      });
+
+      return { responseMessage: assistantMsg, step: "guided_discovery", stepIndex: 0 };
+    }
+
+    return { responseMessage: "This step cannot be skipped.", step: session.currentStep };
   },
 });
 
@@ -293,6 +476,9 @@ export const skipGoal = mutation({
       timestamp: Date.now(),
     });
 
+    // Ensure reframe is bridged to reframeLogs if balanced thought was finalized
+    await syncCbtReframeToLog(ctx, session);
+
     return { success: true };
   },
 });
@@ -313,6 +499,9 @@ export const endSession = mutation({
       currentStep: "completed",
       timestamp: Date.now(),
     });
+
+    // Ensure reframe is bridged to reframeLogs if balanced thought was finalized
+    await syncCbtReframeToLog(ctx, session);
 
     return { success: true };
   },
@@ -479,7 +668,11 @@ export const submitMessage = action({
           }
         } else {
           // Keep chatting to understand
-          const reply = responseJson.responseMessage || "I see. Tell me a bit more about what makes you feel that way.";
+          let reply = responseJson.responseMessage || "I see. Tell me a bit more about what makes you feel that way.";
+          const lastAssistantMsg = conversationHistory.filter(m => m.role === "assistant").pop()?.content || "";
+          if (lastAssistantMsg && (reply.trim() === lastAssistantMsg.trim() || reply.toLowerCase().includes(lastAssistantMsg.toLowerCase().slice(0, 30)))) {
+            reply = "Thank you for explaining that. What feels like the most challenging part of dealing with this right now?";
+          }
           const updatedHistory = [...conversationHistory, { role: "assistant", content: reply, timestamp: Date.now() }];
           await ctx.runMutation(internal.cbt.updateSessionInternal, {
             sessionId: args.sessionId,
@@ -616,15 +809,12 @@ export const recommendGoalAction = action({
     const session = await ctx.runQuery(api.cbt.getSession, { sessionId: args.sessionId });
     if (!session) throw new Error("Session not found");
 
-    // Fetch student clinical context for high-quality recommendations
-    const screenings = await ctx.runQuery(api.screening.getAll, { userId });
+    // Fetch non-clinical context for habit and behavioral activation recommendations
+    // NOTE: Standardized clinical screening scores (PHQ-9, GAD-7, PQ-16) and triage levels
+    // are strictly excluded to preserve medical domain separation (P8-F01).
     const wellness = await ctx.runQuery(api.wellness.getProfile, { userId });
     const streak = await ctx.runQuery(api.microGoals.getStreak, { userId });
     const recentGoals = await ctx.runQuery(api.cbt.getRecentPatientGoals, { userId });
-
-    const latestScreening = screenings?.[0];
-    const phq9 = latestScreening?.phq9_total ?? 0;
-    const gad7 = latestScreening?.gad7_total ?? 0;
 
     const isHighRisk = session.riskFlags !== undefined && session.riskFlags.length > 0;
 
@@ -633,8 +823,8 @@ export const recommendGoalAction = action({
     const apiKeys = Array.from(new Set([dbKey, envKey].filter(Boolean) as string[]));
 
     if (apiKeys.length === 0) {
-      // Mock Fallback goal recommendation
-      const mockGoals = getMockGoalRecommendations(session.situation || "stress", phq9, gad7, isHighRisk);
+      // Mock Fallback goal recommendation (non-clinical)
+      const mockGoals = getMockGoalRecommendations(session.situation || "stress", isHighRisk);
       await ctx.runMutation(internal.cbt.updateSessionInternal, {
         sessionId: args.sessionId,
         updates: {
@@ -661,7 +851,6 @@ Personalize based on context:
 - Situation: "${session.situation || "Crisis Distress"}"
 - Automatic Thought: "${session.automaticThought || "Crisis Distress"}"
 - Emotion: "${session.emotion || "Overwhelm"}"
-- Screening: PHQ-9 ${phq9}, GAD-7 ${gad7}
 
 Choose from actions like:
 1. Contacting a trusted person (friend, parent, relative) for support.
@@ -701,7 +890,6 @@ Context:
 - Emotion: "${session.emotion || "Anxiety/Stress"}" (Intensity: ${session.emotionBefore || 5}/10)
 - Thinking Style: "${session.thinkingStyle || "General"}"
 - Identified CBT Distortion: "${session.cbtDistortion || "General"}"
-- Student Clinical Screener: PHQ-9: ${phq9}/27, GAD-7: ${gad7}/21
 - Wellness Goals: ${JSON.stringify(wellness?.wellness_goals || [])}
 - Current Streak: ${streak?.currentStreak || 0} days
 
@@ -714,7 +902,7 @@ Instructions for memory:
    - If the student repeatedly skipped a goal (e.g. mindfulness or meditation), do NOT recommend it. Suggest an alternate activity.
    - If they consistently completed a goal (e.g. journaling), prioritize reflective journaling exercises.
    - Avoid recommending identical goals to what they completed or skipped within the last 7 days unless clinically appropriate.
-3. Keep the goals realistic. If the student has high depression (PHQ-9 >= 15) or high anxiety (GAD-7 >= 15), make the goals extremely simple (e.g., "Splash face with water", "Take 3 deep breaths", "Look out window for 1 minute"). Do not overwhelm them.
+3. Keep the goals realistic and gentle. Make the goals bite-sized and simple (e.g., "Splash face with water", "Take 3 deep breaths", "Look out window for 1 minute"). Do not overwhelm them.
 4. Output the result ONLY as a JSON object matching this structure:
 {
   "goals": [
@@ -769,7 +957,7 @@ Do NOT output markdown format, other text, or wrapper tags. Return raw JSON.`;
 
     } catch (err) {
       console.warn("Error generating goal recommendation, falling back to mock goals:", err);
-      const mockGoals = getMockGoalRecommendations(session.situation || "stress", phq9, gad7, isHighRisk);
+      const mockGoals = getMockGoalRecommendations(session.situation || "stress", isHighRisk);
       await ctx.runMutation(internal.cbt.updateSessionInternal, {
         sessionId: args.sessionId,
         updates: {
@@ -925,6 +1113,7 @@ Assess risk: suicide risk, self-harm, worthlessness, panic, extreme emotional di
 
 Analyze history. If you have sufficient understanding of the Situation, Automatic Thought, and Emotion, set hasSufficientUnderstanding to true and fill internalDeterminations and distortions fields.
 Otherwise, set hasSufficientUnderstanding to false, and ask one follow-up question in responseMessage.
+CRITICAL ANTI-REPETITION RULE: Inspect previous assistant messages in the conversation history. NEVER repeat or rephrase a question that has already been asked. If the user has provided sufficient context about what happened and what they are thinking, set hasSufficientUnderstanding to true and progress immediately.
 If the user repeatedly types "leave me alone", "I don't know", "nothing", set isUnresponsiveOrRejecting to true and provide a gentle close message.
 
 JSON schema to return:
@@ -1048,10 +1237,17 @@ async function handleMockResponse(ctx: any, sessionId: Id<"cbtSessions">, sessio
 
   // State-by-state transitions in Mock mode
   if (session.currentStep === "understanding") {
-    const reply = "I hear you. That sounds really tough. What worries you the most about this situation?";
-    // Force transition after 3 turns in mock mode
     const userTurns = history.filter(m => m.role === "user").length;
-    if (userTurns >= 3) {
+
+    // Check if user input already provides sufficient comprehensive context (Situation + Thought + Emotion)
+    const hasSituationAndThought = (
+      userMsg.length >= 60 &&
+      (clean.includes("because") || clean.includes("feel") || clean.includes("think") || clean.includes("worry") || clean.includes("afraid") || clean.includes("fear")) &&
+      (clean.includes("exam") || clean.includes("test") || clean.includes("work") || clean.includes("friend") || clean.includes("fail") || clean.includes("deadline") || clean.includes("study") || clean.includes("school"))
+    );
+
+    // Transition when either sufficient comprehensive input has been provided on turn 2+, or after 3 turns
+    if (userTurns >= 3 || (userTurns >= 2 && hasSituationAndThought)) {
       // Transition to guided discovery directly (skip clarification for mock ease)
       const firstQuestion = "What evidence supports the idea that this is completely ruined?";
       const transitionReply = `I understand. You feel like you're being hard on yourself about this situation.\n\nLet's work through it. First: ${firstQuestion}`;
@@ -1080,6 +1276,34 @@ async function handleMockResponse(ctx: any, sessionId: Id<"cbtSessions">, sessio
       });
       return { responseMessage: transitionReply, step: "guided_discovery" };
     } else {
+      // Still in understanding: provide distinct, non-repetitive follow-ups
+      const prevAssistantMsgs = history
+        .filter(m => m.role === "assistant")
+        .map(m => m.content);
+
+      let reply: string;
+      if (userTurns === 1) {
+        if (clean.length < 15) {
+          reply = "I'm listening. Could you tell me a little more about what happened or what's on your mind?";
+        } else {
+          reply = "I hear you. That sounds really tough. What worries you the most about this situation?";
+        }
+      } else {
+        // userTurns === 2
+        if (clean.includes("fail") || clean.includes("worthless") || clean.includes("ruin") || clean.includes("never") || clean.includes("complete failure")) {
+          reply = "Thank you for being open about that. When you think you might fail or be a failure, what makes that fear feel so certain right now?";
+        } else if (clean.length < 15) {
+          reply = "Thank you for sharing that. What thoughts or worries come to mind when you find yourself in that situation?";
+        } else {
+          reply = "I appreciate you opening up about this. What feels like the most overwhelming part of this right now?";
+        }
+
+        // Failsafe: Ensure reply never duplicates any previous assistant question
+        if (prevAssistantMsgs.some(m => m.includes(reply) || reply.includes(m))) {
+          reply = "I hear how much is on your mind. How does carrying that thought impact you right now?";
+        }
+      }
+
       const updated = [...history, { role: "assistant", content: reply, timestamp: now }];
       await ctx.runMutation(internal.cbt.updateSessionInternal, {
         sessionId,
@@ -1151,7 +1375,7 @@ async function handleMockResponse(ctx: any, sessionId: Id<"cbtSessions">, sessio
   return { responseMessage: "I see.", step: session.currentStep };
 }
 
-function getMockGoalRecommendations(situation: string, phq9: number, gad7: number, isHighRisk = false) {
+function getMockGoalRecommendations(situation: string, isHighRisk = false) {
   if (isHighRisk) {
     return [
       {
@@ -1298,43 +1522,6 @@ function getMockGoalRecommendations(situation: string, phq9: number, gad7: numbe
   };
 
   const sit = situation.toLowerCase();
-
-  if (phq9 >= 15 || gad7 >= 15) {
-    return [
-      breatheGoal,
-      waterGoal,
-      {
-        id: "look_outside",
-        title: "Look outside for 1 minute",
-        description: "Stand by a window and notice three things you see outside.",
-        category: "Self Care",
-        difficulty: "Easy",
-        estimatedMinutes: 1,
-        points: 25,
-        icon: "eye",
-        targetEmotion: "Apathy",
-        targetBehaviour: "Withdrawal",
-        aiReason: "Focusing outside the room interrupts repetitive negative internal dialogue.",
-        completed: false,
-        skipped: false
-      },
-      {
-        id: "stretch_simple",
-        title: "Do 3 gentle stretches",
-        description: "Stretch your arms up high, roll your shoulders, and gently tilt your neck.",
-        category: "Self Care",
-        difficulty: "Easy",
-        estimatedMinutes: 2,
-        points: 25,
-        icon: "body",
-        targetEmotion: "Numbness",
-        targetBehaviour: "Physical Freeze",
-        aiReason: "Gentle stretches bring conscious awareness back into the body to release tension.",
-        completed: false,
-        skipped: false
-      }
-    ];
-  }
 
   if (sit.includes("exam") || sit.includes("test") || sit.includes("fail") || sit.includes("study") || sit.includes("work")) {
     return [studyGoal, breatheGoal, waterGoal, walkGoal];

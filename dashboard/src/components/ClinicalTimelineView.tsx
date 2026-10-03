@@ -85,7 +85,7 @@ export const ClinicalTimelineView: React.FC<ClinicalTimelineViewProps> = ({
       ? undefined
       : (selectedCategory as "screening" | "triage" | "safety" | "counseling" | "intervention" | "monitoring" | "note");
 
-  const timelineEvents = useQuery(
+  const timelineResult = useQuery(
     api.timeline.getStudentClinicalTimeline,
     studentId
       ? {
@@ -95,6 +95,13 @@ export const ClinicalTimelineView: React.FC<ClinicalTimelineViewProps> = ({
         }
       : "skip"
   );
+
+  const timelineEvents =
+    timelineResult === undefined
+      ? undefined
+      : Array.isArray(timelineResult)
+      ? timelineResult
+      : (timelineResult as any)?.events;
 
   const toggleExpand = (id: string) => {
     setExpandedEvents((prev) => ({
@@ -191,7 +198,7 @@ export const ClinicalTimelineView: React.FC<ClinicalTimelineViewProps> = ({
               }}
             />
 
-            {timelineEvents.map((event) => {
+            {timelineEvents.map((event: any) => {
               const isExpanded = !!expandedEvents[event.id];
               const dateStr = new Date(event.occurredAt).toLocaleString("en-US", {
                 month: "short",

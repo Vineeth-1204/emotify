@@ -68,23 +68,113 @@ async function checkStaff(ctx: any) {
   return user;
 }
 
-/** Admin/Counselor: List all patient users */
+export interface PatientCursorPayload {
+  createdAt: number;
+  id: string;
+}
+
+export type PaginatedPatientsResult = any[] & {
+  patients: any[];
+  nextCursor: string | null;
+};
+
+export function encodePatientCursor(payload: PatientCursorPayload): string {
+  const json = JSON.stringify(payload);
+  if (typeof Buffer !== "undefined") {
+    return Buffer.from(json, "utf-8").toString("base64");
+  }
+  return btoa(json);
+}
+
+export function decodePatientCursor(cursorStr: string): PatientCursorPayload {
+  let json = "";
+  try {
+    if (typeof Buffer !== "undefined") {
+      json = Buffer.from(cursorStr, "base64").toString("utf-8");
+    } else {
+      json = atob(cursorStr);
+    }
+    const parsed = JSON.parse(json);
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      typeof parsed.createdAt !== "number" ||
+      isNaN(parsed.createdAt) ||
+      typeof parsed.id !== "string" ||
+      parsed.id.trim() === ""
+    ) {
+      throw new Error("Invalid patient cursor shape");
+    }
+    return parsed;
+  } catch (err) {
+    throw new Error("Invalid cursor format");
+  }
+}
+
+/** Admin/Counselor: List all patient users with deterministic cursor pagination */
 export const listPatients = query({
-  args: { search: v.optional(v.string()) },
+  args: {
+    search: v.optional(v.string()),
+    cursor: v.optional(v.string()),
+    limit: v.optional(v.number()),
+    paginate: v.optional(v.boolean()),
+  },
   handler: async (ctx, args) => {
     const staff = await checkStaff(ctx);
-    if (!staff) return [];
+    if (!staff) {
+      return ((args.cursor !== undefined || args.paginate === true)
+        ? { patients: [], nextCursor: null }
+        : []) as any as PaginatedPatientsResult;
+    }
 
-    let users = await ctx.db
+    const effectiveLimit = Math.min(Math.max(args.limit ?? 25, 1), 50);
+
+    let cursorObj: PatientCursorPayload | null = null;
+    if (args.cursor) {
+      cursorObj = decodePatientCursor(args.cursor);
+    }
+
+    const fetchBatchSize = Math.max(effectiveLimit * 4, 100);
+    let candidateUsers = await ctx.db
       .query("users")
-      .withIndex("by_role", (q) => q.eq("role", "patient"))
-      .collect();
+      .withIndex("by_role_and_created_at", (q) =>
+        cursorObj
+          ? q.eq("role", "patient").lte("created_at", cursorObj.createdAt)
+          : q.eq("role", "patient")
+      )
+      .order("desc")
+      .take(fetchBatchSize);
 
-    // Sort chronologically to determine sequential patient IDs if not yet set
-    users.sort((a, b) => (a._creationTime || a.created_at || 0) - (b._creationTime || b.created_at || 0));
+    // Fallback if records exist without created_at field
+    if (candidateUsers.length === 0 && !cursorObj) {
+      candidateUsers = await ctx.db
+        .query("users")
+        .withIndex("by_role", (q) => q.eq("role", "patient"))
+        .order("desc")
+        .take(fetchBatchSize);
+    }
+
+    // Sort deterministically: created_at DESC, _id DESC
+    candidateUsers.sort((a, b) => {
+      const tA = a.created_at ?? a.createdAt ?? a._creationTime ?? 0;
+      const tB = b.created_at ?? b.createdAt ?? b._creationTime ?? 0;
+      if (tB !== tA) return tB - tA;
+      return String(b._id).localeCompare(String(a._id));
+    });
+
+    const eligible = [];
+    for (const u of candidateUsers) {
+      const t = u.created_at ?? u.createdAt ?? u._creationTime ?? 0;
+      const id = String(u._id);
+      if (cursorObj) {
+        if (t > cursorObj.createdAt) continue;
+        if (t === cursorObj.createdAt && id.localeCompare(cursorObj.id) >= 0) continue;
+      }
+      eligible.push(u);
+    }
 
     // Assign permanent/stable patientId first, stripping password hashes and auth secrets
-    let mapped = users.map((u, idx) => {
+    let mapped = eligible.map((u, idx) => {
       const safe = sanitizeUser(u);
       return {
         ...safe,
@@ -92,8 +182,8 @@ export const listPatients = query({
       };
     });
 
-    if (args.search) {
-      const s = args.search.toLowerCase();
+    if (args.search && args.search.trim()) {
+      const s = args.search.trim().toLowerCase();
       mapped = mapped.filter(
         (u: any) =>
           (u.patientId || "").toLowerCase().includes(s) ||
@@ -102,7 +192,128 @@ export const listPatients = query({
       );
     }
 
-    return mapped;
+    const pageRecords = mapped.slice(0, effectiveLimit);
+    const hasMore = mapped.length > effectiveLimit;
+
+    const nextCursor =
+      hasMore && pageRecords.length > 0
+        ? encodePatientCursor({
+            createdAt: pageRecords[pageRecords.length - 1].created_at ?? pageRecords[pageRecords.length - 1].createdAt ?? pageRecords[pageRecords.length - 1]._creationTime ?? 0,
+            id: String(pageRecords[pageRecords.length - 1]._id),
+          })
+        : null;
+
+    if (args.cursor !== undefined || args.paginate === true) {
+      return {
+        patients: pageRecords,
+        nextCursor,
+      } as any as PaginatedPatientsResult;
+    }
+
+    return pageRecords as any as PaginatedPatientsResult;
+  },
+});
+
+/** Staff: Dedicated bounded patient selector for appointment booking and dropdowns */
+export const searchPatientSelector = query({
+  args: {
+    search: v.optional(v.string()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const staff = await checkStaff(ctx);
+    if (!staff) return [];
+
+    const effectiveLimit = Math.min(Math.max(args.limit ?? 50, 1), 50);
+
+    const candidates = await ctx.db
+      .query("users")
+      .withIndex("by_role_and_created_at", (q) => q.eq("role", "patient"))
+      .order("desc")
+      .take(150);
+
+    let mapped = candidates.map((u) => ({
+      _id: u._id,
+      full_name: u.full_name || "Unknown Patient",
+      patientId: u.patientId || String(u._id),
+      mobile_number: u.mobile_number || "N/A",
+      status: u.status || "active",
+    }));
+
+    if (args.search && args.search.trim()) {
+      const s = args.search.trim().toLowerCase();
+      mapped = mapped.filter(
+        (p) =>
+          p.full_name.toLowerCase().includes(s) ||
+          p.patientId.toLowerCase().includes(s) ||
+          p.mobile_number.includes(s)
+      );
+    }
+
+    return mapped.slice(0, effectiveLimit);
+  },
+});
+
+/**
+ * Atomically allocates the next sequential patientId using the dedicated counters table (Priority 11 Step 5A).
+ *
+ * If the counter does not yet exist, initializes it from the current maximum patientId across existing users (or 100).
+ * Future calls increment the counter atomically in Convex transactions, avoiding full table scans.
+ */
+export async function allocateNextPatientId(ctx: { db: any }): Promise<string> {
+  const counterDocs = await ctx.db
+    .query("counters")
+    .withIndex("by_name", (q: any) => q.eq("name", "patientId"))
+    .collect();
+
+  if (counterDocs.length === 0) {
+    // One-time initialization from existing users
+    const allUsers = await ctx.db.query("users").collect();
+    let maxId = 100;
+    for (const u of allUsers) {
+      if (u.patientId && !isNaN(Number(u.patientId))) {
+        maxId = Math.max(maxId, Number(u.patientId));
+      }
+    }
+    const nextValue = maxId + 1;
+    await ctx.db.insert("counters", {
+      name: "patientId",
+      value: nextValue,
+    });
+    return String(nextValue);
+  }
+
+  // Defensively handle multi-record edge cases by selecting the maximum value
+  let highestDoc = counterDocs[0];
+  for (let i = 1; i < counterDocs.length; i++) {
+    if (counterDocs[i].value > highestDoc.value) {
+      highestDoc = counterDocs[i];
+    }
+  }
+
+  // Deduplicate any surplus counter documents to maintain strict 1:1 invariant
+  for (const doc of counterDocs) {
+    if (doc._id !== highestDoc._id) {
+      await ctx.db.delete(doc._id);
+    }
+  }
+
+  const nextValue = highestDoc.value + 1;
+  await ctx.db.patch(highestDoc._id, {
+    value: nextValue,
+  });
+  return String(nextValue);
+}
+
+/** Get current value of patientId counter (Priority 11 Step 5A) */
+export const getPatientCounter = query({
+  args: {},
+  handler: async (ctx) => {
+    const counterDoc = await ctx.db
+      .query("counters")
+      .withIndex("by_name", (q: any) => q.eq("name", "patientId"))
+      .first();
+    return counterDoc?.value ?? null;
   },
 });
 
@@ -131,18 +342,11 @@ export const createUser = mutation({
 
     const password_hash = await hashPassword(args.password);
 
-    // Calculate next sequential patientId based on all existing patients
-    const allUsers = await ctx.db.query("users").collect();
-    let maxId = 100;
-    for (const u of allUsers) {
-      if (u.patientId && !isNaN(Number(u.patientId))) {
-        maxId = Math.max(maxId, Number(u.patientId));
-      }
-    }
-    const nextPatientId = String(maxId + 1);
+    // Atomically allocate sequential patientId using dedicated counter table (only if role is patient)
+    const nextPatientId = args.role === "patient" ? await allocateNextPatientId(ctx) : undefined;
 
     const userId = await ctx.db.insert("users", {
-      patientId: args.role === "patient" ? nextPatientId : undefined,
+      patientId: nextPatientId,
       full_name: args.full_name,
       mobile_number: args.mobile_number,
       email: args.email,
@@ -550,15 +754,8 @@ export const registerStudent = mutation({
     // Hash password with bcryptjs
     const password_hash = await hashPassword(args.password);
 
-    // Calculate sequential patientId based on all existing patients
-    const allUsers = await ctx.db.query("users").collect();
-    let maxId = 100;
-    for (const u of allUsers) {
-      if (u.patientId && !isNaN(Number(u.patientId))) {
-        maxId = Math.max(maxId, Number(u.patientId));
-      }
-    }
-    const nextPatientId = String(maxId + 1);
+    // Atomically allocate sequential patientId using dedicated counter table
+    const nextPatientId = await allocateNextPatientId(ctx);
 
     const now = Date.now();
     const userId = await ctx.db.insert("users", {

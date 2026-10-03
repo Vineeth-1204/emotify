@@ -1,10 +1,49 @@
+import { useState, useMemo } from "react";
 import { Shield, Clock } from "lucide-react";
-import { useQuery } from "convex/react";
+import { useQuery, useConvex } from "convex/react";
 import { api } from "../../convex/_generated/api";
 
-
 export default function AuditLogs() {
-  const auditLogs = useQuery(api.dashboard.getAuditLogs);
+  const convex = useConvex();
+  const logPage1 = useQuery(api.dashboard.getAuditLogs, { paginate: true });
+  const [extraLogs, setExtraLogs] = useState<any[]>([]);
+  const [logCursorState, setLogCursorState] = useState<string | null | undefined>(undefined);
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  const effectiveLogCursor = logCursorState !== undefined ? logCursorState : logPage1?.nextCursor ?? null;
+  const hasMore = Boolean(effectiveLogCursor);
+
+  const auditLogs = useMemo(() => {
+    if (!logPage1) return undefined;
+    const base = logPage1.logs || [];
+    const map = new Map<string, any>();
+    for (const l of base) {
+      map.set(l._id, l);
+    }
+    for (const l of extraLogs) {
+      map.set(l._id, l);
+    }
+    return Array.from(map.values());
+  }, [logPage1, extraLogs]);
+
+  const handleLoadMore = async () => {
+    if (!effectiveLogCursor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const res = await convex.query(api.dashboard.getAuditLogs, {
+        cursor: effectiveLogCursor,
+        paginate: true,
+      });
+      if (res && res.logs) {
+        setExtraLogs((prev) => [...prev, ...res.logs]);
+        setLogCursorState(res.nextCursor);
+      }
+    } catch (err) {
+      console.error("Failed to load more audit logs", err);
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "28px" }} className="animate-fade-in">
@@ -77,6 +116,19 @@ export default function AuditLogs() {
               )}
             </tbody>
           </table>
+
+          {hasMore && (
+            <div style={{ padding: "16px 24px", borderTop: "1px solid var(--border-color)", display: "flex", justifyContent: "center", background: "#f8fafc" }}>
+              <button
+                onClick={handleLoadMore}
+                disabled={loadingMore}
+                className="btn btn-secondary"
+                style={{ padding: "8px 24px", fontSize: "0.85rem", display: "inline-flex", alignItems: "center", gap: "8px" }}
+              >
+                {loadingMore ? "Loading more logs..." : "Load More Logs"}
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

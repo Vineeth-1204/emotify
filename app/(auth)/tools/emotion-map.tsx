@@ -1,6 +1,18 @@
 import React, { useState, useEffect, useRef } from "react";
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Dimensions, Modal, Animated } from "react-native";
-import { useRouter } from "expo-router";
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  Alert,
+  Dimensions,
+  Modal,
+  Animated,
+  ActivityIndicator,
+  BackHandler,
+} from "react-native";
+import { useRouter, useLocalSearchParams } from "expo-router";
 import { useAppAuth } from "@/utils/auth";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
@@ -11,6 +23,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { BlurView } from "expo-blur";
 import * as Haptics from "expo-haptics";
+import * as SecureStore from "expo-secure-store";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Path, Circle } from "react-native-svg";
 import {
   HappyEmotionIcon,
@@ -19,30 +33,62 @@ import {
   WorriedEmotionIcon,
   AngryEmotionIcon,
   EmbarrassedEmotionIcon,
+  GuiltyEmotionIcon,
   TiredEmotionIcon,
 } from "@/components/svg/emotions";
-import { DeepBreathingActivityIcon, MuscleRelaxActivityIcon, HabitMicrogoalIcon } from "@/components/svg/activities";
+import {
+  DeepBreathingActivityIcon,
+  MuscleRelaxActivityIcon,
+  HabitMicrogoalIcon,
+  GroundingIcon,
+  JournalActivityIcon,
+} from "@/components/svg/activities";
 import { MitraAvatar } from "@/components/avatar/MitraAvatar";
+import { BreathingPlayer } from "@/components/breathing/BreathingPlayer";
+import { SensoryGroundingPlayer } from "@/components/grounding/SensoryGroundingPlayer";
+import { SENSORY_54321_PROTOCOL } from "@/constants/GroundingProtocols";
+import { BREATHING_PROTOCOLS } from "@/constants/BreathingProtocols";
+import {
+  determineIntervention,
+  getRelevantBodyRegions,
+  InterventionRoutingResult,
+} from "@/common/emotionRouting";
+import {
+  PRIMARY_EMOTIONS,
+  SECONDARY_EMOTIONS_BY_PRIMARY,
+  UNCERTAINTY_REPHRASINGS,
+  getCanonicalEmotionForRouting,
+  PrimaryEmotionId,
+} from "@/common/emotionTaxonomy";
 
-const { width } = Dimensions.get('window');
+// Phase 3: SecureStore key for pending post-session state (JPMR/Reframe navigate away, then return)
+const P3_PENDING_KEY = "emotion_map_phase3_pending";
+
+const { width } = Dimensions.get("window");
 
 const FEATURE_EMOTIONS = [
-  { id: "anxiety", label: "Anxiety", Icon: WorriedEmotionIcon },
-  { id: "sadness", label: "Sadness", Icon: SadEmotionIcon },
-  { id: "anger", label: "Anger", Icon: AngryEmotionIcon },
-  { id: "calm", label: "Calm", Icon: CalmEmotionIcon },
-  { id: "tired", label: "Tired", Icon: TiredEmotionIcon },
-  { id: "confused", label: "Confused", Icon: EmbarrassedEmotionIcon },
-  { id: "happy", label: "Happy", Icon: HappyEmotionIcon },
-  { id: "numb", label: "Numb", Icon: SadEmotionIcon },
+  { id: "worried", label: "Worried / Scared", shortLabel: "Worried", Icon: WorriedEmotionIcon },
+  { id: "sad", label: "Sad", shortLabel: "Sad", Icon: SadEmotionIcon },
+  { id: "angry", label: "Angry / Upset", shortLabel: "Angry", Icon: AngryEmotionIcon },
+  { id: "tired", label: "Tired / Drained", shortLabel: "Tired", Icon: TiredEmotionIcon },
+  { id: "calm", label: "Calm", shortLabel: "Calm", Icon: CalmEmotionIcon },
+  { id: "happy", label: "Happy", shortLabel: "Happy", Icon: HappyEmotionIcon },
+  { id: "embarrassed", label: "Embarrassed / Ashamed", shortLabel: "Embarrassed", Icon: EmbarrassedEmotionIcon },
+  { id: "guilty", label: "Guilty / Regretful", shortLabel: "Guilty", Icon: GuiltyEmotionIcon },
 ];
 
+const STANDARD_BODY_REGIONS = ["Chest", "Stomach", "Shoulders", "Head", "Hands", "Legs"] as const;
+
 const getIntensityLabel = (value: number) => {
-  if (value <= 2) return { text: "Minimal", desc: "Barely noticeable, very mild physical or emotional presence.", color: '#10B981' };
-  if (value <= 4) return { text: "Mild", desc: "Noticeable but easily managed and does not disrupt activities.", color: '#3B82F6' };
-  if (value <= 6) return { text: "Moderate", desc: "Quite noticeable, distracting, but you can still function.", color: '#F59E0B' };
-  if (value <= 8) return { text: "Severe", desc: "Strong distress, hard to ignore, significantly impacts focus.", color: '#EA580C' };
-  return { text: "Extreme", desc: "Overwhelming distress, demands complete attention and intervention.", color: '#EF4444' };
+  if (value <= 2)
+    return { text: "Minimal", desc: "Barely noticeable, very mild physical or emotional presence.", color: "#10B981" };
+  if (value <= 4)
+    return { text: "Mild", desc: "Noticeable but easily managed and does not disrupt activities.", color: "#3B82F6" };
+  if (value <= 6)
+    return { text: "Moderate", desc: "Quite noticeable, distracting, but you can still function.", color: "#F59E0B" };
+  if (value <= 8)
+    return { text: "Severe", desc: "Strong distress, hard to ignore, significantly impacts focus.", color: "#EA580C" };
+  return { text: "Extreme", desc: "Overwhelming distress, demands complete attention and intervention.", color: "#EF4444" };
 };
 
 interface IntensitySelectorProps {
@@ -53,7 +99,7 @@ interface IntensitySelectorProps {
 
 function IntensitySelector({ value, onChange, activeColor }: IntensitySelectorProps) {
   const level = getIntensityLabel(value);
-  
+
   const handleDecrement = () => {
     if (value > 1) {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
@@ -82,15 +128,15 @@ function IntensitySelector({ value, onChange, activeColor }: IntensitySelectorPr
         onPress={() => handleSelect(n)}
         style={[
           styles.gridCircle,
-          isSelected 
+          isSelected
             ? { backgroundColor: numLevel.color, borderColor: numLevel.color }
-            : styles.gridCircleUnselected
+            : styles.gridCircleUnselected,
         ]}
       >
-        <Text 
+        <Text
           style={[
             styles.gridCircleText,
-            { color: isSelected ? Colors.white : Colors.textSecondary }
+            { color: isSelected ? Colors.white : Colors.textSecondary },
           ]}
         >
           {n}
@@ -102,25 +148,33 @@ function IntensitySelector({ value, onChange, activeColor }: IntensitySelectorPr
   return (
     <View style={styles.selectorContainer}>
       <View style={styles.stepperRow}>
-        <TouchableOpacity 
-          onPress={handleDecrement} 
+        <TouchableOpacity
+          onPress={handleDecrement}
           style={[styles.stepperBtn, value === 1 && styles.stepperBtnDisabled]}
           disabled={value === 1}
         >
-          <Ionicons name="remove" size={24} color={value === 1 ? Colors.textMuted : (activeColor || Colors.primary)} />
+          <Ionicons
+            name="remove"
+            size={24}
+            color={value === 1 ? Colors.textMuted : activeColor || Colors.primary}
+          />
         </TouchableOpacity>
-        
+
         <View style={styles.valueDisplay}>
           <Text style={[styles.intensityNum, { color: level.color }]}>{value}</Text>
           <Text style={[styles.intensityLabel, { color: level.color }]}>{level.text}</Text>
         </View>
 
-        <TouchableOpacity 
-          onPress={handleIncrement} 
+        <TouchableOpacity
+          onPress={handleIncrement}
           style={[styles.stepperBtn, value === 10 && styles.stepperBtnDisabled]}
           disabled={value === 10}
         >
-          <Ionicons name="add" size={24} color={value === 10 ? Colors.textMuted : (activeColor || Colors.primary)} />
+          <Ionicons
+            name="add"
+            size={24}
+            color={value === 10 ? Colors.textMuted : activeColor || Colors.primary}
+          />
         </TouchableOpacity>
       </View>
 
@@ -140,179 +194,406 @@ function IntensitySelector({ value, onChange, activeColor }: IntensitySelectorPr
 
 export default function EmotionMapScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { user } = useAppAuth();
-  
+  const params = useLocalSearchParams<{ postSession?: string; reset?: string }>();
+
   // Tab navigation
-  const [activeTab, setActiveTab] = useState<'log' | 'history'>('log');
-  
-  // Assessments and screening
-  const latestScreening = useQuery(api.screening.getLatest, {
-    userId: user?.id ?? "",
-  });
+  const [activeTab, setActiveTab] = useState<"log" | "history">("log");
 
-  // New log flow states
-  const [step, setStep] = useState(1);
-  const [selectedEmotion, setSelectedEmotion] = useState<string | null>(null);
+  // Step 1: Broad emotional state (Primary)
+  const [primaryEmotion, setPrimaryEmotion] = useState<PrimaryEmotionId | null>(null);
+
+  // Step 2: More specific feeling (Secondary)
+  const [secondaryEmotion, setSecondaryEmotion] = useState<string | null>(null);
+
+  // Kept for backward compatibility and internal consistency with history & routing
+  const [selectedEmotions, setSelectedEmotions] = useState<string[]>([]);
+  const [strongestEmotion, setStrongestEmotion] = useState<string | null>(null);
+
+  // Phase 2 — Step 2 uncertainty sub-state
+  const [step2UncertaintyState, setStep2UncertaintyState] = useState<"normal" | "rephrased">("normal");
+
+  // Step 3: Body cues
   const [selectedRegions, setSelectedRegions] = useState<string[]>([]);
-  const [bodyRatings, setBodyRatings] = useState<Record<string, number>>({});
-  const [currentRegionIndex, setCurrentRegionIndex] = useState(0);
+  const [isUnsureBody, setIsUnsureBody] = useState<boolean>(false);
 
-  // Breathing Modal State
+  // Phase 2 — Step 3 uncertainty sub-state
+  const [step3UncertaintyState, setStep3UncertaintyState] = useState<"normal" | "rephrased">("normal");
+
+  // Step 4: Intensity
+  const [intensity, setIntensity] = useState<number>(5);
+
+  // Step 5: Automatic Intervention Launch Transition
+  const [routedIntervention, setRoutedIntervention] = useState<InterventionRoutingResult | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+
+  // Phase 3 — Modal states for inline interventions
   const [showBreathingModal, setShowBreathingModal] = useState(false);
-  const [breathingTimeLeft, setBreathingTimeLeft] = useState(180); // 3 minutes
-  const [breathState, setBreathState] = useState<'Inhale' | 'Hold' | 'Exhale'>('Inhale');
-  const breatheAnim = useRef(new Animated.Value(1)).current;
+  const [showGroundingModal, setShowGroundingModal] = useState(false);
+
+  // Phase 3 — Post-intervention state
+  // emotionLogId: the _id of the emotionLog created in step 4 — used to patch postIntensity
+  const [emotionLogId, setEmotionLogId] = useState<string | null>(null);
+  // postIntensityValue: the user's self-reported feeling after intervention
+  const [postIntensityValue, setPostIntensityValue] = useState<number>(5);
+  // postOutcome: simple 3-way result for mitra followup message
+  const [postOutcome, setPostOutcome] = useState<"better" | "same" | "worse" | null>(null);
+  const [isSavingPost, setIsSavingPost] = useState(false);
+
+  // Flow Step State
+  // 1: Primary emotion selection (Happy, Sad, Angry, Calm)
+  // 2: Secondary emotion selection (scoped to primary)
+  // 3: Body sensation
+  // 4: Intensity
+  // 5: Intervention intro (Mitra recommends)
+  // 6: Uncertain support (fallback activity)
+  // 7: Post-intervention check ("How do you feel now?")
+  // 8: Mitra followup message
+  const [step, setStep] = useState<number>(1);
 
   // History Tab States
   const [filterDays, setFilterDays] = useState<7 | 30>(7);
 
   // Convex mutations & queries
+  const createEmotionLog = useMutation(api.emotionLogs.create);
   const createEmotionMap = useMutation(api.emotionMaps.create);
+  const recordPostIntensity = useMutation(api.emotionLogs.recordPostIntensity);
   const recentLogs = useQuery(api.emotionMaps.getRecentLogs, {
     userId: user?.id ?? "",
   });
 
-  const activeColors = getColorsForEmotion(selectedEmotion);
+  const activePrimaryDef = PRIMARY_EMOTIONS.find((e) => e.id === primaryEmotion);
+  const activeColors = activePrimaryDef
+    ? { primary: activePrimaryDef.themeColor, secondary: activePrimaryDef.themeColor + "33" }
+    : getColorsForEmotion(strongestEmotion);
 
-  // Breathing timer countdown
+  // Android hardware back navigation
   useEffect(() => {
-    let timer: any;
-    if (showBreathingModal && breathingTimeLeft > 0) {
-      timer = setInterval(() => {
-        setBreathingTimeLeft((prev) => prev - 1);
-      }, 1000);
-    } else if (breathingTimeLeft === 0 && showBreathingModal) {
-      handleCompleteBreathing();
-    }
-    return () => clearInterval(timer);
-  }, [showBreathingModal, breathingTimeLeft]);
+    const onBackPress = () => {
+      if (activeTab === "history") {
+        setActiveTab("log");
+        return true;
+      }
+      if (step === 2) {
+        setStep(1);
+        return true;
+      }
+      if (step === 3) {
+        setStep(2);
+        return true;
+      }
+      if (step === 4) {
+        setStep(3);
+        return true;
+      }
+      if (step === 5) {
+        setStep(1);
+        return true;
+      }
+      if (step === 6) {
+        setStep(2);
+        return true;
+      }
+      if (step === 7 || step === 8) {
+        router.replace("/(auth)/(tabs)");
+        return true;
+      }
+      return false;
+    };
 
-  // Breathing inhale/hold/exhale animation cycle
+    const sub = BackHandler.addEventListener("hardwareBackPress", onBackPress);
+    return () => sub.remove();
+  }, [step, activeTab, router]);
+
+  // Phase 3 — On mount: check if returning from JPMR/Reframe with pending post-session state
   useEffect(() => {
-    let cycleTimer: any;
-    if (showBreathingModal) {
-      const runBreathingCycle = () => {
-        setBreathState('Inhale');
-        Animated.timing(breatheAnim, {
-          toValue: 1.8,
-          duration: 4000,
-          useNativeDriver: true,
-        }).start(() => {
-          setBreathState('Hold');
-          cycleTimer = setTimeout(() => {
-            setBreathState('Exhale');
-            Animated.timing(breatheAnim, {
-              toValue: 1.0,
-              duration: 4000,
-              useNativeDriver: true,
-            }).start(() => {
-              runBreathingCycle();
-            });
-          }, 4000);
-        });
-      };
-      runBreathingCycle();
-    } else {
-      breatheAnim.setValue(1);
+    if (params.postSession === "1") {
+      SecureStore.getItemAsync(P3_PENDING_KEY).then((raw) => {
+        if (!raw) return;
+        try {
+          const pending = JSON.parse(raw);
+          // Restore enough state to run the post-intervention check
+          if (pending.emotionLogId) setEmotionLogId(pending.emotionLogId);
+          if (pending.strongestEmotion) setStrongestEmotion(pending.strongestEmotion);
+          if (pending.interventionType) {
+            setRoutedIntervention(pending.routedIntervention ?? null);
+          }
+          setPostIntensityValue(pending.preIntensity ?? 5);
+          setStep(7); // jump straight to post-intervention check
+          SecureStore.deleteItemAsync(P3_PENDING_KEY).catch(() => {});
+        } catch { /* malformed — ignore */ }
+      }).catch(() => {});
     }
-    return () => clearTimeout(cycleTimer);
-  }, [showBreathingModal]);
+  }, [params.postSession]);
 
-  async function handleCompleteBreathing() {
-    setShowBreathingModal(false);
-    await saveLogAndNavigate("Breathe");
-  }
-
-  function toggleRegion(region: string) {
-    if (selectedRegions.includes(region)) {
-      setSelectedRegions(selectedRegions.filter((r) => r !== region));
-      const updatedRatings = { ...bodyRatings };
-      delete updatedRatings[region];
-      setBodyRatings(updatedRatings);
-    } else {
-      setSelectedRegions([...selectedRegions, region]);
-      setBodyRatings({ ...bodyRatings, [region]: 5 });
+  useEffect(() => {
+    if (params.reset === "1") {
+      setStep(1);
+      setPrimaryEmotion(null);
+      setSecondaryEmotion(null);
+      setSelectedRegions([]);
+      setRoutedIntervention(null);
     }
+  }, [params.reset]);
+
+  // Step 1: User selects a primary emotion
+  const handleSelectPrimary = (id: PrimaryEmotionId) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-  }
+    setPrimaryEmotion(id);
+    setSecondaryEmotion(null);
+    setStrongestEmotion(id);
+    setSelectedEmotions([id]);
+    setStep2UncertaintyState("normal");
+  };
 
-  const getSupportiveFeedback = (emotion: string) => {
-    switch (emotion.toLowerCase()) {
-      case 'anxiety':
-        return "Anxiety often shows up as tightness in the chest or stomach. A short breathing exercise may help.";
-      case 'sadness':
-        return "Sadness can feel heavy in the body. A small act of self-care may help today.";
-      case 'anger':
-        return "Anger often creates tension in the body. Consider a short grounding exercise.";
-      case 'calm':
-        return "You seem relatively settled right now. Take a moment to appreciate this feeling.";
-      case 'tired':
-        return "Your body may be asking for rest. Consider a short break or relaxation exercise.";
-      case 'confused':
-        return "Feeling uncertain is part of being human. Try slowing down and focusing on one step at a time.";
-      case 'happy':
-        return "It's great to notice positive feelings. Consider what contributed to this moment.";
-      case 'numb':
-        return "Feeling disconnected can happen during stressful periods. Try a gentle grounding exercise.";
-      default:
-        return "Observe these sensations in your body with acceptance and curiosity.";
+  // Step 1 -> Next: Advance to Step 2
+  const handleContinueFromStep1 = () => {
+    if (!primaryEmotion) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    setStep2UncertaintyState("normal");
+    setStep(2);
+  };
+
+  // Step 2: User selects a secondary emotion
+  const handleSelectSecondary = (option: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    setSecondaryEmotion(option);
+    setStrongestEmotion(option);
+    setSelectedEmotions(primaryEmotion ? [primaryEmotion, option] : [option]);
+  };
+
+  // Step 2 -> Next: Advance to Step 3 (Body cues)
+  const handleContinueFromStep2 = () => {
+    if (!secondaryEmotion) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    setStep3UncertaintyState("normal");
+    setStep(3);
+  };
+
+  // Phase 2 — Step 2: User chooses "Not sure" on secondary emotion
+  const handleUnsureSecondary = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    if (step2UncertaintyState === "normal") {
+      // First attempt: Rephrase with concrete examples
+      setStep2UncertaintyState("rephrased");
+    } else {
+      // Second uncertainty: Stop interrogating. Enter uncertain_support (step 6).
+      // Fall back to primary emotion for intervention routing if user triggers a tool
+      if (primaryEmotion) {
+        setStrongestEmotion(primaryEmotion);
+        setSelectedEmotions([primaryEmotion]);
+      }
+      setStep(6);
     }
   };
 
-  const ratingsList = selectedRegions.map((region) => ({
-    region,
-    intensity: bodyRatings[region] ?? 5,
-  }));
-  const totalIntensity = ratingsList.reduce((sum, r) => sum + r.intensity, 0);
-  const averageIntensity = selectedRegions.length > 0 ? Number((totalIntensity / selectedRegions.length).toFixed(1)) : 0;
+  // Toggle body region in Step 3
+  const toggleRegion = (region: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    setIsUnsureBody(false);
+    setStep3UncertaintyState("normal");
+    if (selectedRegions.includes(region)) {
+      setSelectedRegions(selectedRegions.filter((r) => r !== region));
+    } else {
+      setSelectedRegions([...selectedRegions, region]);
+    }
+  };
 
-  const saveLogAndNavigate = async (action: string) => {
-    if (!user || !selectedEmotion) return;
+  const handleToggleUnsureBody = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    if (step3UncertaintyState === "normal") {
+      // First time: rephrase with concrete examples
+      setIsUnsureBody(true);
+      setSelectedRegions([]);
+      setStep3UncertaintyState("rephrased");
+    } else {
+      // Already rephrased; user still unsure — proceed without body location
+      setIsUnsureBody(true);
+      setSelectedRegions([]);
+      setStep(4);
+    }
+  };
+
+  const handleContinueFromStep3 = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    setStep(4);
+  };
+
+  // Phase 2 — Step 6: Uncertain support fallback — launch an existing canonical intervention
+  // Uses approved breathing (box_4444) as default gentle activity.
+  // No clinical scoring; purely a wellness routing shortcut.
+  const handleFallbackIntervention = (type: "breathing" | "grounding" | "jpmr") => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    switch (type) {
+      case "breathing":
+        // Use box_4444 — active, approved
+        setRoutedIntervention({
+          interventionType: "breathing",
+          targetRoute: "breathing",
+          title: "Box Breathing",
+          studentFacingName: "Let's Breathe",
+          recommendedDuration: "3 mins",
+          protocolId: "box_4444",
+          reason: "A short breathing exercise to help you settle.",
+          transitionMessage: "That's completely okay. Let's just do something simple together.",
+        });
+        setShowBreathingModal(true);
+        break;
+      case "grounding":
+        router.replace({
+          pathname: "/(auth)/tools/grounding",
+          params: { sourceType: "emotion_checkin_uncertain" },
+        } as any);
+        break;
+      case "jpmr":
+        router.replace({
+          pathname: "/(auth)/tools/jpmr",
+          params: { sourceType: "emotion_checkin_uncertain" },
+        } as any);
+        break;
+    }
+  };
+
+  // Step 4 -> Next: Log check-in and determine automatic intervention routing
+  const handleContinueFromStep4 = async () => {
+    if (!primaryEmotion || isSubmitting) return;
+    setIsSubmitting(true);
     try {
+      const canonicalEmotion = getCanonicalEmotionForRouting(primaryEmotion, secondaryEmotion);
+      const intervention = determineIntervention(canonicalEmotion, intensity);
+      setRoutedIntervention(intervention);
+
+      const effectiveRegions = isUnsureBody ? [] : selectedRegions;
+      const logEmotion = secondaryEmotion || primaryEmotion;
+      const emotionsList = secondaryEmotion ? [primaryEmotion, secondaryEmotion] : [primaryEmotion];
+
+      // Authoritative emotionLogs insertion — capture logId for Phase 3 post-intensity patch
+      const logId = await createEmotionLog({
+        emotion: logEmotion,
+        strongestEmotion: logEmotion,
+        selectedEmotions: emotionsList,
+        bodyRegions: effectiveRegions,
+        preIntensity: intensity,
+      });
+      setEmotionLogId(logId as string);
+
+      // Backward-compatible emotionMaps insertion
+      const ratingsList = effectiveRegions.map((region) => ({
+        region,
+        intensity,
+      }));
+
       await createEmotionMap({
-        userId: user.id,
-        emotionLabel: selectedEmotion,
-        selectedRegions,
-        bodyRatings: ratingsList,
-        averageIntensity,
-        suggestedAction: action,
+        userId: user?.id,
+        emotionLabel: logEmotion,
+        selectedRegions: effectiveRegions,
+        bodyRatings: ratingsList.length > 0 ? ratingsList : [{ region: "General", intensity }],
+        averageIntensity: intensity,
+        suggestedAction: intervention.title,
+        selectedEmotions: emotionsList,
+        strongestEmotion: logEmotion,
       });
 
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setStep(5);
+    } catch (err) {
+      console.error("Failed to log emotion check-in:", err);
+      Alert.alert("Error", "Could not record your check-in. Please try again.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
-      let msg = "Your emotion map and body scan have been recorded.";
-      if ((latestScreening?.wsas_total ?? 0) > 10) {
-        msg = "Your daily life seems affected right now. Consider setting a small MicroGoal today.";
+  // Phase 3 — Save pending state before navigating away to JPMR/Reframe
+  // so the user returns to step 7 (post-intervention Mitra check) after completing the tool.
+  const savePendingAndNavigate = async (pathname: string, extraParams: Record<string, string> = {}) => {
+    const currentEmotion = secondaryEmotion || primaryEmotion || strongestEmotion;
+    if (emotionLogId && currentEmotion) {
+      const pending = {
+        emotionLogId,
+        strongestEmotion: currentEmotion,
+        preIntensity: intensity,
+        routedIntervention: routedIntervention,
+        interventionType: routedIntervention?.interventionType,
+      };
+      await SecureStore.setItemAsync(P3_PENDING_KEY, JSON.stringify(pending)).catch(() => {});
+    }
+    router.replace({
+      pathname: pathname as any,
+      params: { sourceType: "emotion_checkin", returnTo: "emotion_map_post", ...extraParams },
+    } as any);
+  };
+
+  // Phase 3 — Handle genuine intervention completion (inline breathing/grounding)
+  const handleInlineInterventionComplete = () => {
+    setShowBreathingModal(false);
+    setShowGroundingModal(false);
+    setPostIntensityValue(Math.max(1, intensity - 1)); // seed with slight improvement as default
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    setStep(7);
+  };
+
+  // Phase 3 — Post-intervention intensity submitted by user
+  const handleSubmitPostCheck = async (outcome: "better" | "same" | "worse") => {
+    setPostOutcome(outcome);
+    setIsSavingPost(true);
+    try {
+      if (emotionLogId) {
+        await recordPostIntensity({
+          logId: emotionLogId as any,
+          postIntensity: postIntensityValue,
+        });
       }
-      
-      Alert.alert(
-        "Journal Saved!",
-        msg,
-        [
-          {
-            text: "OK",
-            onPress: () => {
-              if (action === "JPMR") {
-                router.replace("/(auth)/tools/jpmr" as any);
-              } else if (action === "MicroGoals") {
-                router.replace("/(auth)/tools/microgoals" as any);
-              } else {
-                router.replace("/(auth)/(tabs)" as any);
-              }
-            }
-          }
-        ]
-      );
-    } catch (error) {
-      console.error(error);
-      Alert.alert("Error", "Could not save your log. Please try again.");
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      setStep(8);
+    } catch (err) {
+      // Non-blocking: post-intensity is optional telemetry
+      console.warn("Post-intensity recording failed (non-blocking):", err);
+      setStep(8);
+    } finally {
+      setIsSavingPost(false);
+    }
+  };
+
+  // Step 5: Start the routed intervention — Phase 3 inline where possible, navigate away otherwise
+  const handleStartIntervention = () => {
+    if (!routedIntervention) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+
+    switch (routedIntervention.interventionType) {
+      case "breathing":
+        // Inline modal — onComplete goes to step 7
+        setShowBreathingModal(true);
+        break;
+      case "grounding":
+        // Inline modal — onComplete goes to step 7
+        setShowGroundingModal(true);
+        break;
+      case "jpmr":
+        // Must navigate away; save pending state for return
+        savePendingAndNavigate("/(auth)/tools/jpmr");
+        break;
+      case "reframe":
+        // Must navigate away; save pending state for return
+        savePendingAndNavigate("/(auth)/tools/reframe");
+        break;
+      case "microgoals":
+        router.replace({
+          pathname: "/(auth)/tools/microgoals",
+          params: { sourceType: "emotion_checkin" },
+        } as any);
+        break;
+      default:
+        setShowBreathingModal(true);
+        break;
     }
   };
 
   // Filter logs for History View
   const logs = recentLogs ?? [];
   const filterLimit = filterDays * 24 * 60 * 60 * 1000;
-  const filteredLogs = logs.filter((log: any) => (Date.now() - log.createdAt) <= filterLimit);
+  const filteredLogs = logs.filter((log: any) => Date.now() - log.createdAt <= filterLimit);
 
   // Compute frequencies for history
   const emotionCounts: Record<string, number> = {};
@@ -331,387 +612,560 @@ export default function EmotionMapScreen() {
   const sortedRegions = Object.entries(regionCounts).sort((a, b) => b[1] - a[1]);
   const mostFrequentRegion = sortedRegions.length > 0 ? sortedRegions[0][0] : null;
 
-  const overallAvgIntensity = filteredLogs.length > 0
-    ? Number((filteredLogs.reduce((sum: number, log: any) => sum + log.averageIntensity, 0) / filteredLogs.length).toFixed(1))
-    : 0;
+  const overallAvgIntensity =
+    filteredLogs.length > 0
+      ? Number(
+          (
+            filteredLogs.reduce((sum: number, log: any) => sum + log.averageIntensity, 0) /
+            filteredLogs.length
+          ).toFixed(1)
+        )
+      : 0;
 
+  // Progress only reflects steps 1–5 (step 6 is an off-ramp, not a progress step)
+  const progressSteps = Math.min(step, 5);
   const Progress = () => (
     <View style={styles.progressContainer}>
-      <View style={[styles.progressBar, { width: `${(step / 5) * 100}%` }]} />
+      <View style={[styles.progressBar, { width: `${(progressSteps / 5) * 100}%` }]} />
     </View>
   );
 
+  const getInterventionIcon = (type?: string) => {
+    switch (type) {
+      case "breathing":
+        return <DeepBreathingActivityIcon size={32} color={Colors.primary} />;
+      case "jpmr":
+        return <MuscleRelaxActivityIcon size={32} color={Colors.secondary} />;
+      case "grounding":
+        return <GroundingIcon size={32} color="#16A34A" />;
+      case "reframe":
+        return <JournalActivityIcon size={32} color="#A855F7" />;
+      case "microgoals":
+        return <HabitMicrogoalIcon size={32} color="#F59E0B" />;
+      default:
+        return <DeepBreathingActivityIcon size={32} color={Colors.primary} />;
+    }
+  };
+
+  // Resolve breathing protocol from registry using approved active protocols only.
+  // relaxing_478 (4-7-8) remains defined_inactive — never resolved here.
+  const activeBreathingProtocol = (() => {
+    const id = routedIntervention?.protocolId;
+    if (id && BREATHING_PROTOCOLS[id] && BREATHING_PROTOCOLS[id].isActive) {
+      return BREATHING_PROTOCOLS[id];
+    }
+    // Safe fallback: box_4444 (active)
+    return BREATHING_PROTOCOLS.box_4444;
+  })();
+
   return (
     <View style={styles.container}>
-      <LinearGradient
-        colors={['#F4F3FF', '#E0DBFF']}
-        style={StyleSheet.absoluteFill}
-      />
-      
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        
+      <LinearGradient colors={["#F4F3FF", "#E0DBFF"]} style={StyleSheet.absoluteFill} />
+
+      <ScrollView
+        contentContainerStyle={[
+          styles.content,
+          { paddingTop: Math.max(insets.top + 20, 68) },
+        ]}
+        showsVerticalScrollIndicator={false}
+      >
         {/* Screen Header */}
         <View style={styles.header}>
           <View style={styles.headerNavRow}>
-            <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+            <TouchableOpacity
+              onPress={() => {
+                if (activeTab === "history") {
+                  setActiveTab("log");
+                } else if (step === 2) {
+                  setStep(1);
+                } else if (step === 3) {
+                  setStep(2);
+                } else if (step === 4) {
+                  setStep(3);
+                } else if (step === 5) {
+                  setStep(1);
+                } else if (step === 6) {
+                  setStep(2);
+                } else if (step === 7 || step === 8) {
+                  router.replace("/(auth)/(tabs)");
+                } else {
+                  router.back();
+                }
+              }}
+              style={styles.backBtn}
+            >
               <Ionicons name="chevron-back" size={24} color={Colors.text} />
             </TouchableOpacity>
-            <Text style={styles.title}>Emotion Mapping</Text>
+            <Text style={styles.title}>Emotion Check-in</Text>
           </View>
 
           {/* Tab Selection */}
           <View style={styles.tabContainer}>
-            <TouchableOpacity 
-              style={[styles.tabButton, activeTab === 'log' && styles.tabButtonActive]}
-              onPress={() => setActiveTab('log')}
+            <TouchableOpacity
+              style={[styles.tabButton, activeTab === "log" && styles.tabButtonActive]}
+              onPress={() => setActiveTab("log")}
             >
-              <Text style={[styles.tabText, activeTab === 'log' && styles.tabTextActive]}>Log Sensation</Text>
+              <Text style={[styles.tabText, activeTab === "log" && styles.tabTextActive]}>
+                Guided Check-in
+              </Text>
             </TouchableOpacity>
-            <TouchableOpacity 
-              style={[styles.tabButton, activeTab === 'history' && styles.tabButtonActive]}
-              onPress={() => setActiveTab('history')}
+            <TouchableOpacity
+              style={[styles.tabButton, activeTab === "history" && styles.tabButtonActive]}
+              onPress={() => setActiveTab("history")}
             >
-              <Text style={[styles.tabText, activeTab === 'history' && styles.tabTextActive]}>History & Trends</Text>
+              <Text style={[styles.tabText, activeTab === "history" && styles.tabTextActive]}>
+                History & Trends
+              </Text>
             </TouchableOpacity>
           </View>
 
-          {activeTab === 'log' && <Progress />}
+          {activeTab === "log" && <Progress />}
         </View>
 
         {/* LOG SENSATION TAB */}
-        {activeTab === 'log' && (
-          <View style={{ width: '100%' }}>
-            
-            {/* Step 1: Emotion Selection */}
+        {activeTab === "log" && (
+          <View style={{ width: "100%" }}>
+            {/* STEP 1: Broad emotional state (Primary Emotions) */}
             {step === 1 && (
               <View style={styles.stepCard}>
-                <Text style={styles.stepTitle}>How are you feeling right now?</Text>
-                <Text style={styles.stepSub}>Take 60 seconds to notice your feelings.</Text>
-                
-                <View style={styles.grid}>
-                  {FEATURE_EMOTIONS.map((emotion) => {
-                    const isSelected = selectedEmotion === emotion.label;
+                <View style={styles.mitraHeaderRow}>
+                  <MitraAvatar state="neutral" size="md" />
+                  <View style={styles.mitraSpeechBubble}>
+                    <Text style={styles.mitraSpeechText}>How are you feeling right now?</Text>
+                    <Text style={styles.mitraSubtext}>You can start with what feels closest.</Text>
+                  </View>
+                </View>
+
+                <View style={styles.primaryGrid}>
+                  {PRIMARY_EMOTIONS.map((emotion) => {
+                    const isSelected = primaryEmotion === emotion.id;
+                    const IconComponent =
+                      emotion.id === "happy"
+                        ? HappyEmotionIcon
+                        : emotion.id === "sad"
+                        ? SadEmotionIcon
+                        : emotion.id === "angry"
+                        ? AngryEmotionIcon
+                        : CalmEmotionIcon;
+
                     return (
                       <TouchableOpacity
                         key={emotion.id}
                         style={[
-                          styles.emotionChip,
-                          isSelected && styles.emotionChipSelected,
+                          styles.primaryCard,
+                          isSelected && styles.primaryCardSelected,
+                          isSelected && { borderColor: emotion.themeColor, backgroundColor: emotion.themeColor + "10" },
                         ]}
-                        onPress={() => setSelectedEmotion(emotion.label)}
+                        onPress={() => handleSelectPrimary(emotion.id)}
+                        activeOpacity={0.85}
                       >
-                        <emotion.Icon size={20} color={isSelected ? Colors.primary : Colors.textSecondary} />
-                        <Text
+                        <View
                           style={[
-                            styles.emotionText,
-                            isSelected && styles.emotionTextSelected,
+                            styles.primaryIconContainer,
+                            { backgroundColor: emotion.themeColor + "18" },
+                            isSelected && { backgroundColor: emotion.themeColor + "30" },
                           ]}
                         >
-                          {emotion.label}
-                        </Text>
+                          <IconComponent size={36} color={emotion.themeColor} />
+                        </View>
+                        <View style={styles.primaryTextContainer}>
+                          <Text style={[styles.primaryLabel, isSelected && { color: emotion.themeColor }]}>
+                            {emotion.label}
+                          </Text>
+                          <Text style={styles.primaryDescription}>{emotion.description}</Text>
+                        </View>
+                        {isSelected && (
+                          <View style={[styles.primaryBadge, { backgroundColor: emotion.themeColor }]}>
+                            <Ionicons name="checkmark" size={14} color={Colors.white} />
+                          </View>
+                        )}
                       </TouchableOpacity>
                     );
                   })}
                 </View>
-                
+
                 <Button
-                  title="Continue"
-                  onPress={() => setStep(2)}
-                  disabled={!selectedEmotion}
+                  title={primaryEmotion ? `Continue with ${PRIMARY_EMOTIONS.find((e) => e.id === primaryEmotion)?.label}` : "Continue"}
+                  onPress={handleContinueFromStep1}
+                  disabled={!primaryEmotion}
                   style={styles.nextBtn}
                 />
               </View>
             )}
 
-            {/* Step 2: Interactive Body Map */}
-            {step === 2 && (
+            {/* STEP 2: Secondary Emotions */}
+            {step === 2 && primaryEmotion && (
               <View style={styles.stepCard}>
-                <Text style={styles.stepTitle}>Where is it held?</Text>
-                <Text style={styles.stepSub}>Select the body regions where you feel this sensation.</Text>
-                
-                <View style={styles.bodyMapContainer}>
-                  {/* Silhouette SVG */}
-                  <View style={styles.svgWrapper}>
-                    <Svg width={140} height={260} viewBox="0 0 200 320">
-                      <Circle 
-                        cx={100} 
-                        cy={35} 
-                        r={20} 
-                        fill={selectedRegions.includes("Head") ? Colors.primary : "#E2E8F0"} 
-                        onPress={() => toggleRegion("Head")} 
-                      />
-                      <Path 
-                        d="M 65 65 L 135 65 L 130 85 L 70 85 Z" 
-                        fill={selectedRegions.includes("Shoulders") ? Colors.primary : "#E2E8F0"} 
-                        onPress={() => toggleRegion("Shoulders")} 
-                      />
-                      <Path 
-                        d="M 72 88 L 128 88 L 125 125 L 75 125 Z" 
-                        fill={selectedRegions.includes("Chest") ? Colors.primary : "#E2E8F0"} 
-                        onPress={() => toggleRegion("Chest")} 
-                      />
-                      <Path 
-                        d="M 75 128 L 125 128 L 120 170 L 80 170 Z" 
-                        fill={selectedRegions.includes("Stomach") ? Colors.primary : "#E2E8F0"} 
-                        onPress={() => toggleRegion("Stomach")} 
-                      />
-                      <Path 
-                        d="M 62 68 L 48 80 L 38 150 L 48 150 L 58 90 Z" 
-                        fill={selectedRegions.includes("Hands") ? Colors.primary : "#E2E8F0"} 
-                        onPress={() => toggleRegion("Hands")} 
-                      />
-                      <Path 
-                        d="M 138 68 L 152 80 L 162 150 L 152 150 L 142 90 Z" 
-                        fill={selectedRegions.includes("Hands") ? Colors.primary : "#E2E8F0"} 
-                        onPress={() => toggleRegion("Hands")} 
-                      />
-                      <Path 
-                        d="M 80 173 L 97 173 L 92 295 L 75 295 Z" 
-                        fill={selectedRegions.includes("Legs") ? Colors.primary : "#E2E8F0"} 
-                        onPress={() => toggleRegion("Legs")} 
-                      />
-                      <Path 
-                        d="M 103 173 L 120 173 L 125 295 L 108 295 Z" 
-                        fill={selectedRegions.includes("Legs") ? Colors.primary : "#E2E8F0"} 
-                        onPress={() => toggleRegion("Legs")} 
-                      />
-                    </Svg>
-                  </View>
-
-                  {/* Checklist options */}
-                  <View style={styles.bodyListColumn}>
-                    {(["Head", "Shoulders", "Chest", "Stomach", "Hands", "Legs"] as const).map((region) => {
-                      const isSelected = selectedRegions.includes(region);
-                      return (
-                        <TouchableOpacity
-                          key={region}
-                          style={[
-                            styles.bodyRegionChip,
-                            isSelected && styles.bodyRegionChipSelected
-                          ]}
-                          onPress={() => toggleRegion(region)}
-                        >
-                          <Ionicons 
-                            name={isSelected ? "checkbox" : "square-outline"} 
-                            size={18} 
-                            color={isSelected ? Colors.white : Colors.textSecondary} 
-                            style={{ marginRight: 6 }}
-                          />
-                          <Text 
-                            style={[
-                              styles.bodyRegionText,
-                              isSelected && styles.bodyRegionTextSelected
-                            ]}
-                          >
-                            {region}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
+                <View style={styles.mitraHeaderRow}>
+                  <MitraAvatar state="listening" size="md" />
+                  <View style={styles.mitraSpeechBubble}>
+                    {step2UncertaintyState === "normal" ? (
+                      <>
+                        <Text style={styles.mitraSpeechText}>
+                          Got it. You're feeling {PRIMARY_EMOTIONS.find((e) => e.id === primaryEmotion)?.label.toLowerCase()}.
+                        </Text>
+                        <Text style={styles.mitraSubtext}>What's closest to how you're feeling?</Text>
+                      </>
+                    ) : (
+                      <>
+                        <Text style={styles.mitraSpeechText}>
+                          {UNCERTAINTY_REPHRASINGS[primaryEmotion].prompt}
+                        </Text>
+                        <Text style={styles.mitraSubtext}>
+                          {UNCERTAINTY_REPHRASINGS[primaryEmotion].examples}
+                        </Text>
+                      </>
+                    )}
                   </View>
                 </View>
-                
+
+                <View style={styles.secondaryContainer}>
+                  <View style={styles.secondaryGrid}>
+                    {(SECONDARY_EMOTIONS_BY_PRIMARY[primaryEmotion] || [])
+                      .filter((opt) => opt !== "Not sure")
+                      .map((option) => {
+                        const isSelected = secondaryEmotion === option;
+                        const primaryThemeColor =
+                          PRIMARY_EMOTIONS.find((e) => e.id === primaryEmotion)?.themeColor || Colors.primary;
+
+                        return (
+                          <TouchableOpacity
+                            key={option}
+                            style={[
+                              styles.secondaryChip,
+                              isSelected && [
+                                styles.secondaryChipSelected,
+                                { backgroundColor: primaryThemeColor, borderColor: primaryThemeColor },
+                              ],
+                            ]}
+                            onPress={() => handleSelectSecondary(option)}
+                            activeOpacity={0.8}
+                          >
+                            <Text
+                              style={[
+                                styles.secondaryChipText,
+                                isSelected && styles.secondaryChipTextSelected,
+                              ]}
+                            >
+                              {option}
+                            </Text>
+                            {isSelected && (
+                              <Ionicons
+                                name="checkmark-circle"
+                                size={16}
+                                color={Colors.white}
+                                style={{ marginLeft: 6 }}
+                              />
+                            )}
+                          </TouchableOpacity>
+                        );
+                      })}
+                  </View>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.unsureInlineBtn,
+                      step2UncertaintyState === "rephrased" && styles.unsureInlineBtnActive,
+                    ]}
+                    onPress={handleUnsureSecondary}
+                  >
+                    <Ionicons
+                      name="help-circle-outline"
+                      size={18}
+                      color={step2UncertaintyState === "rephrased" ? Colors.primary : Colors.textMuted}
+                    />
+                    <Text
+                      style={[
+                        styles.unsureInlineText,
+                        step2UncertaintyState === "rephrased" && { color: Colors.primary, fontFamily: Theme.fontFamily.bold },
+                      ]}
+                    >
+                      {step2UncertaintyState === "rephrased" ? "Still not sure — that's completely okay" : "Not sure"}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
                 <View style={styles.navRow}>
                   <Button title="Back" onPress={() => setStep(1)} variant="outline" style={styles.halfBtn} />
                   <Button
-                    title="Next"
-                    onPress={() => {
-                      setCurrentRegionIndex(0);
-                      setStep(3);
-                    }}
-                    disabled={selectedRegions.length === 0}
+                    title="Continue"
+                    onPress={handleContinueFromStep2}
+                    disabled={!secondaryEmotion}
                     style={styles.halfBtn}
                   />
                 </View>
               </View>
             )}
 
-            {/* Step 3: Multi-Region Intensity Selection */}
-            {step === 3 && selectedRegions.length > 0 && (
+            {/* STEP 3: Body Sensation - Phase 2 rephrase/auto-advance */}
+            {step === 3 && (
               <View style={styles.stepCard}>
-                <Text style={styles.stepTitle}>Region Intensity</Text>
-                <Text style={styles.stepSub}>
-                  How strongly do you feel it in your {selectedRegions[currentRegionIndex]}? ({currentRegionIndex + 1} of {selectedRegions.length})
-                </Text>
-                
-                <IntensitySelector 
-                  value={bodyRatings[selectedRegions[currentRegionIndex]] ?? 5} 
-                  onChange={(val) => {
-                    setBodyRatings({
-                      ...bodyRatings,
-                      [selectedRegions[currentRegionIndex]]: val,
-                    });
-                  }}
-                  activeColor={activeColors.primary} 
-                />
-
+                <View style={styles.mitraHeaderRow}>
+                  <MitraAvatar state="listening" size="md" />
+                  <View style={styles.mitraSpeechBubble}>
+                    {step3UncertaintyState === "normal" ? (
+                      <>
+                        <Text style={styles.mitraSpeechText}>Where do you notice it most?</Text>
+                        <Text style={styles.mitraSubtext}>
+                          {secondaryEmotion
+                            ? `Where do you feel that sense of ${secondaryEmotion.toLowerCase()} in your body?`
+                            : `Where do you notice that feeling in your body?`}
+                        </Text>
+                      </>
+                    ) : (
+                      <>
+                        <Text style={styles.mitraSpeechText}>{"That's okay."}</Text>
+                        <Text style={styles.mitraSubtext}>
+                          Sometimes feelings show up as a tight chest, a knot in the stomach, tense shoulders, or restless hands. Do you notice anything like that?
+                        </Text>
+                      </>
+                    )}
+                  </View>
+                </View>
+                <View style={styles.bodyMapContainer}>
+                  <View style={styles.svgWrapper}>
+                    <Svg width={140} height={260} viewBox="0 0 200 320">
+                      <Circle cx={100} cy={35} r={20} fill={selectedRegions.includes("Head") ? (activePrimaryDef?.themeColor || Colors.primary) : "#E2E8F0"} onPress={() => toggleRegion("Head")} />
+                      <Path d="M 65 65 L 135 65 L 130 85 L 70 85 Z" fill={selectedRegions.includes("Shoulders") ? (activePrimaryDef?.themeColor || Colors.primary) : "#E2E8F0"} onPress={() => toggleRegion("Shoulders")} />
+                      <Path d="M 72 88 L 128 88 L 125 125 L 75 125 Z" fill={selectedRegions.includes("Chest") ? (activePrimaryDef?.themeColor || Colors.primary) : "#E2E8F0"} onPress={() => toggleRegion("Chest")} />
+                      <Path d="M 75 128 L 125 128 L 120 170 L 80 170 Z" fill={selectedRegions.includes("Stomach") ? (activePrimaryDef?.themeColor || Colors.primary) : "#E2E8F0"} onPress={() => toggleRegion("Stomach")} />
+                      <Path d="M 62 68 L 48 80 L 38 150 L 48 150 L 58 90 Z" fill={selectedRegions.includes("Hands") ? (activePrimaryDef?.themeColor || Colors.primary) : "#E2E8F0"} onPress={() => toggleRegion("Hands")} />
+                      <Path d="M 138 68 L 152 80 L 162 150 L 152 150 L 142 90 Z" fill={selectedRegions.includes("Hands") ? (activePrimaryDef?.themeColor || Colors.primary) : "#E2E8F0"} onPress={() => toggleRegion("Hands")} />
+                      <Path d="M 80 173 L 97 173 L 92 295 L 75 295 Z" fill={selectedRegions.includes("Legs") ? (activePrimaryDef?.themeColor || Colors.primary) : "#E2E8F0"} onPress={() => toggleRegion("Legs")} />
+                      <Path d="M 103 173 L 120 173 L 125 295 L 108 295 Z" fill={selectedRegions.includes("Legs") ? (activePrimaryDef?.themeColor || Colors.primary) : "#E2E8F0"} onPress={() => toggleRegion("Legs")} />
+                    </Svg>
+                  </View>
+                  <View style={styles.bodyListColumn}>
+                    {STANDARD_BODY_REGIONS.map((region) => {
+                      const isSelected = selectedRegions.includes(region);
+                      return (
+                        <TouchableOpacity
+                          key={region}
+                          style={[
+                            styles.bodyRegionChip,
+                            isSelected && [
+                              styles.bodyRegionChipSelected,
+                              activePrimaryDef ? { backgroundColor: activePrimaryDef.themeColor, borderColor: activePrimaryDef.themeColor } : null,
+                            ],
+                          ]}
+                          onPress={() => toggleRegion(region)}
+                        >
+                          <Ionicons name={isSelected ? "checkbox" : "square-outline"} size={18} color={isSelected ? Colors.white : Colors.textSecondary} style={{ marginRight: 6 }} />
+                          <Text style={[styles.bodyRegionText, isSelected && styles.bodyRegionTextSelected]}>{region}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                    <TouchableOpacity
+                      style={[
+                        styles.bodyRegionChip,
+                        selectedRegions.includes("Somewhere else") && [
+                          styles.bodyRegionChipSelected,
+                          activePrimaryDef ? { backgroundColor: activePrimaryDef.themeColor, borderColor: activePrimaryDef.themeColor } : null,
+                        ],
+                      ]}
+                      onPress={() => toggleRegion("Somewhere else")}
+                    >
+                      <Ionicons name={selectedRegions.includes("Somewhere else") ? "checkbox" : "square-outline"} size={18} color={selectedRegions.includes("Somewhere else") ? Colors.white : Colors.textSecondary} style={{ marginRight: 6 }} />
+                      <Text style={[styles.bodyRegionText, selectedRegions.includes("Somewhere else") && styles.bodyRegionTextSelected]}>Somewhere else</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={[styles.bodyRegionChip, styles.unsureChip, isUnsureBody && styles.unsureChipSelected]} onPress={handleToggleUnsureBody}>
+                      <Ionicons name={isUnsureBody ? "help-circle" : "help-circle-outline"} size={18} color={isUnsureBody ? Colors.primary : Colors.textMuted} style={{ marginRight: 6 }} />
+                      <Text style={[styles.bodyRegionText, isUnsureBody && { color: Colors.primary, fontFamily: Theme.fontFamily.bold }]}>{step3UncertaintyState === "rephrased" ? "Still not sure — that's fine" : "I'm not sure"}</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
                 <View style={styles.navRow}>
-                  <Button 
-                    title="Back" 
-                    onPress={() => {
-                      if (currentRegionIndex > 0) {
-                        setCurrentRegionIndex(currentRegionIndex - 1);
-                      } else {
-                        setStep(2);
-                      }
-                    }} 
-                    variant="outline" 
-                    style={styles.halfBtn} 
-                  />
-                  <Button 
-                    title="Next" 
-                    onPress={() => {
-                      if (currentRegionIndex < selectedRegions.length - 1) {
-                        setCurrentRegionIndex(currentRegionIndex + 1);
-                      } else {
-                        setStep(4);
-                      }
-                    }} 
-                    style={styles.halfBtn} 
-                  />
+                  <Button title="Back" onPress={() => setStep(2)} variant="outline" style={styles.halfBtn} />
+                  <Button title="Continue" onPress={handleContinueFromStep3} style={styles.halfBtn} />
                 </View>
               </View>
             )}
 
-            {/* Step 4: Reflection Summary Screen */}
+            {/* STEP 4: Intensity */}
             {step === 4 && (
               <View style={styles.stepCard}>
-                <Text style={styles.stepTitle}>Reflection Summary</Text>
-                <Text style={styles.stepSub}>Observe this summary of your physical and emotional state.</Text>
-                
-                <View style={styles.summaryBox}>
-                  <View style={styles.summaryItem}>
-                    <Text style={styles.summaryLabel}>Emotion Selected</Text>
-                    <Text style={styles.summaryValue}>{selectedEmotion}</Text>
-                  </View>
-                  
-                  <View style={styles.summaryDivider} />
-                  
-                  <View style={styles.summaryItem}>
-                    <Text style={styles.summaryLabel}>Average Intensity</Text>
-                    <Text style={[styles.summaryValue, { color: getIntensityLabel(Math.round(averageIntensity)).color }]}>
-                      {averageIntensity} / 10
+                <View style={styles.mitraHeaderRow}>
+                  <MitraAvatar state="neutral" size="md" />
+                  <View style={styles.mitraSpeechBubble}>
+                    <Text style={styles.mitraSpeechText}>How strong does it feel right now?</Text>
+                    <Text style={styles.mitraSubtext}>
+                      {secondaryEmotion
+                        ? `Rate the intensity of ${secondaryEmotion.toLowerCase()} on a scale from 1 to 10.`
+                        : `Rate the intensity on a scale from 1 to 10.`}
                     </Text>
                   </View>
                 </View>
-
-                <Text style={styles.sectionHeading}>Sensation Areas</Text>
-                <View style={styles.breakdownList}>
-                  {selectedRegions.map((region) => {
-                    const rating = bodyRatings[region] ?? 5;
-                    const info = getIntensityLabel(rating);
-                    return (
-                      <View key={region} style={styles.breakdownRow}>
-                        <Text style={styles.breakdownRegion}>{region}</Text>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                          <Text style={[styles.breakdownRating, { color: info.color }]}>{rating}</Text>
-                          <Text style={styles.breakdownLabel}>({info.text})</Text>
+                <IntensitySelector value={intensity} onChange={setIntensity} activeColor={activeColors.primary} />
+                <View style={styles.navRow}>
+                  <Button title="Back" onPress={() => setStep(3)} variant="outline" style={styles.halfBtn} />
+                  <Button title={isSubmitting ? "Finding Best Tool..." : "Continue"} onPress={handleContinueFromStep4} disabled={isSubmitting} style={styles.halfBtn} />
+                </View>
+              </View>
+            )}
+            {/* STEP 5: Mitra Intervention Intro — Phase 3 */}
+            {step === 5 && routedIntervention && (
+              <View style={styles.stepCard}>
+                <View style={styles.mitraHeaderRow}>
+                  <MitraAvatar state="supportive" size="md" />
+                  <View style={styles.mitraSpeechBubble}>
+                    <Text style={styles.mitraSpeechText}>{routedIntervention.transitionMessage}</Text>
+                  </View>
+                </View>
+                <View style={styles.interventionCard}>
+                  <View style={styles.interventionHeader}>
+                    <View style={styles.interventionIconBox}>{getInterventionIcon(routedIntervention.interventionType)}</View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.interventionTitle}>{routedIntervention.title}</Text>
+                      <View style={styles.badgeRow}>
+                        <View style={styles.pillTag}><Text style={styles.pillTagText}>{routedIntervention.studentFacingName}</Text></View>
+                        <View style={[styles.pillTag, styles.durationPill]}>
+                          <Ionicons name="time-outline" size={12} color={Colors.primary} />
+                          <Text style={[styles.pillTagText, { color: Colors.primary }]}>{routedIntervention.recommendedDuration}</Text>
                         </View>
                       </View>
-                    );
-                  })}
+                    </View>
+                  </View>
+                  <Text style={styles.interventionReason}>{routedIntervention.reason}</Text>
                 </View>
-
-                <View style={styles.feedbackCard}>
-                  <Text style={styles.feedbackTitle}>Therapeutic Insight</Text>
-                  <Text style={styles.feedbackText}>{getSupportiveFeedback(selectedEmotion?.split(' ').slice(1).join(' ') || "")}</Text>
-                </View>
-
-                {/* Personalization Alerts */}
-
-                <View style={styles.navRow}>
-                  <Button 
-                    title="Back" 
-                    onPress={() => {
-                      setCurrentRegionIndex(selectedRegions.length - 1);
-                      setStep(3);
-                    }} 
-                    variant="outline" 
-                    style={styles.halfBtn} 
-                  />
-                  <Button title="Continue" onPress={() => setStep(5)} style={styles.halfBtn} />
-                </View>
+                <TouchableOpacity style={styles.startInterventionBtn} onPress={handleStartIntervention} activeOpacity={0.9}>
+                  <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={styles.startBtnGradient}>
+                    <Text style={styles.startBtnText}>{"Let's start"}</Text>
+                    <Ionicons name="arrow-forward" size={20} color={Colors.white} />
+                  </LinearGradient>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.maybeLaterBtn} onPress={() => router.replace("/(auth)/(tabs)")}>
+                  <Text style={styles.maybeLaterText}>Maybe later</Text>
+                </TouchableOpacity>
               </View>
             )}
-
-            {/* Step 5: Recommended Actions */}
-            {step === 5 && (
+            {/* STEP 6: Uncertain Support — Phase 2. Local UI only, no DB record. 4-7-8 NOT offered. */}
+            {step === 6 && (
               <View style={styles.stepCard}>
-                <Text style={styles.stepTitle}>Recommended Action</Text>
-                <Text style={styles.stepSub}>Choose a calming step to support yourself right now.</Text>
-                
-                <View style={styles.actionsContainer}>
-                  <TouchableOpacity 
-                    style={styles.actionCard} 
-                    onPress={() => setShowBreathingModal(true)}
-                  >
-                    <View style={styles.actionIconWrapper}>
-                      <DeepBreathingActivityIcon size={24} color={Colors.primary} />
+                <View style={styles.mitraHeaderRow}>
+                  <MitraAvatar state="supportive" size="md" />
+                  <View style={styles.mitraSpeechBubble}>
+                    <Text style={styles.mitraSpeechText}>{"That's completely okay."}</Text>
+                    <Text style={styles.mitraSubtext}>You do not have to figure it out right now. Let us just do something that might help you feel a little more settled.</Text>
+                  </View>
+                </View>
+                <View style={styles.fallbackActivityList}>
+                  <TouchableOpacity style={styles.fallbackActivityCard} onPress={() => handleFallbackIntervention("breathing")} activeOpacity={0.85}>
+                    <View style={styles.fallbackIconBox}><DeepBreathingActivityIcon size={28} color={Colors.primary} /></View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.fallbackActivityTitle}>{"Let's breathe"}</Text>
+                      <Text style={styles.fallbackActivitySub}>A simple 3-minute breathing exercise</Text>
                     </View>
-                    <View style={styles.actionInfo}>
-                      <Text style={styles.actionTitle}>Breathe Now</Text>
-                      <Text style={styles.actionDesc}>Take a 3-minute guided breathing break</Text>
-                    </View>
-                    <Ionicons name="chevron-forward" size={20} color={Colors.primary} />
+                    <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
                   </TouchableOpacity>
-
-                  <TouchableOpacity 
-                    style={styles.actionCard} 
-                    onPress={() => saveLogAndNavigate("JPMR")}
-                  >
-                    <View style={styles.actionIconWrapper}>
-                      <MuscleRelaxActivityIcon size={24} color={Colors.primary} />
+                  <TouchableOpacity style={styles.fallbackActivityCard} onPress={() => handleFallbackIntervention("grounding")} activeOpacity={0.85}>
+                    <View style={[styles.fallbackIconBox, { backgroundColor: "#DCFCE7" }]}><GroundingIcon size={28} color="#16A34A" /></View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.fallbackActivityTitle}>{"Let's ground myself"}</Text>
+                      <Text style={styles.fallbackActivitySub}>Notice what is around you right now</Text>
                     </View>
-                    <View style={styles.actionInfo}>
-                      <Text style={styles.actionTitle}>Relax Now</Text>
-                      <Text style={styles.actionDesc}>Open JPMR relaxation module</Text>
-                    </View>
-                    <Ionicons name="chevron-forward" size={20} color={Colors.primary} />
+                    <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
                   </TouchableOpacity>
-
-                  <TouchableOpacity 
-                    style={styles.actionCard} 
-                    onPress={() => saveLogAndNavigate("MicroGoals")}
-                  >
-                    <View style={styles.actionIconWrapper}>
-                      <HabitMicrogoalIcon size={24} color={Colors.primary} />
+                  <TouchableOpacity style={styles.fallbackActivityCard} onPress={() => handleFallbackIntervention("jpmr")} activeOpacity={0.85}>
+                    <View style={[styles.fallbackIconBox, { backgroundColor: "#EDE9FE" }]}><MuscleRelaxActivityIcon size={28} color={Colors.secondary} /></View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.fallbackActivityTitle}>Try something calming</Text>
+                      <Text style={styles.fallbackActivitySub}>Release tension with guided relaxation</Text>
                     </View>
-                    <View style={styles.actionInfo}>
-                      <Text style={styles.actionTitle}>Set a MicroGoal</Text>
-                      <Text style={styles.actionDesc}>Create a small achievable daily goal</Text>
-                    </View>
-                    <Ionicons name="chevron-forward" size={20} color={Colors.primary} />
-                  </TouchableOpacity>
-
-                  <TouchableOpacity 
-                    style={[styles.actionCard, { borderColor: '#E2E8F0', backgroundColor: '#F8FAFC' }]} 
-                    onPress={() => saveLogAndNavigate("None")}
-                  >
-                    <View style={styles.actionIconWrapper}>
-                      <Ionicons name="time-outline" size={24} color={Colors.textSecondary} />
-                    </View>
-                    <View style={styles.actionInfo}>
-                      <Text style={[styles.actionTitle, { color: Colors.textSecondary }]}>Maybe Later</Text>
-                      <Text style={styles.actionDesc}>Save this scan and return to dashboard</Text>
-                    </View>
-                    <Ionicons name="chevron-forward" size={20} color={Colors.textSecondary} />
+                    <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
                   </TouchableOpacity>
                 </View>
-
-                <Button 
-                  title="Back" 
-                  onPress={() => setStep(4)} 
-                  variant="outline" 
-                  style={styles.backBtnOnly} 
-                />
+                <TouchableOpacity style={styles.maybeLaterBtn} onPress={() => router.replace("/(auth)/(tabs)")}>
+                  <Text style={styles.maybeLaterText}>Return to Home</Text>
+                </TouchableOpacity>
               </View>
             )}
-
+            {/* STEP 7: Post-Intervention Check — Phase 3 */}
+            {step === 7 && (
+              <View style={styles.stepCard}>
+                <View style={styles.mitraHeaderRow}>
+                  <MitraAvatar state="calm" size="md" />
+                  <View style={styles.mitraSpeechBubble}>
+                    <Text style={styles.mitraSpeechText}>Nice. Take a moment.</Text>
+                    <Text style={styles.mitraSubtext}>How do you feel now compared to before?</Text>
+                  </View>
+                </View>
+                <View style={styles.postCheckRow}>
+                  <TouchableOpacity
+                    style={[styles.postCheckBtn, styles.postCheckBetter]}
+                    onPress={() => handleSubmitPostCheck("better")}
+                    disabled={isSavingPost}
+                    activeOpacity={0.85}
+                  >
+                    <Ionicons name="arrow-up" size={22} color="#16A34A" />
+                    <Text style={[styles.postCheckLabel, { color: "#16A34A" }]}>A bit better</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.postCheckBtn, styles.postCheckSame]}
+                    onPress={() => handleSubmitPostCheck("same")}
+                    disabled={isSavingPost}
+                    activeOpacity={0.85}
+                  >
+                    <Ionicons name="remove" size={22} color={Colors.textSecondary} />
+                    <Text style={[styles.postCheckLabel, { color: Colors.textSecondary }]}>About the same</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.postCheckBtn, styles.postCheckWorse]}
+                    onPress={() => handleSubmitPostCheck("worse")}
+                    disabled={isSavingPost}
+                    activeOpacity={0.85}
+                  >
+                    <Ionicons name="arrow-down" size={22} color="#EA580C" />
+                    <Text style={[styles.postCheckLabel, { color: "#EA580C" }]}>A bit harder</Text>
+                  </TouchableOpacity>
+                </View>
+                {isSavingPost && <ActivityIndicator size="small" color={Colors.primary} style={{ marginTop: 12 }} />}
+                <TouchableOpacity style={styles.maybeLaterBtn} onPress={() => router.replace("/(auth)/(tabs)")}>
+                  <Text style={styles.maybeLaterText}>Skip and go home</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+            {/* STEP 8: Mitra Followup — Phase 3 */}
+            {step === 8 && (
+              <View style={styles.stepCard}>
+                <View style={styles.mitraHeaderRow}>
+                  <MitraAvatar
+                    state={postOutcome === "better" ? "celebrating" : postOutcome === "worse" ? "supportive" : "calm"}
+                    size="md"
+                  />
+                  <View style={styles.mitraSpeechBubble}>
+                    {postOutcome === "better" && (
+                      <>
+                        <Text style={styles.mitraSpeechText}>Good. I am glad that helped a little.</Text>
+                        <Text style={styles.mitraSubtext}>Every small moment of care counts.</Text>
+                      </>
+                    )}
+                    {postOutcome === "same" && (
+                      <>
+                        <Text style={styles.mitraSpeechText}>{"That's okay."}</Text>
+                        <Text style={styles.mitraSubtext}>Sometimes it takes a little longer. You showed up for yourself today.</Text>
+                      </>
+                    )}
+                    {postOutcome === "worse" && (
+                      <>
+                        <Text style={styles.mitraSpeechText}>Thanks for telling me.</Text>
+                        <Text style={styles.mitraSubtext}>It is okay to feel that way. Rest if you need to. Your counsellor can help if things feel overwhelming.</Text>
+                      </>
+                    )}
+                  </View>
+                </View>
+                <TouchableOpacity style={styles.startInterventionBtn} onPress={() => router.replace("/(auth)/(tabs)")} activeOpacity={0.9}>
+                  <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={styles.startBtnGradient}>
+                    <Text style={styles.startBtnText}>Back to Home</Text>
+                    <Ionicons name="home-outline" size={20} color={Colors.white} />
+                  </LinearGradient>
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
         )}
 
         {/* HISTORY & TRENDS TAB */}
-        {activeTab === 'history' && (
+        {activeTab === "history" && (
           <View style={styles.historyContainer}>
             {/* Filter Toggle */}
             <View style={styles.filterRow}>
@@ -719,7 +1173,12 @@ export default function EmotionMapScreen() {
                 style={[styles.filterBtn, filterDays === 7 && styles.filterBtnActive]}
                 onPress={() => setFilterDays(7)}
               >
-                <Text style={[styles.filterBtnText, filterDays === 7 && styles.filterBtnTextActive]}>
+                <Text
+                  style={[
+                    styles.filterBtnText,
+                    filterDays === 7 && styles.filterBtnTextActive,
+                  ]}
+                >
                   Last 7 Days
                 </Text>
               </TouchableOpacity>
@@ -727,7 +1186,12 @@ export default function EmotionMapScreen() {
                 style={[styles.filterBtn, filterDays === 30 && styles.filterBtnActive]}
                 onPress={() => setFilterDays(30)}
               >
-                <Text style={[styles.filterBtnText, filterDays === 30 && styles.filterBtnTextActive]}>
+                <Text
+                  style={[
+                    styles.filterBtnText,
+                    filterDays === 30 && styles.filterBtnTextActive,
+                  ]}
+                >
                   Last 30 Days
                 </Text>
               </TouchableOpacity>
@@ -737,39 +1201,73 @@ export default function EmotionMapScreen() {
               <View style={styles.emptyCard}>
                 <Ionicons name="journal-outline" size={48} color={Colors.textSecondary} />
                 <Text style={styles.emptyText}>No entries recorded in this period.</Text>
-                <Text style={styles.emptySub}>Start logging your physical sensations to see wellness patterns.</Text>
+                <Text style={styles.emptySub}>
+                  Start logging your physical sensations to see wellness patterns.
+                </Text>
               </View>
             ) : (
-              <View style={{ gap: Theme.spacing.xl, width: '100%' }}>
+              <View style={{ gap: Theme.spacing.xl, width: "100%" }}>
                 {/* Insights Card */}
                 <View style={styles.insightsCard}>
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 12 }}>
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 6,
+                      marginBottom: 12,
+                    }}
+                  >
                     <Ionicons name="bulb-outline" size={16} color={Colors.primary} />
                     <Text style={styles.insightsHeader}>WELLNESS INSIGHTS</Text>
                   </View>
-                  
+
                   {mostFrequentEmotion && (
                     <View style={styles.insightItemRow}>
-                      <Ionicons name="pulse" size={18} color={Colors.primary} style={{ marginTop: 2 }} />
+                      <Ionicons
+                        name="pulse"
+                        size={18}
+                        color={Colors.primary}
+                        style={{ marginTop: 2 }}
+                      />
                       <Text style={styles.insightItemText}>
-                        <Text style={{ fontFamily: Theme.fontFamily.bold }}>{mostFrequentEmotion}</Text> appeared most often this {filterDays === 7 ? 'week' : 'month'}.
+                        <Text style={{ fontFamily: Theme.fontFamily.bold }}>
+                          {mostFrequentEmotion}
+                        </Text>{" "}
+                        appeared most often this {filterDays === 7 ? "week" : "month"}.
                       </Text>
                     </View>
                   )}
-                  
+
                   {mostFrequentRegion && (
                     <View style={styles.insightItemRow}>
-                      <Ionicons name="body" size={18} color={Colors.secondary} style={{ marginTop: 2 }} />
+                      <Ionicons
+                        name="body"
+                        size={18}
+                        color={Colors.secondary}
+                        style={{ marginTop: 2 }}
+                      />
                       <Text style={styles.insightItemText}>
-                        <Text style={{ fontFamily: Theme.fontFamily.bold }}>{mostFrequentRegion} tension</Text> was your most common body sensation.
+                        <Text style={{ fontFamily: Theme.fontFamily.bold }}>
+                          {mostFrequentRegion} tension
+                        </Text>{" "}
+                        was your most common body sensation.
                       </Text>
                     </View>
                   )}
 
                   <View style={styles.insightItemRow}>
-                    <Ionicons name="thermometer" size={18} color={Colors.success} style={{ marginTop: 2 }} />
+                    <Ionicons
+                      name="thermometer"
+                      size={18}
+                      color={Colors.success}
+                      style={{ marginTop: 2 }}
+                    />
                     <Text style={styles.insightItemText}>
-                      Your overall average distress intensity was <Text style={{ fontFamily: Theme.fontFamily.bold }}>{overallAvgIntensity} / 10</Text>.
+                      Your overall average distress intensity was{" "}
+                      <Text style={{ fontFamily: Theme.fontFamily.bold }}>
+                        {overallAvgIntensity} / 10
+                      </Text>
+                      .
                     </Text>
                   </View>
                 </View>
@@ -783,9 +1281,16 @@ export default function EmotionMapScreen() {
                       <View key={emotion} style={styles.freqRow}>
                         <Text style={styles.freqLabel}>{emotion}</Text>
                         <View style={styles.freqBarBg}>
-                          <View style={[styles.freqBarFill, { width: `${pct}%`, backgroundColor: Colors.primary }]} />
+                          <View
+                            style={[
+                              styles.freqBarFill,
+                              { width: `${pct}%`, backgroundColor: Colors.primary },
+                            ]}
+                          />
                         </View>
-                        <Text style={styles.freqValue}>{count} ({pct}%)</Text>
+                        <Text style={styles.freqValue}>
+                          {count} ({pct}%)
+                        </Text>
                       </View>
                     );
                   })}
@@ -800,9 +1305,16 @@ export default function EmotionMapScreen() {
                       <View key={region} style={styles.freqRow}>
                         <Text style={styles.freqLabel}>{region}</Text>
                         <View style={styles.freqBarBg}>
-                          <View style={[styles.freqBarFill, { width: `${pct}%`, backgroundColor: Colors.secondary }]} />
+                          <View
+                            style={[
+                              styles.freqBarFill,
+                              { width: `${pct}%`, backgroundColor: Colors.secondary },
+                            ]}
+                          />
                         </View>
-                        <Text style={styles.freqValue}>{count} ({pct}%)</Text>
+                        <Text style={styles.freqValue}>
+                          {count} ({pct}%)
+                        </Text>
                       </View>
                     );
                   })}
@@ -816,14 +1328,28 @@ export default function EmotionMapScreen() {
                       <View key={log._id} style={styles.logRow}>
                         <View style={{ flex: 1 }}>
                           <Text style={styles.logEmotion}>{log.emotionLabel}</Text>
-                          <Text style={styles.logRegions}>{log.selectedRegions.join(', ')}</Text>
+                          <Text style={styles.logRegions}>
+                            {log.selectedRegions && log.selectedRegions.length > 0
+                              ? log.selectedRegions.join(", ")
+                              : "No body location specified"}
+                          </Text>
                         </View>
-                        <View style={{ alignItems: 'flex-end' }}>
-                          <Text style={[styles.logIntensity, { color: getIntensityLabel(Math.round(log.averageIntensity)).color }]}>
-                            {log.averageIntensity} avg
+                        <View style={{ alignItems: "flex-end" }}>
+                          <Text
+                            style={[
+                              styles.logIntensity,
+                              {
+                                color: getIntensityLabel(Math.round(log.averageIntensity)).color,
+                              },
+                            ]}
+                          >
+                            {log.averageIntensity} / 10
                           </Text>
                           <Text style={styles.logDate}>
-                            {new Date(log.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                            {new Date(log.createdAt).toLocaleDateString(undefined, {
+                              month: "short",
+                              day: "numeric",
+                            })}
                           </Text>
                         </View>
                       </View>
@@ -838,7 +1364,7 @@ export default function EmotionMapScreen() {
         <View style={{ height: 100 }} />
       </ScrollView>
 
-      {/* Guided Breathing Modal */}
+      {/* Phase 3 — Guided Breathing Modal (inline, completion → step 7) */}
       <Modal
         visible={showBreathingModal}
         transparent={true}
@@ -847,35 +1373,52 @@ export default function EmotionMapScreen() {
       >
         <View style={styles.modalOverlay}>
           <BlurView intensity={95} tint="dark" style={StyleSheet.absoluteFill} />
-          
-          <View style={styles.breathingContainer}>
-            <Text style={styles.breathingTitle}>Guided Breathing</Text>
-            <Text style={styles.breathingSubtitle}>Follow the circle animation. Inhale, hold, exhale.</Text>
-
-            <View style={styles.breathingAnimationWrapper}>
-              <Animated.View 
-                style={[
-                  styles.breathingCircle,
-                  {
-                    transform: [{ scale: breatheAnim }],
-                    backgroundColor: Colors.primary + '30',
-                    borderColor: Colors.primary,
-                  }
-                ]}
-              >
-                <Text style={styles.breathStateText}>{breathState}</Text>
-              </Animated.View>
-            </View>
-
-            <Text style={styles.breathingTimer}>
-              {Math.floor(breathingTimeLeft / 60)}:{(breathingTimeLeft % 60).toString().padStart(2, '0')}
-            </Text>
-
-            <Button 
-              title="Stop & Complete" 
-              onPress={handleCompleteBreathing} 
-              style={styles.breathingExitBtn} 
+          <View style={[styles.breathingContainer, { backgroundColor: "#FFFFFF", borderRadius: 24, padding: 12, maxWidth: 360, width: "90%" }]}>
+            <BreathingPlayer
+              protocol={activeBreathingProtocol}
+              sourceType="emotion_map"
+              title={routedIntervention?.studentFacingName || "Guided Breathing"}
+              subtitle={routedIntervention?.title || "Follow the rhythm to ease tension"}
+              themeColor={Colors.primary}
+              onComplete={(_result) => {
+                // Genuine completion — advance to Mitra post-intervention check
+                handleInlineInterventionComplete();
+              }}
+              onClose={() => {
+                // User stopped early — do not record as completed; just close modal
+                setShowBreathingModal(false);
+              }}
             />
+          </View>
+        </View>
+      </Modal>
+
+      {/* Phase 3 — Grounding Modal (inline, completion → step 7) */}
+      <Modal
+        visible={showGroundingModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowGroundingModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <BlurView intensity={95} tint="dark" style={StyleSheet.absoluteFill} />
+          <View style={[styles.breathingContainer, { backgroundColor: "#FFFFFF", borderRadius: 20, padding: 8, maxWidth: 380, width: "94%", maxHeight: "90%" }]}>
+            <ScrollView contentContainerStyle={{ paddingHorizontal: 12, paddingVertical: 12 }} showsVerticalScrollIndicator={false}>
+              <SensoryGroundingPlayer
+                protocol={SENSORY_54321_PROTOCOL}
+                mode="interactive"
+                sourceType="emotion_map"
+                themeColor="#16A34A"
+                onClose={() => {
+                  // User exited early — do not record as completed
+                  setShowGroundingModal(false);
+                }}
+                onComplete={(_logId) => {
+                  // Genuine completion — advance to Mitra post-intervention check
+                  handleInlineInterventionComplete();
+                }}
+              />
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -887,7 +1430,7 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   content: { padding: Theme.spacing.lg, paddingTop: 50, paddingBottom: 100 },
   header: { marginBottom: Theme.spacing.lg },
-  headerNavRow: { flexDirection: 'row', alignItems: 'center', marginBottom: Theme.spacing.md },
+  headerNavRow: { flexDirection: "row", alignItems: "center", marginBottom: Theme.spacing.md },
   backBtn: { marginRight: Theme.spacing.md },
   title: {
     fontFamily: Theme.fontFamily.bold,
@@ -895,8 +1438,8 @@ const styles = StyleSheet.create({
     color: Colors.text,
   },
   tabContainer: {
-    flexDirection: 'row',
-    backgroundColor: 'rgba(0,0,0,0.06)',
+    flexDirection: "row",
+    backgroundColor: "rgba(0,0,0,0.06)",
     borderRadius: Theme.borderRadius.md,
     padding: 3,
     marginBottom: Theme.spacing.md,
@@ -904,7 +1447,7 @@ const styles = StyleSheet.create({
   tabButton: {
     flex: 1,
     paddingVertical: 10,
-    alignItems: 'center',
+    alignItems: "center",
     borderRadius: Theme.borderRadius.md - 2,
   },
   tabButtonActive: {
@@ -921,12 +1464,12 @@ const styles = StyleSheet.create({
   },
   progressContainer: {
     height: 4,
-    backgroundColor: 'rgba(0,0,0,0.05)',
+    backgroundColor: "rgba(0,0,0,0.05)",
     borderRadius: 2,
-    overflow: 'hidden',
+    overflow: "hidden",
   },
   progressBar: {
-    height: '100%',
+    height: "100%",
     backgroundColor: Colors.primary,
   },
   stepCard: {
@@ -934,37 +1477,147 @@ const styles = StyleSheet.create({
     borderRadius: Theme.borderRadius.xl,
     padding: Theme.spacing.xl,
     ...Theme.shadows.secondary,
-    width: '100%',
+    width: "100%",
   },
-  stepTitle: {
+  mitraHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: Theme.spacing.lg,
+  },
+  mitraSpeechBubble: {
+    flex: 1,
+    backgroundColor: "#F8FAFC",
+    padding: Theme.spacing.md,
+    borderRadius: Theme.borderRadius.lg,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+  },
+  mitraSpeechText: {
     fontFamily: Theme.fontFamily.bold,
-    fontSize: Theme.fontSize.xl,
+    fontSize: Theme.fontSize.md,
     color: Colors.text,
+    marginBottom: 4,
+  },
+  mitraSubtext: {
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: Theme.fontSize.xs,
+    color: Colors.textSecondary,
+    lineHeight: 18,
+  },
+  // Level 1: Primary Emotions
+  primaryGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 12,
+    marginVertical: Theme.spacing.md,
+    justifyContent: "space-between",
+  },
+  primaryCard: {
+    width: "48%",
+    paddingVertical: 18,
+    paddingHorizontal: 12,
+    borderRadius: Theme.borderRadius.xl,
+    backgroundColor: "#F8FAFC",
+    borderWidth: 2,
+    borderColor: "#E2E8F0",
+    alignItems: "center",
+    justifyContent: "center",
+    ...Theme.shadows.tertiary,
+    position: "relative",
+  },
+  primaryCardSelected: {
+    backgroundColor: Colors.white,
+    ...Theme.shadows.primary,
+  },
+  primaryIconContainer: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    justifyContent: "center",
+    alignItems: "center",
     marginBottom: 8,
   },
-  stepSub: {
+  primaryTextContainer: {
+    alignItems: "center",
+  },
+  primaryLabel: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: Theme.fontSize.md,
+    color: Colors.text,
+  },
+  primaryDescription: {
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: Theme.fontSize.xs,
+    color: Colors.textSecondary,
+    textAlign: "center",
+    marginTop: 2,
+  },
+  primaryBadge: {
+    position: "absolute",
+    top: 8,
+    right: 8,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+
+  // Level 2: Secondary Emotions
+  secondaryContainer: {
+    marginVertical: Theme.spacing.md,
+  },
+  secondaryGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    justifyContent: "center",
+  },
+  secondaryChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: Theme.borderRadius.full,
+    backgroundColor: "#F8FAFC",
+    borderWidth: 1.5,
+    borderColor: "#E2E8F0",
+  },
+  secondaryChipSelected: {
+    borderColor: Colors.primary,
+    backgroundColor: Colors.primary,
+  },
+  secondaryChipText: {
     fontFamily: Theme.fontFamily.medium,
     fontSize: Theme.fontSize.sm,
-    color: Colors.textSecondary,
-    marginBottom: Theme.spacing.xl,
+    color: Colors.text,
   },
+  secondaryChipTextSelected: {
+    fontFamily: Theme.fontFamily.bold,
+    color: Colors.white,
+  },
+
   grid: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 10,
-    marginBottom: Theme.spacing.xl,
+    marginBottom: Theme.spacing.lg,
   },
   emotionChip: {
-    paddingHorizontal: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 14,
     paddingVertical: 12,
     borderRadius: Theme.borderRadius.full,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: "#F8FAFC",
     borderWidth: 1.5,
-    borderColor: '#E2E8F0',
+    borderColor: "#E2E8F0",
   },
   emotionChipSelected: {
     borderColor: Colors.primary,
-    backgroundColor: Colors.primary + '15',
+    backgroundColor: Colors.primary + "15",
   },
   emotionText: {
     fontFamily: Theme.fontFamily.bold,
@@ -974,36 +1627,82 @@ const styles = StyleSheet.create({
   emotionTextSelected: {
     color: Colors.primary,
   },
+  chipCheckBadge: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: Colors.primary,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  selectionCountRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: Theme.spacing.md,
+    paddingHorizontal: 4,
+  },
+  selectionCountText: {
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: Theme.fontSize.xs,
+    color: Colors.primary,
+  },
+  strongestList: {
+    gap: 10,
+    marginVertical: Theme.spacing.md,
+  },
+  strongestCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: 16,
+    borderRadius: Theme.borderRadius.lg,
+    backgroundColor: "#F8FAFC",
+    borderWidth: 1.5,
+    borderColor: "#E2E8F0",
+  },
+  strongestCardSelected: {
+    borderColor: Colors.primary,
+    backgroundColor: Colors.primary + "12",
+  },
+  strongestText: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: Theme.fontSize.md,
+    color: Colors.text,
+  },
+  strongestTextSelected: {
+    color: Colors.primary,
+  },
   bodyMapContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginVertical: Theme.spacing.lg,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginVertical: Theme.spacing.md,
     gap: 12,
   },
   svgWrapper: {
     flex: 1.2,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#F8FAFC',
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#F8FAFC",
     borderRadius: Theme.borderRadius.lg,
     paddingVertical: Theme.spacing.md,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: "#E2E8F0",
   },
   bodyListColumn: {
     flex: 1,
     gap: 8,
   },
   bodyRegionChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingVertical: 9,
     borderRadius: Theme.borderRadius.md,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: "#F8FAFC",
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: "#E2E8F0",
   },
   bodyRegionChipSelected: {
     borderColor: Colors.primary,
@@ -1011,30 +1710,37 @@ const styles = StyleSheet.create({
   },
   bodyRegionText: {
     fontFamily: Theme.fontFamily.bold,
-    fontSize: Theme.fontSize.sm,
+    fontSize: Theme.fontSize.xs,
     color: Colors.textSecondary,
   },
   bodyRegionTextSelected: {
     color: Colors.white,
   },
-  nextBtn: { marginTop: Theme.spacing.lg, borderRadius: Theme.borderRadius.lg },
+  unsureChip: {
+    borderColor: "#CBD5E1",
+    backgroundColor: "#F1F5F9",
+  },
+  unsureChipSelected: {
+    borderColor: Colors.primary,
+    backgroundColor: Colors.primary + "15",
+  },
+  nextBtn: { marginTop: Theme.spacing.md, borderRadius: Theme.borderRadius.lg },
   navRow: {
-    flexDirection: 'row',
+    flexDirection: "row",
     gap: Theme.spacing.md,
     marginTop: Theme.spacing.lg,
   },
   halfBtn: { flex: 1, borderRadius: Theme.borderRadius.lg },
-  backBtnOnly: { marginTop: Theme.spacing.lg, borderRadius: Theme.borderRadius.lg },
   selectorContainer: {
-    alignItems: 'center',
+    alignItems: "center",
     marginVertical: Theme.spacing.md,
-    width: '100%',
+    width: "100%",
   },
   stepperRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    width: '100%',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    width: "100%",
     paddingHorizontal: Theme.spacing.md,
     marginBottom: Theme.spacing.md,
   },
@@ -1042,287 +1748,224 @@ const styles = StyleSheet.create({
     width: 50,
     height: 50,
     borderRadius: 25,
-    backgroundColor: '#F1F5F9',
-    justifyContent: 'center',
-    alignItems: 'center',
+    backgroundColor: "#F1F5F9",
+    justifyContent: "center",
+    alignItems: "center",
     ...Theme.shadows.tertiary,
   },
   stepperBtnDisabled: {
     opacity: 0.5,
   },
   valueDisplay: {
-    alignItems: 'center',
+    alignItems: "center",
     minWidth: 100,
   },
   intensityNum: {
     fontFamily: Theme.fontFamily.bold,
-    fontSize: 64,
-    lineHeight: 70,
+    fontSize: 56,
+    lineHeight: 62,
   },
   intensityLabel: {
     fontFamily: Theme.fontFamily.bold,
-    fontSize: Theme.fontSize.md,
+    fontSize: Theme.fontSize.sm,
     marginTop: -4,
-    textTransform: 'uppercase',
+    textTransform: "uppercase",
     letterSpacing: 1,
   },
   intensityDesc: {
     fontFamily: Theme.fontFamily.medium,
-    fontSize: Theme.fontSize.sm,
+    fontSize: Theme.fontSize.xs,
     color: Colors.textSecondary,
-    textAlign: 'center',
+    textAlign: "center",
     paddingHorizontal: Theme.spacing.md,
-    marginBottom: Theme.spacing.xl,
-    minHeight: 40,
+    marginBottom: Theme.spacing.lg,
+    minHeight: 36,
   },
   intensityGrid: {
-    width: '100%',
-    gap: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
+    width: "100%",
+    gap: 10,
+    alignItems: "center",
+    justifyContent: "center",
   },
   gridRow: {
-    flexDirection: 'row',
-    gap: 10,
-    justifyContent: 'center',
-    width: '100%',
+    flexDirection: "row",
+    gap: 8,
+    justifyContent: "center",
+    width: "100%",
   },
   gridCircle: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     borderWidth: 1.5,
-    justifyContent: 'center',
-    alignItems: 'center',
+    justifyContent: "center",
+    alignItems: "center",
   },
   gridCircleUnselected: {
-    backgroundColor: '#F8FAFC',
-    borderColor: '#E2E8F0',
+    backgroundColor: "#F8FAFC",
+    borderColor: "#E2E8F0",
   },
   gridCircleText: {
     fontFamily: Theme.fontFamily.bold,
-    fontSize: Theme.fontSize.lg,
+    fontSize: Theme.fontSize.md,
   },
-  summaryBox: {
-    flexDirection: 'row',
-    backgroundColor: '#F8FAFC',
-    padding: Theme.spacing.xl,
+  interventionCard: {
+    backgroundColor: "#F8FAFC",
     borderRadius: Theme.borderRadius.lg,
-    marginBottom: Theme.spacing.xl,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  summaryItem: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  summaryLabel: {
-    fontFamily: Theme.fontFamily.medium,
-    fontSize: Theme.fontSize.xs,
-    color: Colors.textSecondary,
-    marginBottom: 4,
-  },
-  summaryValue: {
-    fontFamily: Theme.fontFamily.bold,
-    fontSize: Theme.fontSize.md,
-    color: Colors.text,
-    textAlign: 'center',
-  },
-  summaryDivider: {
-    width: 1,
-    height: '100%',
-    backgroundColor: '#E2E8F0',
-  },
-  sectionHeading: {
-    fontFamily: Theme.fontFamily.bold,
-    fontSize: Theme.fontSize.md,
-    color: Colors.text,
-    marginBottom: 12,
-  },
-  breakdownList: {
-    gap: 8,
-    marginBottom: Theme.spacing.xl,
-  },
-  breakdownRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
-  },
-  breakdownRegion: {
-    fontFamily: Theme.fontFamily.bold,
-    fontSize: Theme.fontSize.sm,
-    color: Colors.text,
-  },
-  breakdownRating: {
-    fontFamily: Theme.fontFamily.bold,
-    fontSize: Theme.fontSize.md,
-  },
-  breakdownLabel: {
-    fontFamily: Theme.fontFamily.medium,
-    fontSize: Theme.fontSize.xs,
-    color: Colors.textSecondary,
-  },
-  feedbackCard: {
-    backgroundColor: Colors.primary + '08',
-    borderColor: Colors.primary + '20',
-    borderWidth: 1,
-    borderRadius: Theme.borderRadius.lg,
-    padding: Theme.spacing.md,
-    marginBottom: Theme.spacing.lg,
-  },
-  feedbackTitle: {
-    fontFamily: Theme.fontFamily.bold,
-    fontSize: Theme.fontSize.sm,
-    color: Colors.primary,
-    marginBottom: 4,
-  },
-  feedbackText: {
-    fontFamily: Theme.fontFamily.medium,
-    fontSize: Theme.fontSize.sm,
-    color: Colors.text,
-    lineHeight: 20,
-  },
-  clinicalAlertCard: {
-    flexDirection: 'row',
-    borderColor: '#EA580C',
+    padding: Theme.spacing.lg,
     borderWidth: 1.5,
-    backgroundColor: '#FFF7ED',
-    borderRadius: Theme.borderRadius.lg,
-    padding: Theme.spacing.md,
-    marginBottom: Theme.spacing.lg,
-    gap: 10,
-  },
-  clinicalAlertTitle: {
-    fontFamily: Theme.fontFamily.bold,
-    fontSize: Theme.fontSize.sm,
-    color: '#9A3412',
-    marginBottom: 2,
-  },
-  clinicalAlertText: {
-    fontFamily: Theme.fontFamily.medium,
-    fontSize: Theme.fontSize.xs,
-    color: '#C2410C',
-    lineHeight: 16,
-  },
-  actionsContainer: {
-    gap: 12,
+    borderColor: Colors.primary + "30",
     marginVertical: Theme.spacing.md,
   },
-  actionCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: Theme.spacing.md,
-    borderRadius: Theme.borderRadius.lg,
-    backgroundColor: '#FDFDFF',
-    borderWidth: 1.5,
-    borderColor: Colors.primary + '20',
-    gap: 14,
+  interventionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: Theme.spacing.md,
   },
-  actionIconWrapper: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: '#EEF2FF',
-    justifyContent: 'center',
-    alignItems: 'center',
+  interventionIconBox: {
+    width: 52,
+    height: 52,
+    borderRadius: 16,
+    backgroundColor: Colors.white,
+    justifyContent: "center",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
   },
-  actionEmoji: {
-    fontSize: 28,
-  },
-  actionInfo: {
-    flex: 1,
-  },
-  actionTitle: {
+  interventionTitle: {
     fontFamily: Theme.fontFamily.bold,
     fontSize: Theme.fontSize.md,
-    color: Colors.primary,
-    marginBottom: 2,
+    color: Colors.text,
+    marginBottom: 4,
   },
-  actionDesc: {
+  badgeRow: {
+    flexDirection: "row",
+    gap: 6,
+    alignItems: "center",
+  },
+  pillTag: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    backgroundColor: Colors.primary + "15",
+  },
+  durationPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: Colors.primary + "10",
+  },
+  pillTagText: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: 11,
+    color: Colors.primary,
+  },
+  interventionReason: {
     fontFamily: Theme.fontFamily.medium,
     fontSize: Theme.fontSize.xs,
     color: Colors.textSecondary,
+    lineHeight: 18,
   },
-  modalOverlay: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.5)',
+  startInterventionBtn: {
+    marginTop: Theme.spacing.md,
+    borderRadius: Theme.borderRadius.lg,
+    overflow: "hidden",
   },
-  breathingContainer: {
-    width: width - 40,
-    backgroundColor: Colors.white,
-    borderRadius: Theme.borderRadius.xl,
-    padding: Theme.spacing.xl,
-    alignItems: 'center',
-    ...Theme.shadows.primary,
+  startBtnGradient: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 16,
   },
-  breathingTitle: {
-    fontFamily: Theme.fontFamily.bold,
-    fontSize: Theme.fontSize.xl,
-    color: Colors.text,
-    marginBottom: 8,
-  },
-  breathingSubtitle: {
-    fontFamily: Theme.fontFamily.medium,
-    fontSize: Theme.fontSize.sm,
-    color: Colors.textSecondary,
-    textAlign: 'center',
-    marginBottom: Theme.spacing.xxl,
-  },
-  breathingAnimationWrapper: {
-    width: 200,
-    height: 200,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: Theme.spacing.xxl,
-  },
-  breathingCircle: {
-    width: 90,
-    height: 90,
-    borderRadius: 45,
-    borderWidth: 3,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  breathStateText: {
+  startBtnText: {
     fontFamily: Theme.fontFamily.bold,
     fontSize: Theme.fontSize.md,
-    color: Colors.primary,
+    color: Colors.white,
   },
-  breathingTimer: {
-    fontFamily: Theme.fontFamily.bold,
-    fontSize: 32,
-    color: Colors.text,
-    marginBottom: Theme.spacing.xl,
+  maybeLaterBtn: {
+    marginTop: 12,
+    paddingVertical: 10,
+    alignItems: "center",
   },
-  breathingExitBtn: {
-    width: '100%',
-    borderRadius: Theme.borderRadius.lg,
+  maybeLaterText: {
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: Theme.fontSize.sm,
+    color: Colors.textMuted,
   },
-  historyContainer: {
-    width: '100%',
+  // Phase 2 — Uncertainty UI styles
+  unsureInlineBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    marginTop: 12,
+    marginBottom: 4,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: Theme.borderRadius.full,
   },
-  filterRow: {
-    flexDirection: 'row',
+  unsureInlineBtnActive: {
+    backgroundColor: Colors.primary + "12",
+  },
+  unsureInlineText: {
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: Theme.fontSize.sm,
+    color: Colors.textMuted,
+  },
+  fallbackActivityList: {
     gap: 10,
-    marginBottom: Theme.spacing.xl,
+    marginBottom: Theme.spacing.lg,
+  },
+  fallbackActivityCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    backgroundColor: "#F9FAFB",
+    borderRadius: Theme.borderRadius.lg,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.06)",
+  },
+  fallbackIconBox: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: "#EEF2FF",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  fallbackActivityTitle: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: Theme.fontSize.md,
+    color: Colors.text,
+    marginBottom: 2,
+  },
+  fallbackActivitySub: {
+    fontFamily: Theme.fontFamily.regular,
+    fontSize: Theme.fontSize.sm,
+    color: Colors.textSecondary,
+  },
+  historyContainer: { width: "100%" },
+
+  filterRow: {
+    flexDirection: "row",
+    gap: Theme.spacing.md,
+    marginBottom: Theme.spacing.lg,
   },
   filterBtn: {
     flex: 1,
-    paddingVertical: 12,
-    borderRadius: Theme.borderRadius.md,
+    paddingVertical: 10,
+    alignItems: "center",
     backgroundColor: Colors.white,
+    borderRadius: Theme.borderRadius.md,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
-    alignItems: 'center',
+    borderColor: "#E2E8F0",
   },
   filterBtnActive: {
+    backgroundColor: Colors.primary,
     borderColor: Colors.primary,
-    backgroundColor: Colors.primary + '10',
   },
   filterBtnText: {
     fontFamily: Theme.fontFamily.bold,
@@ -1330,17 +1973,15 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
   },
   filterBtnTextActive: {
-    color: Colors.primary,
+    color: Colors.white,
   },
   emptyCard: {
     backgroundColor: Colors.white,
     borderRadius: Theme.borderRadius.xl,
-    padding: Theme.spacing.xxl,
-    alignItems: 'center',
-    justifyContent: 'center',
-    ...Theme.shadows.secondary,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
+    padding: Theme.spacing.xl * 2,
+    alignItems: "center",
+    justifyContent: "center",
+    ...Theme.shadows.tertiary,
   },
   emptyText: {
     fontFamily: Theme.fontFamily.bold,
@@ -1353,28 +1994,25 @@ const styles = StyleSheet.create({
     fontFamily: Theme.fontFamily.medium,
     fontSize: Theme.fontSize.xs,
     color: Colors.textSecondary,
-    textAlign: 'center',
+    textAlign: "center",
   },
   insightsCard: {
     backgroundColor: Colors.white,
     borderRadius: Theme.borderRadius.xl,
-    padding: Theme.spacing.xl,
-    ...Theme.shadows.secondary,
-    borderWidth: 1.5,
-    borderColor: Colors.primary + '20',
+    padding: Theme.spacing.lg,
+    ...Theme.shadows.tertiary,
   },
   insightsHeader: {
     fontFamily: Theme.fontFamily.bold,
-    fontSize: Theme.fontSize.sm,
+    fontSize: Theme.fontSize.xs,
     color: Colors.primary,
-    marginBottom: Theme.spacing.md,
     letterSpacing: 1,
   },
   insightItemRow: {
-    flexDirection: 'row',
+    flexDirection: "row",
+    alignItems: "flex-start",
     gap: 8,
-    marginBottom: 12,
-    alignItems: 'flex-start',
+    marginTop: 8,
   },
   insightItemText: {
     fontFamily: Theme.fontFamily.medium,
@@ -1386,10 +2024,8 @@ const styles = StyleSheet.create({
   statsCard: {
     backgroundColor: Colors.white,
     borderRadius: Theme.borderRadius.xl,
-    padding: Theme.spacing.xl,
-    ...Theme.shadows.secondary,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
+    padding: Theme.spacing.lg,
+    ...Theme.shadows.tertiary,
   },
   statsCardTitle: {
     fontFamily: Theme.fontFamily.bold,
@@ -1398,53 +2034,53 @@ const styles = StyleSheet.create({
     marginBottom: Theme.spacing.md,
   },
   freqRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     marginBottom: 10,
-    gap: 10,
+    gap: 12,
   },
   freqLabel: {
-    fontFamily: Theme.fontFamily.bold,
+    width: 100,
+    fontFamily: Theme.fontFamily.medium,
     fontSize: Theme.fontSize.xs,
-    color: Colors.textSecondary,
-    width: 70,
+    color: Colors.text,
   },
   freqBarBg: {
     flex: 1,
-    height: 8,
-    backgroundColor: '#F1F5F9',
-    borderRadius: 4,
-    overflow: 'hidden',
+    height: 12,
+    backgroundColor: "#F1F5F9",
+    borderRadius: 6,
+    overflow: "hidden",
   },
   freqBarFill: {
-    height: '100%',
-    borderRadius: 4,
+    height: "100%",
+    borderRadius: 6,
   },
   freqValue: {
+    width: 60,
     fontFamily: Theme.fontFamily.bold,
     fontSize: Theme.fontSize.xs,
-    color: Colors.text,
-    width: 60,
-    textAlign: 'right',
+    color: Colors.textSecondary,
+    textAlign: "right",
   },
   logRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingBottom: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
-    alignItems: 'center',
+    borderBottomColor: "#F1F5F9",
   },
   logEmotion: {
     fontFamily: Theme.fontFamily.bold,
     fontSize: Theme.fontSize.sm,
     color: Colors.text,
-    marginBottom: 2,
   },
   logRegions: {
     fontFamily: Theme.fontFamily.medium,
     fontSize: Theme.fontSize.xs,
     color: Colors.textSecondary,
+    marginTop: 2,
   },
   logIntensity: {
     fontFamily: Theme.fontFamily.bold,
@@ -1452,8 +2088,53 @@ const styles = StyleSheet.create({
   },
   logDate: {
     fontFamily: Theme.fontFamily.medium,
-    fontSize: Theme.fontSize.xs,
+    fontSize: 11,
     color: Colors.textMuted,
     marginTop: 2,
   },
+  modalOverlay: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  breathingContainer: {
+    alignItems: "center",
+    ...Theme.shadows.primary,
+  },
+  // Phase 3 — Post-intervention check (step 7) styles
+  postCheckRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 20,
+    marginBottom: 8,
+    width: "100%",
+    justifyContent: "center",
+  },
+  postCheckBtn: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 16,
+    borderRadius: 16,
+    gap: 6,
+    borderWidth: 1.5,
+  },
+  postCheckLabel: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: Theme.fontSize.xs,
+    textAlign: "center",
+  },
+  postCheckBetter: {
+    backgroundColor: "#F0FDF4",
+    borderColor: "#86EFAC",
+  },
+  postCheckSame: {
+    backgroundColor: "#F8FAFC",
+    borderColor: "#CBD5E1",
+  },
+  postCheckWorse: {
+    backgroundColor: "#FFF7ED",
+    borderColor: "#FDBA74",
+  },
 });
+

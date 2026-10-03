@@ -1,5 +1,5 @@
 import React from "react";
-import { View, Text, StyleSheet, ScrollView, ActivityIndicator, Dimensions, ViewStyle, TextStyle } from "react-native";
+import { View, Text, StyleSheet, ScrollView, ActivityIndicator, ViewStyle, TextStyle } from "react-native";
 import { useAppAuth } from "@/utils/auth";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
@@ -8,9 +8,26 @@ import { useLanguage } from "@/context/LanguageContext";
 import { Theme } from "@/constants/Theme";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
-import { LineChart } from "react-native-chart-kit";
+import { getLocalDateString, parseLocalDateNoon } from "@/utils/date";
 
-const { width } = Dimensions.get('window');
+function getMoodVisual(mood: string | null | undefined) {
+  switch (mood?.toLowerCase()) {
+    case "good":
+    case "happy":
+      return { emoji: "☀️", label: "Good", color: "#10B981", bg: "rgba(16, 185, 129, 0.12)" };
+    case "calm":
+    case "relaxed":
+      return { emoji: "🌿", label: "Calm", color: "#3B82F6", bg: "rgba(59, 130, 246, 0.12)" };
+    case "low":
+    case "sad":
+      return { emoji: "🌧️", label: "Low", color: "#6366F1", bg: "rgba(99, 102, 241, 0.12)" };
+    case "heavy":
+    case "worried":
+      return { emoji: "⛈️", label: "Heavy", color: "#8B5CF6", bg: "rgba(139, 92, 246, 0.12)" };
+    default:
+      return { emoji: "—", label: "—", color: "#9CA3AF", bg: "rgba(156, 163, 175, 0.08)" };
+  }
+}
 
 export default function InsightsScreen() {
   const { user } = useAppAuth();
@@ -18,11 +35,18 @@ export default function InsightsScreen() {
   const styles = useStyles(stylesFactory);
   const { t } = useLanguage();
 
-  const stats = useQuery(api.insights.getDailyStats, {
-    userId: user?.id ?? "",
-  });
+  const todayStr = getLocalDateString();
+  const stats = useQuery(
+    api.insights.getDailyStats,
+    user?.id
+      ? {
+          userId: user.id,
+          referenceDate: todayStr,
+        }
+      : "skip"
+  );
 
-  if (stats === undefined) {
+  if (stats === undefined || stats === null) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color={colors.primary} />
@@ -30,45 +54,9 @@ export default function InsightsScreen() {
     );
   }
 
-  // Data prep for 7-day daily mood trend chart
-  // Normalized telemetry: consume stats.recentDailyMood (authoritative daily check-ins), fallback defensively to compatibility stats.emotionLogs
-  const dailyMoodEntries = stats.recentDailyMood ?? (stats.emotionLogs ? [...stats.emotionLogs].sort((a: any, b: any) => a.createdAt - b.createdAt).slice(-7) : []);
-  const hasCheckins = dailyMoodEntries.length > 0;
-
-  const moodLabels = hasCheckins
-    ? dailyMoodEntries.map((entry: any) => {
-        if (entry.dateStr) {
-          const [year, month, day] = entry.dateStr.split("-").map(Number);
-          const d = new Date(year, month - 1, day);
-          return d.toLocaleDateString(undefined, { weekday: "short" });
-        }
-        return new Date(entry.createdAt).toLocaleDateString(undefined, { weekday: "short" });
-      })
-    : ["-"];
-
-  const moodData = hasCheckins
-    ? dailyMoodEntries.map((entry: any) => entry.intensity ?? entry.preIntensity ?? 0)
-    : [0];
-
-  const chartConfig = {
-    backgroundGradientFrom: colors.white,
-    backgroundGradientTo: colors.white,
-    decimalPlaces: 0,
-    color: (opacity = 1) => `rgba(${parseInt(colors.primary.slice(1, 3), 16)}, ${parseInt(colors.primary.slice(3, 5), 16)}, ${parseInt(colors.primary.slice(5, 7), 16)}, ${opacity})`,
-    labelColor: (opacity = 1) => colors.textSecondary,
-    strokeWidth: 3,
-    propsForDots: {
-      r: "5",
-      strokeWidth: "2.5",
-      stroke: colors.white
-    },
-    propsForBackgroundLines: {
-      strokeDasharray: "4, 4",
-      stroke: "rgba(0,0,0,0.03)"
-    },
-    fillShadowGradient: colors.primary,
-    fillShadowGradientOpacity: 0.15,
-  };
+  // Strict 7-calendar-day daily mood history
+  const dailyMoodEntries = Array.isArray(stats.recentDailyMood) ? stats.recentDailyMood : [];
+  const hasCheckins = dailyMoodEntries.some((entry: any) => Boolean(entry?.hasCheckin));
 
   return (
     <View style={styles.container}>
@@ -96,7 +84,7 @@ export default function InsightsScreen() {
                 <View style={styles.summaryIconCircle}>
                   <Ionicons name="sparkles" size={18} color="#FFFFFF" />
                 </View>
-                <Text style={styles.summaryValue}>{stats.totalCalmPoints}</Text>
+                <Text style={styles.summaryValue}>{stats.totalCalmPoints ?? 0}</Text>
                 <Text style={styles.summaryLabel}>{t("insights.calmPoints")}</Text>
               </View>
               <View style={styles.summaryDivider} />
@@ -104,7 +92,7 @@ export default function InsightsScreen() {
                 <View style={styles.summaryIconCircle}>
                   <Ionicons name="trophy" size={18} color="#FFFFFF" />
                 </View>
-                <Text style={styles.summaryValue}>{stats.completedGoalsCount}</Text>
+                <Text style={styles.summaryValue}>{stats.completedGoalsCount ?? 0}</Text>
                 <Text style={styles.summaryLabel}>{t("insights.goalsMet")}</Text>
               </View>
             </View>
@@ -122,31 +110,40 @@ export default function InsightsScreen() {
           </Text>
         </View>
 
-        {/* Mood Trend Chart */}
+        {/* Discrete 7-Day Mood Calendar */}
         <Text style={styles.sectionTitle}>{t("insights.moodTrendTitle")}</Text>
         <Text style={styles.sectionSubtitle}>{t("insights.moodTrendSubtitle")}</Text>
         <View style={styles.chartCard}>
           {hasCheckins ? (
-            <LineChart
-              data={{
-                labels: moodLabels,
-                datasets: [{
-                  data: moodData,
-                  color: (opacity = 1) => colors.primary,
-                  strokeWidth: 4
-                }]
-              }}
-              width={width - Theme.spacing.lg * 2 - 32}
-              height={190}
-              chartConfig={chartConfig}
-              bezier={dailyMoodEntries.length > 1}
-              withHorizontalLines={true}
-              withVerticalLines={false}
-              withDots={true}
-              withInnerLines={false}
-              withOuterLines={false}
-              style={styles.chart}
-            />
+            <View style={styles.calendarContainer}>
+              <View style={styles.calendarGrid}>
+                {dailyMoodEntries.map((entry: any, index: number) => {
+                  const visual = getMoodVisual(entry?.hasCheckin ? entry.mood : null);
+                  const dateStr = typeof entry?.dateStr === "string" ? entry.dateStr : "";
+                  const isValidDate = /^\d{4}-\d{2}-\d{2}$/.test(dateStr);
+                  const parsedDate = isValidDate ? parseLocalDateNoon(dateStr) : null;
+                  const dayNum = parsedDate && !isNaN(parsedDate.getDate()) ? parsedDate.getDate() : "—";
+                  return (
+                    <View
+                      key={entry?.dateStr || entry?._id || index}
+                      style={[
+                        styles.calendarDayCard,
+                        entry?.hasCheckin && styles.calendarDayCardActive,
+                      ]}
+                    >
+                      <Text style={styles.calendarDayWeekday}>{entry?.label || "—"}</Text>
+                      <Text style={styles.calendarDayNum}>{dayNum}</Text>
+                      <View style={[styles.calendarMoodBadge, { backgroundColor: visual.bg }]}>
+                        <Text style={styles.calendarMoodEmoji}>{visual.emoji}</Text>
+                        <Text style={[styles.calendarMoodLabel, { color: visual.color }]}>
+                          {visual.label}
+                        </Text>
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
+            </View>
           ) : (
             <View style={styles.emptyChartContainer}>
               <Ionicons name="calendar-outline" size={28} color={colors.textSecondary} />
@@ -156,12 +153,74 @@ export default function InsightsScreen() {
           )}
         </View>
 
-        {/* Stats Grid */}
+        {/* Activity Summary Stats */}
         <Text style={styles.sectionTitle}>{t("insights.activityStatsTitle")}</Text>
         <View style={styles.statsGrid}>
-          <StatCard icon="chatbubble-outline" color={colors.primary} value={stats.totalCheckins} label={t("insights.checkins")} styles={styles} />
-          <StatCard icon="leaf-outline" color={colors.accent || "#FFB6C1"} value={stats.reframesCount} label={t("insights.reframes")} styles={styles} />
-          <StatCard icon="time-outline" color={colors.secondary} value={`${stats.jpmrMinutes}m`} label={t("insights.relaxation")} styles={styles} />
+          <StatCard icon="chatbubble-outline" color={colors.primary} value={stats.totalCheckins ?? 0} label={t("insights.checkins")} styles={styles} />
+          <StatCard icon="leaf-outline" color={colors.accent || "#FFB6C1"} value={stats.reframesCount ?? 0} label={t("insights.reframes")} styles={styles} />
+          <StatCard icon="time-outline" color={colors.secondary} value={`${stats.mindfulRelaxation?.totalMinutes ?? stats.jpmrMinutes ?? 0}m`} label={t("insights.relaxation")} styles={styles} />
+        </View>
+
+        {/* Mindful Relaxation Telemetry */}
+        <Text style={[styles.sectionTitle, { marginTop: Theme.spacing.xl }]}>Mindful Relaxation</Text>
+        <Text style={styles.sectionSubtitle}>Guided somatic practice & calming routines</Text>
+        <View style={styles.relaxationCard}>
+          <View style={styles.relaxationHeaderRow}>
+            <View style={[styles.statIconBox, { backgroundColor: colors.secondary + '18' }]}>
+              <Ionicons name="flower-outline" size={20} color={colors.secondary} />
+            </View>
+            <View style={styles.relaxationHeaderTexts}>
+              <Text style={styles.relaxationTotalMinutes}>
+                {stats.mindfulRelaxation?.totalMinutes ?? stats.jpmrMinutes ?? 0} mins
+              </Text>
+              <Text style={styles.relaxationTotalSessions}>
+                {stats.mindfulRelaxation?.totalSessions ?? stats.jpmrSessions ?? 0} sessions completed
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.breakdownDivider} />
+
+          <View style={styles.breakdownGrid}>
+            <View style={styles.breakdownItem}>
+              <View style={styles.breakdownHeader}>
+                <Ionicons name="fitness-outline" size={14} color={colors.primary} />
+                <Text style={styles.breakdownLabel}>Breathing</Text>
+              </View>
+              <Text style={styles.breakdownValue}>
+                {stats.mindfulRelaxation?.breakdown?.breathing?.sessionsCompleted ?? 0}
+              </Text>
+              <Text style={styles.breakdownSubValue}>
+                {stats.mindfulRelaxation?.breakdown?.breathing?.minutes ?? 0}m total
+              </Text>
+            </View>
+
+            <View style={styles.breakdownItem}>
+              <View style={styles.breakdownHeader}>
+                <Ionicons name="hand-left-outline" size={14} color="#8B5CF6" />
+                <Text style={styles.breakdownLabel}>Grounding</Text>
+              </View>
+              <Text style={styles.breakdownValue}>
+                {stats.mindfulRelaxation?.breakdown?.grounding?.sessionsCompleted ?? 0}
+              </Text>
+              <Text style={styles.breakdownSubValue}>
+                {stats.mindfulRelaxation?.breakdown?.grounding?.minutes ?? 0}m total
+              </Text>
+            </View>
+
+            <View style={styles.breakdownItem}>
+              <View style={styles.breakdownHeader}>
+                <Ionicons name="body-outline" size={14} color={colors.secondary} />
+                <Text style={styles.breakdownLabel}>JPMR</Text>
+              </View>
+              <Text style={styles.breakdownValue}>
+                {stats.mindfulRelaxation?.breakdown?.jpmr?.sessionsCompleted ?? stats.jpmrSessions ?? 0}
+              </Text>
+              <Text style={styles.breakdownSubValue}>
+                {stats.mindfulRelaxation?.breakdown?.jpmr?.minutes ?? stats.jpmrMinutes ?? 0}m total
+              </Text>
+            </View>
+          </View>
         </View>
 
         <View style={{ height: 120 }} />
@@ -303,23 +362,72 @@ function stylesFactory(colors: any) {
     color: colors.textSecondary,
     marginBottom: Theme.spacing.md,
   } as TextStyle,
-  // Chart styles
+  // 7-Day Discrete Mood Card
   chartCard: {
     backgroundColor: colors.white,
     borderRadius: Theme.borderRadius.xl,
-    padding: 14,
-    paddingRight: 20,
+    padding: 12,
     marginBottom: Theme.spacing.xl,
     borderWidth: 1,
     borderColor: 'rgba(0,0,0,0.02)',
     ...Theme.shadows.tertiary,
   } as ViewStyle,
-  chart: {
-    borderRadius: Theme.borderRadius.lg,
-    marginLeft: -10,
+  calendarContainer: {
+    paddingVertical: 2,
   } as ViewStyle,
+  calendarGrid: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 4,
+  } as ViewStyle,
+  calendarDayCard: {
+    flex: 1,
+    alignItems: "center",
+    paddingVertical: 8,
+    paddingHorizontal: 2,
+    backgroundColor: "rgba(0,0,0,0.02)",
+    borderRadius: Theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: "transparent",
+  } as ViewStyle,
+  calendarDayCardActive: {
+    backgroundColor: colors.white,
+    borderColor: "rgba(0,0,0,0.06)",
+    ...Theme.shadows.tertiary,
+  } as ViewStyle,
+  calendarDayWeekday: {
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: 9,
+    color: colors.textSecondary,
+    textTransform: "uppercase",
+    marginBottom: 2,
+  } as TextStyle,
+  calendarDayNum: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: 13,
+    color: colors.text,
+    marginBottom: 4,
+  } as TextStyle,
+  calendarMoodBadge: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 3,
+    paddingHorizontal: 2,
+    borderRadius: 6,
+    width: "100%",
+    minHeight: 36,
+  } as ViewStyle,
+  calendarMoodEmoji: {
+    fontSize: 13,
+    marginBottom: 1,
+  } as TextStyle,
+  calendarMoodLabel: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: 8,
+    textTransform: "capitalize",
+  } as TextStyle,
   emptyChartContainer: {
-    height: 190,
+    height: 160,
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: Theme.spacing.md,
@@ -371,6 +479,74 @@ function stylesFactory(colors: any) {
     letterSpacing: 0.5,
     marginTop: 2,
     textTransform: 'uppercase',
+  } as TextStyle,
+  // Relaxation Card Styles
+  relaxationCard: {
+    backgroundColor: colors.white,
+    borderRadius: Theme.borderRadius.xl,
+    padding: Theme.spacing.lg,
+    marginBottom: Theme.spacing.xl,
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.02)",
+    ...Theme.shadows.tertiary,
+  } as ViewStyle,
+  relaxationHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  } as ViewStyle,
+  relaxationHeaderTexts: {
+    flex: 1,
+  } as ViewStyle,
+  relaxationTotalMinutes: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: 20,
+    color: colors.text,
+  } as TextStyle,
+  relaxationTotalSessions: {
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: 12,
+    color: colors.textSecondary,
+    marginTop: 2,
+  } as TextStyle,
+  breakdownDivider: {
+    height: 1,
+    backgroundColor: "rgba(0,0,0,0.05)",
+    marginVertical: Theme.spacing.md,
+  } as ViewStyle,
+  breakdownGrid: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 8,
+  } as ViewStyle,
+  breakdownItem: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.02)",
+    borderRadius: Theme.borderRadius.md,
+    padding: 10,
+    alignItems: "center",
+  } as ViewStyle,
+  breakdownHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginBottom: 4,
+  } as ViewStyle,
+  breakdownLabel: {
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: 11,
+    color: colors.textSecondary,
+  } as TextStyle,
+  breakdownValue: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: 16,
+    color: colors.text,
+  } as TextStyle,
+  breakdownSubValue: {
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: 10,
+    color: colors.textMuted,
+    marginTop: 2,
   } as TextStyle,
   };
 }

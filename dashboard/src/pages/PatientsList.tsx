@@ -1,11 +1,11 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { createPortal } from "react-dom";
 import {
   Users, UserPlus, Search, Edit2, ShieldAlert, ShieldCheck,
   BarChart2, Trash2, KeyRound, Copy, CheckCheck, Phone, Mail,
   UserCheck, UserX
 } from "lucide-react";
-import { useQuery, useMutation } from "convex/react";
+import { useQuery, useMutation, useConvex } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { useNavigate } from "react-router-dom";
 import AddUserModal from "../components/AddUserModal";
@@ -157,9 +157,57 @@ function CredField({ label, value, onCopy }: { label: string; value: string; onC
 /* â”€â”€â”€ Main Component â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 export default function PatientsList() {
   const navigate = useNavigate();
+  const convex = useConvex();
   const [searchTerm, setSearchTerm] = useState("");
+  const page1 = useQuery(api.users.listPatients, { search: searchTerm || undefined, paginate: true });
+  const [extraPatients, setExtraPatients] = useState<any[]>([]);
+  const [nextCursorState, setNextCursorState] = useState<string | null | undefined>(undefined);
+  const [loadingMore, setLoadingMore] = useState(false);
 
-  const patients = useQuery(api.users.listPatients, { search: searchTerm });
+  // Reset pagination state when search term changes
+  const [lastSearch, setLastSearch] = useState("");
+  if (searchTerm !== lastSearch) {
+    setLastSearch(searchTerm);
+    setExtraPatients([]);
+    setNextCursorState(undefined);
+  }
+
+  const effectiveCursor = nextCursorState !== undefined ? nextCursorState : page1?.nextCursor ?? null;
+  const hasMore = Boolean(effectiveCursor);
+
+  const patients = useMemo(() => {
+    if (!page1) return undefined;
+    const base = page1.patients || [];
+    const map = new Map<string, any>();
+    for (const p of base) {
+      map.set(p._id, p);
+    }
+    for (const p of extraPatients) {
+      map.set(p._id, p);
+    }
+    return Array.from(map.values());
+  }, [page1, extraPatients]);
+
+  const handleLoadMore = async () => {
+    if (!effectiveCursor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const res = await convex.query(api.users.listPatients, {
+        search: searchTerm || undefined,
+        cursor: effectiveCursor,
+        paginate: true,
+      });
+      if (res && res.patients) {
+        setExtraPatients((prev) => [...prev, ...res.patients]);
+        setNextCursorState(res.nextCursor);
+      }
+    } catch (err) {
+      console.error("Failed to load more patients", err);
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
   const toggleStatus = useMutation(api.users.toggleUserStatus);
   const deleteUser = useMutation(api.users.deleteUser);
   const resetPassword = useMutation(api.users.resetPassword);
@@ -415,6 +463,19 @@ export default function PatientsList() {
             </div>
           );
         })}
+
+        {hasMore && (
+          <div style={{ padding: "16px 24px", borderTop: "1px solid var(--border-color)", display: "flex", justifyContent: "center", background: "#f8fafc" }}>
+            <button
+              onClick={handleLoadMore}
+              disabled={loadingMore}
+              className="btn btn-secondary"
+              style={{ padding: "8px 24px", fontSize: "0.85rem", display: "inline-flex", alignItems: "center", gap: "8px" }}
+            >
+              {loadingMore ? "Loading more patients..." : "Load More Patients"}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* CONFIRM MODAL */}

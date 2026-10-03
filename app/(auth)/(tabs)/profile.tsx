@@ -29,7 +29,7 @@ export default function ProfileScreen() {
   const styles = useStyles(stylesFactory);
 
   const dbUser = useQuery(api.users.getByClerkId, userId ? { clerkId: userId } : "skip");
-  const exportData = useQuery(api.insights.getDailyStats, userId ? { userId: userId } : "skip");
+  const exportScreenings = useQuery(api.screening.getAll, userId ? { userId: userId } : "skip");
 
   const { t, language, setLanguage, supportedLanguages, activeLanguageOption } = useLanguage();
   const { avatarName, avatarGender, setMitraPreferences } = useAvatar();
@@ -217,14 +217,14 @@ export default function ProfileScreen() {
   };
 
   const handleExportData = async () => {
-    if (!exportData || !userId) return;
+    if (!exportScreenings || !userId) return;
     setIsExporting(true);
 
     try {
       const csvRows = [];
       csvRows.push("Screening Data");
       csvRows.push("UserID,PHQ9,GAD7,PQ16,WSAS,ReQoL10,Item9,Date");
-      exportData.screenings.forEach((s: any) => {
+      exportScreenings.forEach((s: any) => {
         csvRows.push(`${userId},${s.phq9_total},${s.gad7_total},${s.pq16_total},${s.wsas_total},${s.reqol10_total},${s.phq9_item9_score},${new Date(s.createdAt).toISOString()}`);
       });
       csvRows.push("");

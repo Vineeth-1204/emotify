@@ -89,8 +89,14 @@ export default function TabLayout() {
           <View style={{ height: 40 }} />
           <Text style={{ color: colors.textSecondary, textAlign: 'center', marginBottom: 10 }}>Or try a grounding exercise:</Text>
           <Button 
-            title="Listen to Relaxation Audio" 
-            onPress={() => router.push("/(auth)/tools/jpmr")} 
+            title="5-4-3-2-1 Sensory Grounding" 
+            onPress={() => router.push({
+              pathname: "/(auth)/tools/grounding",
+              params: {
+                sourceType: "crisis_blocker",
+                triageId: latestTriage?._id ? (latestTriage._id as string) : undefined,
+              }
+            } as any)} 
             size="lg" 
           />
         </View>

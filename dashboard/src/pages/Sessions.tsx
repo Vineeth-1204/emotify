@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { usePaginatedQuery, useMutation, useQuery } from "convex/react";
+import { usePaginatedQuery, useMutation, useQuery, useConvex } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { 
@@ -18,14 +18,58 @@ export default function Sessions() {
     { initialNumItems: 20 }
   );
 
-  const patients = useQuery(api.users.listPatients, {});
+  const convex = useConvex();
+  const [patientSearch, setPatientSearch] = useState("");
+  const patientOptions = useQuery(api.users.searchPatientSelector, {
+    search: patientSearch.trim() || undefined,
+    limit: 50,
+  });
+
   const createAppointment = useMutation(api.appointments.createAppointmentRequest);
   const updateStatus = useMutation(api.appointments.updateAppointmentStatus);
   const requestReschedule = useMutation(api.appointments.requestReschedule);
   const deleteAppointment = useMutation(api.appointments.deleteAppointment);
 
-  // CBT sessions query
-  const cbtSessions = useQuery(api.dashboard.listAllCbtSessions);
+  // CBT sessions paginated query
+  const cbtPage1 = useQuery(api.dashboard.listAllCbtSessions, { paginate: true });
+  const [extraCbtSessions, setExtraCbtSessions] = useState<any[]>([]);
+  const [cbtCursorState, setCbtCursorState] = useState<string | null | undefined>(undefined);
+  const [cbtLoadingMore, setCbtLoadingMore] = useState(false);
+
+  const effectiveCbtCursor = cbtCursorState !== undefined ? cbtCursorState : cbtPage1?.nextCursor ?? null;
+  const hasMoreCbt = Boolean(effectiveCbtCursor);
+
+  const cbtSessions = useMemo(() => {
+    if (!cbtPage1) return undefined;
+    const base = cbtPage1.sessions || [];
+    const map = new Map<string, any>();
+    for (const s of base) {
+      map.set(s._id, s);
+    }
+    for (const s of extraCbtSessions) {
+      map.set(s._id, s);
+    }
+    return Array.from(map.values());
+  }, [cbtPage1, extraCbtSessions]);
+
+  const handleLoadMoreCbt = async () => {
+    if (!effectiveCbtCursor || cbtLoadingMore) return;
+    setCbtLoadingMore(true);
+    try {
+      const res = await convex.query(api.dashboard.listAllCbtSessions, {
+        cursor: effectiveCbtCursor,
+        paginate: true,
+      });
+      if (res && res.sessions) {
+        setExtraCbtSessions((prev) => [...prev, ...res.sessions]);
+        setCbtCursorState(res.nextCursor);
+      }
+    } catch (err) {
+      console.error("Failed to load more CBT sessions", err);
+    } finally {
+      setCbtLoadingMore(false);
+    }
+  };
 
   // States
   const [mainTab, setMainTab] = useState<"appointments" | "cbt">("appointments");
@@ -105,7 +149,7 @@ export default function Sessions() {
       return;
     }
 
-    const patient = patients?.find((p: any) => p._id === selectedPatientId);
+    const patient = patientOptions?.find((p: any) => p._id === selectedPatientId);
     if (!patient) return;
 
     setError(""); setSuccessMsg(""); setLoading(true);
@@ -510,6 +554,19 @@ export default function Sessions() {
                   </tbody>
                 </table>
               )}
+
+              {hasMoreCbt && (
+                <div style={{ padding: "16px 24px", borderTop: "1px solid var(--border-color)", display: "flex", justifyContent: "center", background: "#f8fafc" }}>
+                  <button
+                    onClick={handleLoadMoreCbt}
+                    disabled={cbtLoadingMore}
+                    className="btn btn-secondary"
+                    style={{ padding: "8px 24px", fontSize: "0.85rem", display: "inline-flex", alignItems: "center", gap: "8px" }}
+                  >
+                    {cbtLoadingMore ? "Loading more sessions..." : "Load More Sessions"}
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </>
@@ -522,10 +579,24 @@ export default function Sessions() {
             {renderCloseButton(() => setShowCreateModal(false))}
             <h2>Create Appointment Request</h2>
             <form onSubmit={handleCreateAppointment} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-              <select value={selectedPatientId} onChange={(e) => setSelectedPatientId(e.target.value)} className="hud-input">
-                <option value="">Select Patient...</option>
-                {patients?.map((p: any) => <option key={p._id} value={p._id}>{p.full_name}</option>)}
-              </select>
+              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                <input
+                  type="text"
+                  placeholder="Search patient by name / ID / phone..."
+                  value={patientSearch}
+                  onChange={(e) => setPatientSearch(e.target.value)}
+                  className="hud-input"
+                  style={{ fontSize: "0.85rem", padding: "8px 12px" }}
+                />
+                <select value={selectedPatientId} onChange={(e) => setSelectedPatientId(e.target.value)} className="hud-input">
+                  <option value="">Select Patient ({patientOptions?.length ?? 0} available)...</option>
+                  {patientOptions?.map((p: any) => (
+                    <option key={p._id} value={p._id}>
+                      {p.full_name} ({p.patientId ? `#${p.patientId}` : p.mobile_number || "Student"})
+                    </option>
+                  ))}
+                </select>
+              </div>
               <input type="text" placeholder="Title (e.g. Weekly Check-in)" value={title} onChange={(e) => setTitle(e.target.value)} className="hud-input" />
               <div style={{ display: 'flex', gap: '16px' }}>
                 <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="hud-input" style={{ flex: 1 }} />

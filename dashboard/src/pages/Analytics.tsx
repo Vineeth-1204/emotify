@@ -12,27 +12,27 @@ export default function Analytics() {
           Enterprise Clinical Analytics
         </h1>
         <p style={{ color: "var(--text-secondary)", fontSize: "1.1rem" }}>
-          DAU/MAU activity, patient recovery outcomes, CBT session completion rates, and clinical efficiency metrics.
+          Cohort population, institutional screening averages, CBT session completion rates, and clinical efficiency metrics.
         </p>
       </div>
 
       <div className="grid-3">
         <div className="glass-panel hud-panel" style={{ borderTop: "2px solid var(--accent-primary)" }}>
-          <span style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase" }}>Active Users (DAU / WAU / MAU)</span>
-          <p style={{ fontSize: "2.2rem", fontWeight: 800, margin: "8px 0 4px 0" }}>{data?.dau || 0} / {data?.wau || 0} / {data?.mau || 0}</p>
-          <span style={{ fontSize: "0.8rem", color: "var(--success)" }}>High institutional engagement</span>
+          <span style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase" }}>Enrolled Students</span>
+          <p style={{ fontSize: "2.2rem", fontWeight: 800, margin: "8px 0 4px 0" }}>{data?.totalPatients || 0}</p>
+          <span style={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>Total registered cohort</span>
         </div>
 
         <div className="glass-panel hud-panel" style={{ borderTop: "2px solid var(--success)" }}>
-          <span style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase" }}>Avg PHQ-9 Improvement</span>
+          <span style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase" }}>Institutional Mean PHQ-9 (Depression Screening)</span>
           <p style={{ fontSize: "2.2rem", fontWeight: 800, margin: "8px 0 4px 0", color: "var(--success)" }}>{data?.avgPhqScore || "0"} pts</p>
-          <span style={{ fontSize: "0.8rem", color: "var(--success)" }}>Longitudinal depression reduction</span>
+          <span style={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>Cross-sectional cohort mean</span>
         </div>
 
         <div className="glass-panel hud-panel" style={{ borderTop: "2px solid var(--warning)" }}>
-          <span style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase" }}>Avg GAD-7 Improvement</span>
+          <span style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase" }}>Institutional Mean GAD-7 (Anxiety Screening)</span>
           <p style={{ fontSize: "2.2rem", fontWeight: 800, margin: "8px 0 4px 0", color: "var(--warning)" }}>{data?.avgGadScore || "0"} pts</p>
-          <span style={{ fontSize: "0.8rem", color: "var(--success)" }}>Longitudinal anxiety reduction</span>
+          <span style={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>Cross-sectional cohort mean</span>
         </div>
       </div>
 

@@ -6,7 +6,7 @@ import { createPortal } from "react-dom";
 import {
   ArrowLeft, User, Phone, Calendar, Heart, Shield, TrendingUp, AlertTriangle,
   Brain, Smile, CheckCircle, HelpCircle, MessageSquare, Award, Clock, ArrowRight,
-  Unlock, RefreshCw
+  Unlock, RefreshCw, Compass, Wind
 } from "lucide-react";
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
@@ -46,6 +46,29 @@ function Avatar({ name, size = 44 }: { name: string; size?: number }) {
   );
 }
 
+function getMoodBadgeStyle(mood?: string) {
+  const m = (mood || "").toLowerCase();
+  switch (m) {
+    case "good":
+    case "great":
+    case "happy":
+    case "energized":
+      return { background: "rgba(14, 165, 233, 0.1)", color: "#0284c7", border: "1px solid rgba(14, 165, 233, 0.25)" };
+    case "calm":
+    case "peaceful":
+      return { background: "rgba(16, 185, 129, 0.1)", color: "#059669", border: "1px solid rgba(16, 185, 129, 0.25)" };
+    case "low":
+    case "sad":
+    case "heavy":
+      return { background: "rgba(99, 102, 241, 0.1)", color: "#4f46e5", border: "1px solid rgba(99, 102, 241, 0.25)" };
+    case "worried":
+    case "anxious":
+      return { background: "rgba(245, 158, 11, 0.1)", color: "#d97706", border: "1px solid rgba(245, 158, 11, 0.25)" };
+    default:
+      return { background: "#f1f5f9", color: "#475569", border: "1px solid #cbd5e1" };
+  }
+}
+
 export default function PatientDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -68,6 +91,11 @@ export default function PatientDetail() {
   const latestTriage = useQuery(api.triage.getLatestByUserId, { userId: id || "" });
   // Load pending clinical safety alerts for this patient
   const pendingAlerts = useQuery(api.alerts.getPending, { userId: id || "" });
+  // Load recent daily check-in telemetry for counselor inspection (non-diagnostic)
+  const dailyCheckinTelemetry = useQuery(
+    api.insights.getCounselorStudentDailyCheckins,
+    id ? { userId: id, lookbackDays: 14 } : "skip"
+  );
 
   const unblockPatientMutation = useMutation(api.triage.unblockPatient);
   const triggerScreeningMutation = useMutation(api.triage.triggerScreeningTest);
@@ -411,7 +439,7 @@ export default function PatientDetail() {
           { key: "screenings", label: "📋 Clinical Assessments" },
           { key: "timeline",   label: "⏱️ Clinical Timeline" },
           { key: "cbt",        label: "🧠 AI CBT & Recovery" },
-          { key: "somatic",   label: "🧘 Somatic & JPMR" },
+          { key: "somatic",   label: "🧘 Somatic & Sensory Interventions" },
           { key: "gamification", label: "🏆 Gamification" },
         ] as { key: string; label: string }[]).map(({ key, label }) => {
           const active = (activeTab as string) === key;
@@ -600,6 +628,95 @@ export default function PatientDetail() {
               </table>
             </div>
           </div>
+
+          {/* ── Dedicated Section: Daily Wellness Check-ins (Non-Diagnostic Telemetry) ── */}
+          <div className="glass-panel" style={{ padding: 0, overflow: "hidden" }}>
+            <div style={{ padding: "18px 24px", borderBottom: "1px solid var(--border-color)", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "10px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <Smile size={20} color="var(--accent-primary)" />
+                <div>
+                  <h3 style={{ fontSize: "1.15rem", color: "var(--text-primary)", margin: 0, fontWeight: 700, letterSpacing: "-0.01em" }}>
+                    Daily Wellness Check-ins
+                  </h3>
+                  <span style={{ fontSize: "0.78rem", color: "var(--text-secondary)", fontStyle: "italic" }}>
+                    Student-reported wellness telemetry — non-diagnostic (Past {dailyCheckinTelemetry?.lookbackDays || 14} days)
+                  </span>
+                </div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <span className="hud-tag">TELEMETRY</span>
+                {dailyCheckinTelemetry && (
+                  <span style={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>
+                    Total Lifetime Check-ins: <strong style={{ color: "var(--text-primary)" }}>{dailyCheckinTelemetry.totalCheckins}</strong>
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div style={{ padding: "20px 24px" }}>
+              {dailyCheckinTelemetry === undefined ? (
+                <div style={{ padding: "20px", textAlign: "center", color: "var(--text-secondary)", fontStyle: "italic" }}>
+                  Loading daily check-in telemetry...
+                </div>
+              ) : dailyCheckinTelemetry.checkins.length === 0 ? (
+                <div style={{ padding: "30px 20px", textAlign: "center", color: "var(--text-secondary)", fontStyle: "italic" }}>
+                  No daily wellness check-ins recorded.
+                </div>
+              ) : (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: "12px" }}>
+                  {dailyCheckinTelemetry.checkins.map((c: any) => {
+                    const [y, m, d] = (c.dateStr || "").split("-").map(Number);
+                    const formattedDate = (y && m && d)
+                      ? new Date(y, m - 1, d).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })
+                      : c.dateStr;
+                    const timeStr = c.createdAt ? new Date(c.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+                    
+                    return (
+                      <div
+                        key={c._id}
+                        style={{
+                          background: "#f8fafc",
+                          border: "1px solid #e2e8f0",
+                          borderRadius: "10px",
+                          padding: "12px 14px",
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: "6px",
+                        }}
+                      >
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <span style={{ fontSize: "0.82rem", fontWeight: 700, color: "var(--text-primary)" }}>
+                            {formattedDate}
+                          </span>
+                          <span style={{ fontSize: "0.72rem", color: "var(--text-secondary)" }}>
+                            {timeStr}
+                          </span>
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                          <span
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: "4px",
+                              padding: "3px 10px",
+                              borderRadius: "16px",
+                              fontSize: "0.75rem",
+                              fontWeight: 700,
+                              textTransform: "capitalize",
+                              ...getMoodBadgeStyle(c.mood),
+                            }}
+                          >
+                            <span style={{ width: 6, height: 6, borderRadius: "50%", background: "currentColor", display: "inline-block" }} />
+                            {c.mood}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
@@ -665,11 +782,11 @@ export default function PatientDetail() {
 
               {/* CBT DUAL CHARTS */}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px" }}>
-                {/* Recovery Progress Chart */}
+                {/* Acute Session Tension Delta Chart */}
                 <div className="glass-panel hud-panel" style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
                   <h3 style={{ fontSize: "1.1rem", margin: 0, color: "var(--text-primary)", display: "flex", alignItems: "center", gap: "6px" }}>
                     <TrendingUp size={18} color="var(--accent-primary)" />
-                    CBT Emotion Improvement Trend
+                    Acute Session Tension Delta (Pre vs Post Exercise)
                   </h3>
                   <div style={{ height: "260px", width: "100%" }}>
                     {cbtAnalytics.recoveryTrend.length > 0 ? (
@@ -748,7 +865,7 @@ export default function PatientDetail() {
 
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "16px" }}>
                   <div className="glass-panel hud-panel" style={{ display: "flex", flexDirection: "column", gap: "6px", padding: "16px" }}>
-                    <span style={{ color: "var(--text-secondary)", fontSize: "0.75rem", textTransform: "uppercase", fontWeight: 700 }}>Recovery Plans Created</span>
+                    <span style={{ color: "var(--text-secondary)", fontSize: "0.75rem", textTransform: "uppercase", fontWeight: 700 }}>Action Plans Created</span>
                     <span style={{ fontSize: "1.6rem", fontWeight: 750, color: "var(--text-primary)" }}>{cbtAnalytics.recoveryPlansCount}</span>
                   </div>
                   <div className="glass-panel hud-panel" style={{ display: "flex", flexDirection: "column", gap: "6px", padding: "16px" }}>
@@ -826,13 +943,6 @@ export default function PatientDetail() {
                     </div>
                   </div>
                 </div>
-
-                {/* Authoritative Longitudinal Clinical Timeline (Replaces incomplete recoveryTimeline) */}
-                <ClinicalTimelineView
-                  studentId={canonicalStudentId}
-                  maxHeight="320px"
-                  showHeader={true}
-                />
               </div>
 
               {/* HIGH RISK TRIGGERS */}
@@ -1005,6 +1115,106 @@ export default function PatientDetail() {
               </div>
             </div>
           </div>
+
+          {/* Breathing Sessions */}
+          <div className="glass-panel hud-panel">
+            <h3 style={{ fontSize: "1.2rem", marginBottom: "16px", color: "var(--text-primary)", display: "flex", alignItems: "center", gap: "10px" }}>
+              <Wind size={20} color="var(--accent-primary)" /> Breathing Sessions
+            </h3>
+            <div style={{ overflowX: "auto" }}>
+              <table className="hud-table" style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr style={{ textAlign: "left", fontSize: "0.8rem", color: "#64748b", textTransform: "uppercase" }}>
+                    <th style={{ padding: "12px 16px" }}>Date</th>
+                    <th style={{ padding: "12px 16px" }}>Protocol</th>
+                    <th style={{ padding: "12px 16px" }}>Duration</th>
+                    <th style={{ padding: "12px 16px" }}>Cycles Completed</th>
+                    <th style={{ padding: "12px 16px" }}>Status</th>
+                    <th style={{ padding: "12px 16px" }}>Source</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {cbtAnalytics?.breathingLogs && cbtAnalytics.breathingLogs.length > 0 ? (
+                    cbtAnalytics.breathingLogs.map((b: any) => (
+                      <tr key={b._id} style={{ borderBottom: "1px solid var(--border-color)" }}>
+                        <td style={{ padding: "12px 16px", fontSize: "0.85rem" }}>
+                          {new Date(b.createdAt).toLocaleDateString()} {new Date(b.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </td>
+                        <td style={{ padding: "12px 16px", fontSize: "0.85rem", fontWeight: 600 }}>{b.protocolName}</td>
+                        <td style={{ padding: "12px 16px", fontSize: "0.85rem" }}>{b.durationSeconds ? `${b.durationSeconds}s` : "N/A"}</td>
+                        <td style={{ padding: "12px 16px", fontSize: "0.85rem", fontWeight: 600 }}>{b.cyclesCompleted} / {b.targetCycles}</td>
+                        <td style={{ padding: "12px 16px", fontSize: "0.85rem" }}>
+                          <span style={{
+                            padding: "3px 8px",
+                            borderRadius: "12px",
+                            fontSize: "0.75rem",
+                            fontWeight: 600,
+                            background: b.status === "completed" ? "rgba(16, 185, 129, 0.1)" : "rgba(245, 158, 11, 0.1)",
+                            color: b.status === "completed" ? "var(--success)" : "var(--warning)",
+                          }}>
+                            {b.status}
+                          </span>
+                        </td>
+                        <td style={{ padding: "12px 16px", fontSize: "0.85rem", color: "var(--text-secondary)" }}>{b.sourceType}</td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={6} style={{ padding: "20px", textAlign: "center", color: "var(--text-secondary)" }}>No Breathing sessions recorded.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Sensory Grounding Sessions */}
+          <div className="glass-panel hud-panel">
+            <h3 style={{ fontSize: "1.2rem", marginBottom: "16px", color: "var(--text-primary)", display: "flex", alignItems: "center", gap: "10px" }}>
+              <Compass size={20} color="var(--accent-primary)" /> 5-4-3-2-1 Sensory Grounding Sessions
+            </h3>
+            <div style={{ overflowX: "auto" }}>
+              <table className="hud-table" style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr style={{ textAlign: "left", fontSize: "0.8rem", color: "#64748b", textTransform: "uppercase" }}>
+                    <th style={{ padding: "12px 16px" }}>Date</th>
+                    <th style={{ padding: "12px 16px" }}>Duration</th>
+                    <th style={{ padding: "12px 16px" }}>Steps</th>
+                    <th style={{ padding: "12px 16px" }}>Status</th>
+                    <th style={{ padding: "12px 16px" }}>Source</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {cbtAnalytics?.groundingLogs && cbtAnalytics.groundingLogs.length > 0 ? (
+                    cbtAnalytics.groundingLogs.map((g: any) => (
+                      <tr key={g._id} style={{ borderBottom: "1px solid var(--border-color)" }}>
+                        <td style={{ padding: "12px 16px", fontSize: "0.85rem" }}>{new Date(g.createdAt).toLocaleDateString()} {new Date(g.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
+                        <td style={{ padding: "12px 16px", fontSize: "0.85rem" }}>{g.durationSeconds ? `${g.durationSeconds}s` : "N/A"}</td>
+                        <td style={{ padding: "12px 16px", fontSize: "0.85rem", fontWeight: 600 }}>{g.stepsCompleted} / {g.totalSteps || 5}</td>
+                        <td style={{ padding: "12px 16px", fontSize: "0.85rem" }}>
+                          <span style={{
+                            padding: "3px 8px",
+                            borderRadius: "12px",
+                            fontSize: "0.75rem",
+                            fontWeight: 600,
+                            background: g.status === "completed" ? "rgba(16, 185, 129, 0.1)" : "rgba(245, 158, 11, 0.1)",
+                            color: g.status === "completed" ? "var(--success)" : "var(--warning)",
+                          }}>
+                            {g.status}
+                          </span>
+                        </td>
+                        <td style={{ padding: "12px 16px", fontSize: "0.85rem", color: "var(--text-secondary)" }}>{g.sourceType}</td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={5} style={{ padding: "20px", textAlign: "center", color: "var(--text-secondary)" }}>No Sensory Grounding sessions recorded.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       )}
 
@@ -1122,7 +1332,7 @@ export default function PatientDetail() {
                 <span style={{ color: "var(--text-primary)", fontSize: "0.95rem", fontWeight: 600 }}>{selectedSession.beliefScore !== undefined ? `${selectedSession.beliefScore}%` : "N/A"}</span>
               </div>
               <div style={{ gridColumn: "span 2" }}>
-                <span style={{ fontSize: "0.75rem", color: "var(--text-secondary)", display: "block", textTransform: "uppercase", fontWeight: 700 }}>Recommended Goals in Recovery Plan</span>
+                <span style={{ fontSize: "0.75rem", color: "var(--text-secondary)", display: "block", textTransform: "uppercase", fontWeight: 700 }}>Recommended Goals in Action Plan</span>
                 <span style={{ color: "var(--text-primary)", fontSize: "0.95rem" }}>
                   {selectedSession.recommendedGoals && selectedSession.recommendedGoals.length > 0 ? (
                     <ul style={{ margin: "4px 0 0 0", paddingLeft: "20px", display: "flex", flexDirection: "column", gap: "2px" }}>

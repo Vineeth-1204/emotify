@@ -342,7 +342,33 @@ export const getLatestRawAttempt = query({
   },
 });
 
-/** Get all screening attempts for longitudinal history */
+/**
+ * Bounded screening history for longitudinal review (Priority 11 Step 5A).
+ * Retrieves at most 20 records ordered descending (newest first).
+ * Note: Uses existing by_userId index; compound ["userId", "startedAt"] index deferred to Step 5B.
+ */
+export const getScreeningHistory = query({
+  args: {
+    userId: v.optional(v.string()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    const targetUserId = args.userId || identity?.subject;
+    if (!targetUserId) return [];
+    await assertCanAccessStudent(ctx, targetUserId);
+
+    const effectiveLimit = Math.min(Math.max(args.limit ?? 20, 1), 20);
+
+    return await ctx.db
+      .query("screeningAttempts")
+      .withIndex("by_userId", (q) => q.eq("userId", targetUserId))
+      .order("desc")
+      .take(effectiveLimit);
+  },
+});
+
+/** Get screening attempts for longitudinal history (bounded to at most 20 records) */
 export const getAllAttempts = query({
   args: { userId: v.optional(v.string()) },
   handler: async (ctx, args) => {
@@ -355,9 +381,10 @@ export const getAllAttempts = query({
       .query("screeningAttempts")
       .withIndex("by_userId", (q) => q.eq("userId", targetUserId))
       .order("desc")
-      .collect();
+      .take(20);
   },
 });
+
 
 /** Get a single screening attempt by attempt ID */
 export const getAttemptById = query({
@@ -491,6 +518,7 @@ export const getAll = query({
           phq9_item9_score: a.results?.phq9?.item9Score ?? 0,
           createdAt: a.completedAt || a.startedAt,
           attemptId: String(a._id),
+          status: "completed",
         }));
     }
 

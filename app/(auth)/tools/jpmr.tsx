@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, Alert, Dimensions, Animated, ScrollView } from "react-native";
-import { useRouter } from "expo-router";
+import { useRouter, useLocalSearchParams } from "expo-router";
 import { useAppAuth } from "@/utils/auth";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
@@ -14,112 +14,12 @@ import * as Speech from "expo-speech";
 import Svg, { Circle, Path, G } from "react-native-svg";
 import * as SecureStore from "expo-secure-store";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useVideoPlayer, VideoView } from "expo-video";
 import { useAvatar } from "@/context/AvatarContext";
 import { MitraAvatar } from "@/components/avatar/MitraAvatar";
 import { CalmPointToken } from "@/components/svg/system";
+import { JPMR_STEPS, JPMRStep, JPMRMediaViewer, PlayState } from "@/components/jpmr";
 
 const { width } = Dimensions.get('window');
-
-interface JPMRStep {
-  title: string;
-  tenseScript: string;
-  releaseScript: string;
-  video: { uri: string };
-}
-
-const JPMR_STEPS: JPMRStep[] = [
-  {
-    title: "Introduction",
-    tenseScript: "Welcome to Jacobson Progressive Muscle Relaxation. Let's start by taking a slow, deep breath. Focus your awareness on your body. Press start when you are ready to begin.",
-    releaseScript: "Find a comfortable seat or lie down. Close your eyes and observe your breath.",
-    video: { uri: "https://assets.mixkit.co/videos/preview/mixkit-woman-doing-breathing-exercises-42289-large.mp4" }
-  },
-  {
-    title: "Hands & Fists",
-    tenseScript: "Squeeze both of your hands into tight fists. Hold the tension. Tense your hands and fists for 5 seconds.",
-    releaseScript: "Now release. Let your fingers open and go completely soft. Notice the difference between tension and relaxation in your hands.",
-    video: { uri: "https://assets.mixkit.co/videos/preview/mixkit-hand-squeezing-anti-stress-ball-close-up-42407-large.mp4" }
-  },
-  {
-    title: "Forearms",
-    tenseScript: "Bend your hands upward at the wrists to tighten your forearms. Hold the tension in your forearms for 5 seconds.",
-    releaseScript: "Release. Let your wrists drop. Feel the muscles in your lower arms soften and relax.",
-    video: { uri: "https://assets.mixkit.co/videos/preview/mixkit-upper-body-of-a-man-stretching-his-arms-42456-large.mp4" }
-  },
-  {
-    title: "Upper Arms",
-    tenseScript: "Bend your elbows and flex your biceps tightly. Hold the tension in your upper arms for 5 seconds.",
-    releaseScript: "Release. Let your arms go completely limp at your sides. Feel the relaxation flow in.",
-    video: { uri: "https://assets.mixkit.co/videos/preview/mixkit-upper-body-of-a-man-stretching-his-arms-42456-large.mp4" }
-  },
-  {
-    title: "Shoulders",
-    tenseScript: "Shrug your shoulders upward towards your ears. Hold the tension in your shoulders for 5 seconds.",
-    releaseScript: "Release. Let your shoulders drop down heavy and soft. Notice the relief in your neck and shoulder area.",
-    video: { uri: "https://assets.mixkit.co/videos/preview/mixkit-shoulders-of-a-man-doing-stretches-42525-large.mp4" }
-  },
-  {
-    title: "Face & Jaw",
-    tenseScript: "Squeeze your eyes shut, wrinkle your nose, and clench your jaw tightly. Hold the tension in your face for 5 seconds.",
-    releaseScript: "Release. Let your forehead smooth out, and let your jaw hang loose. Feel your face relax completely.",
-    video: { uri: "https://assets.mixkit.co/videos/preview/mixkit-close-up-of-a-womans-face-expressing-calm-42250-large.mp4" }
-  },
-  {
-    title: "Neck",
-    tenseScript: "Gently press your head backwards against your seat or support. Hold the tension in your neck for 5 seconds.",
-    releaseScript: "Release. Let your head rest comfortably. Feel your neck muscles go soft and loose.",
-    video: { uri: "https://assets.mixkit.co/videos/preview/mixkit-shoulders-of-a-man-doing-stretches-42525-large.mp4" }
-  },
-  {
-    title: "Chest",
-    tenseScript: "Take a deep breath and hold it. Feel the tightness across your chest. Hold it for 5 seconds.",
-    releaseScript: "Release. Exhale completely, and let your breathing return to normal. Notice the chest area relax.",
-    video: { uri: "https://assets.mixkit.co/videos/preview/mixkit-woman-doing-breathing-exercises-42289-large.mp4" }
-  },
-  {
-    title: "Stomach",
-    tenseScript: "Tighten your stomach muscles as if preparing for an impact. Hold the tension in your stomach for 5 seconds.",
-    releaseScript: "Release. Let your stomach relax completely. Take a deep, gentle breath into your soft stomach.",
-    video: { uri: "https://assets.mixkit.co/videos/preview/mixkit-woman-lying-on-bed-stretching-and-relaxing-42358-large.mp4" }
-  },
-  {
-    title: "Back",
-    tenseScript: "Arch your back slightly and pull your shoulder blades together. Hold the tension in your back for 5 seconds.",
-    releaseScript: "Release. Let your back relax and rest flat. Feel the tension flow away.",
-    video: { uri: "https://assets.mixkit.co/videos/preview/mixkit-woman-lying-on-bed-stretching-and-relaxing-42358-large.mp4" }
-  },
-  {
-    title: "Thighs & Legs",
-    tenseScript: "Squeeze your thigh muscles tightly. Hold the tension in your thighs for 5 seconds.",
-    releaseScript: "Release. Let your thigh muscles go completely loose. Notice the warm, heavy sensation.",
-    video: { uri: "https://assets.mixkit.co/videos/preview/mixkit-woman-lying-on-bed-stretching-and-relaxing-42358-large.mp4" }
-  },
-  {
-    title: "Calves",
-    tenseScript: "Point your toes upward towards your shins to tighten your calf muscles. Hold the tension in your calves for 5 seconds.",
-    releaseScript: "Release. Let your legs rest. Feel the peacefulness in your lower legs.",
-    video: { uri: "https://assets.mixkit.co/videos/preview/mixkit-woman-lying-on-bed-stretching-and-relaxing-42358-large.mp4" }
-  },
-  {
-    title: "Feet",
-    tenseScript: "Curl your toes downward, tensing your feet. Hold the tension in your feet for 5 seconds.",
-    releaseScript: "Release. Uncurl your toes. Enjoy the feeling of complete relaxation in your feet.",
-    video: { uri: "https://assets.mixkit.co/videos/preview/mixkit-woman-lying-on-bed-stretching-and-relaxing-42358-large.mp4" }
-  },
-  {
-    title: "Full Body",
-    tenseScript: "Now, tense your entire body from your face to your feet. Squeeze every muscle. Hold the full body tension for 5 seconds.",
-    releaseScript: "Release. Let go of all tension completely. Let your whole body sink deeply. Feel the absolute relaxation.",
-    video: { uri: "https://assets.mixkit.co/videos/preview/mixkit-woman-meditating-under-a-tree-42283-large.mp4" }
-  },
-  {
-    title: "Reflection",
-    tenseScript: "Take a few final calm, deep breaths. Appreciate the sense of quiet and relaxation in your body.",
-    releaseScript: "You have completed your progressive muscle relaxation. Open your eyes when you are ready.",
-    video: { uri: "https://assets.mixkit.co/videos/preview/mixkit-woman-doing-breathing-exercises-42289-large.mp4" }
-  }
-];
 
 const getIntensityLabel = (value: number) => {
   if (value <= 2) return { text: "Minimal", desc: "Barely noticeable, very mild physical or emotional presence.", color: '#10B981' };
@@ -236,10 +136,14 @@ function IntensitySelector({ value, onChange, activeColor }: IntensitySelectorPr
 
 
 
-type PlayState = 'SPEAK_TENSE' | 'TENSE_WAITING' | 'TENSE_COUNTDOWN' | 'SPEAK_RELEASE' | 'RELEASE_COUNTDOWN';
 
 export default function JPMRScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{
+    sourceType?: string;
+    attemptId?: string;
+    triageId?: string;
+  }>();
   const { user } = useAppAuth();
   const { setAvatarState } = useAvatar();
 
@@ -248,6 +152,27 @@ export default function JPMRScreen() {
   const [postIntensity, setPostIntensity] = useState(5);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [improvement, setImprovement] = useState(0);
+
+  // Provenance context (defaulting to self_initiated unless passed via params/session)
+  const [sessionProvenance, setSessionProvenance] = useState<{
+    sourceType?: string;
+    attemptId?: string;
+    triageId?: string;
+  }>({
+    sourceType: params.sourceType || "self_initiated",
+    attemptId: params.attemptId,
+    triageId: params.triageId,
+  });
+
+  useEffect(() => {
+    if (params.sourceType || params.attemptId || params.triageId) {
+      setSessionProvenance({
+        sourceType: params.sourceType || "self_initiated",
+        attemptId: params.attemptId,
+        triageId: params.triageId,
+      });
+    }
+  }, [params.sourceType, params.attemptId, params.triageId]);
 
   // Guided Session States
   const [isPlaying, setIsPlaying] = useState(false);
@@ -264,27 +189,7 @@ export default function JPMRScreen() {
   const currentStepData = JPMR_STEPS[activeStep];
   const videoUri = (jpmrVideosFromConvex && jpmrVideosFromConvex[activeStep])
     ? jpmrVideosFromConvex[activeStep]
-    : currentStepData?.video?.uri || "https://assets.mixkit.co/videos/preview/mixkit-woman-doing-breathing-exercises-42289-large.mp4";
-
-  const videoPlayer = useVideoPlayer({ uri: videoUri }, (playerInstance) => {
-    playerInstance.loop = true;
-    playerInstance.muted = true;
-  });
-
-  // Sync video source with active step and play state
-  useEffect(() => {
-    if (videoUri) {
-      videoPlayer.replaceAsync({ uri: videoUri }).then(() => {
-        videoPlayer.loop = true;
-        videoPlayer.muted = true;
-        if (isPlaying && step === 2) {
-          videoPlayer.play();
-        }
-      }).catch(err => {
-        console.error("Error setting video source", err);
-      });
-    }
-  }, [activeStep, videoUri, isPlaying, step]);
+    : null;
 
   // Load saved session if exists
   useEffect(() => {
@@ -313,6 +218,13 @@ export default function JPMRScreen() {
                   setElapsedTime(parsed.elapsedTime ?? 0);
                   setStartedAt(parsed.startedAt ?? Date.now());
                   setActiveStep(parsed.activeStep ?? 0);
+                  if (parsed.sourceType || parsed.attemptId || parsed.triageId) {
+                    setSessionProvenance({
+                      sourceType: parsed.sourceType || "self_initiated",
+                      attemptId: parsed.attemptId,
+                      triageId: parsed.triageId,
+                    });
+                  }
                   setStep(2);
                   setPlayState('SPEAK_TENSE');
                   setWaitingForProceed(false);
@@ -339,6 +251,9 @@ export default function JPMRScreen() {
         preIntensity: preVal,
         elapsedTime: elapsed,
         startedAt: startVal,
+        sourceType: sessionProvenance.sourceType,
+        attemptId: sessionProvenance.attemptId,
+        triageId: sessionProvenance.triageId,
       };
       await SecureStore.setItemAsync(`jpmr_in_progress_${user.id}`, JSON.stringify(data));
     } catch (e) {
@@ -568,6 +483,9 @@ export default function JPMRScreen() {
         postIntensity,
         startedAt,
         completedAt: Date.now(),
+        sourceType: sessionProvenance.sourceType || "self_initiated",
+        attemptId: sessionProvenance.attemptId ? (sessionProvenance.attemptId as any) : undefined,
+        triageId: sessionProvenance.triageId ? (sessionProvenance.triageId as any) : undefined,
       });
 
       const diff = preIntensity - postIntensity;
@@ -681,17 +599,13 @@ export default function JPMRScreen() {
             <Text style={styles.title}>{currentStepData.title}</Text>
             <Text style={styles.subtitle}>Step {activeStep + 1} of {JPMR_STEPS.length}</Text>
 
-            <View style={styles.videoContainer}>
-              <VideoView
-                player={videoPlayer}
-                style={StyleSheet.absoluteFill}
-                fullscreenOptions={{ enable: false }}
-                nativeControls={false}
-              />
-              <View style={styles.videoBadge}>
-                <Text style={styles.videoBadgeText}>Demonstration</Text>
-              </View>
-            </View>
+            <JPMRMediaViewer
+              stepIndex={activeStep}
+              stepData={currentStepData}
+              playState={playState}
+              videoUri={videoUri}
+              isPlaying={isPlaying}
+            />
 
             <TouchableOpacity
               activeOpacity={playState === 'TENSE_WAITING' || waitingForProceed ? 0.7 : 1}

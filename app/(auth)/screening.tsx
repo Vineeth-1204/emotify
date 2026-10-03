@@ -157,10 +157,12 @@ export default function ScreeningScreen() {
         },
       });
 
-      // 3. Schedule follow-up based on authoritative triage level
+      // 3. Schedule follow-up based on authoritative triage level with causal provenance
       await scheduleFollowUp({
         userId: user.id,
         level: attempt.triageLevel,
+        attemptId: attempt.attemptId,
+        triageId: attempt.triageId,
       });
 
       // 4. Mark screening complete on user record

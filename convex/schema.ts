@@ -51,7 +51,8 @@ export default defineSchema({
   })
     .index("by_clerkId", ["clerkId"])
     .index("by_mobile_number", ["mobile_number"])
-    .index("by_role", ["role"]),
+    .index("by_role", ["role"])
+    .index("by_role_and_created_at", ["role", "created_at"]),
 
   sessions: defineTable({
     userId: v.id("users"),
@@ -177,6 +178,7 @@ export default defineSchema({
     attemptType: v.optional(v.union(v.literal("baseline"), v.literal("reassessment"), v.literal("force_retest"))),
   })
     .index("by_userId", ["userId"])
+    .index("by_userId_and_startedAt", ["userId", "startedAt"])
     .index("by_status", ["status"])
     .index("by_startedAt", ["startedAt"])
     .index("by_triageId", ["triageId"]),
@@ -190,6 +192,7 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index("by_userId", ["userId"])
+    .index("by_userId_and_createdAt", ["userId", "createdAt"])
     .index("by_attemptId", ["attemptId"]),
 
   alerts: defineTable({
@@ -213,8 +216,12 @@ export default defineSchema({
     intensity: v.optional(v.number()), // legacy
     preIntensity: v.optional(v.number()),
     postIntensity: v.optional(v.number()),
+    selectedEmotions: v.optional(v.array(v.string())),
+    strongestEmotion: v.optional(v.string()),
     createdAt: v.number(),
-  }).index("by_userId", ["userId"]),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_userId_and_createdAt", ["userId", "createdAt"]),
 
   jpmrLogs: defineTable({
     userId: v.string(),
@@ -229,7 +236,9 @@ export default defineSchema({
     sourceType: v.optional(v.string()), // "self_initiated" | "routine" | "screening" | "triage" | "counselor"
     attemptId: v.optional(v.id("screeningAttempts")),
     triageId: v.optional(v.id("triages")),
-  }).index("by_userId", ["userId"]),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_userId_and_completedAt", ["userId", "completedAt"]),
 
   microGoals: defineTable({
     userId: v.string(),
@@ -314,9 +323,12 @@ export default defineSchema({
     sourceType: v.optional(v.string()), // "self_initiated" | "cbt" | "screening" | "counselor" | "routine"
     attemptId: v.optional(v.id("screeningAttempts")),
     triageId: v.optional(v.id("triages")),
+    cbtSessionId: v.optional(v.string()),
   })
     .index("by_user", ["userId"])
-    .index("by_createdAt", ["createdAt"]),
+    .index("by_userId_and_createdAt", ["userId", "createdAt"])
+    .index("by_createdAt", ["createdAt"])
+    .index("by_cbtSessionId", ["cbtSessionId"]),
 
   counsellorRequests: defineTable({
     user_id: v.string(),
@@ -329,7 +341,9 @@ export default defineSchema({
     sourceType: v.optional(v.string()), // "self_initiated" | "cbt_crisis" | "screening" | "triage"
     attemptId: v.optional(v.id("screeningAttempts")),
     triageId: v.optional(v.id("triages")),
-  }).index("by_user_id", ["user_id"]),
+  })
+    .index("by_user_id", ["user_id"])
+    .index("by_timestamp", ["timestamp"]),
 
   followUps: defineTable({
     userId: v.string(),
@@ -363,6 +377,8 @@ export default defineSchema({
     ),
     averageIntensity: v.number(),
     suggestedAction: v.string(),
+    selectedEmotions: v.optional(v.array(v.string())),
+    strongestEmotion: v.optional(v.string()),
     createdAt: v.number(),
   })
     .index("by_userId", ["userId"])
@@ -401,7 +417,8 @@ export default defineSchema({
     timestamp: v.number(),
   })
     .index("by_userId", ["userId"])
-    .index("by_action", ["action"]),
+    .index("by_action", ["action"])
+    .index("by_timestamp", ["timestamp"]),
 
   dailyCheckins: defineTable({
     userId: v.string(),
@@ -517,6 +534,7 @@ export default defineSchema({
     currentStep: v.string(), // "understanding" | "clarification" | "guided_discovery" | "reflection" | "balanced_thought" | "belief" | "emotion_after" | "recovery_coach" | "completed" | "safety_mode" | "support_mode"
   })
     .index("by_userId", ["userId"])
+    .index("by_userId_and_timestamp", ["userId", "timestamp"])
     .index("by_sessionStatus", ["sessionStatus"])
     .index("by_timestamp", ["timestamp"]),
 
@@ -612,5 +630,54 @@ export default defineSchema({
     storageId: v.id("_storage"),
     createdAt: v.number(),
   }).index("by_stepIndex", ["stepIndex"]),
+
+  breathingLogs: defineTable({
+    userId: v.string(),
+    protocolId: v.string(), // "box_4444" | "paced_444" | "calming_434" | "belly_reset_3" | "relaxing_478"
+    protocolName: v.string(),
+    sourceType: v.string(), // "self_initiated" | "emotion_map" | "cbt_support" | "micro_goal" | "counselor_recommended" | "routine"
+    startedAt: v.number(),
+    completedAt: v.optional(v.number()),
+    durationSeconds: v.number(),
+    cyclesCompleted: v.number(),
+    targetCycles: v.number(),
+    status: v.string(), // "completed" | "partial" | "abandoned"
+    attemptId: v.optional(v.id("screeningAttempts")),
+    triageId: v.optional(v.id("triages")),
+    createdAt: v.number(),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_createdAt", ["createdAt"])
+    .index("by_userId_and_createdAt", ["userId", "createdAt"])
+    .index("by_attemptId", ["attemptId"])
+    .index("by_triageId", ["triageId"]),
+
+  groundingLogs: defineTable({
+    userId: v.string(),
+    protocolId: v.string(), // "sensory_54321"
+    protocolName: v.string(),
+    sourceType: v.string(), // "self_initiated" | "cbt_support" | "emotion_map" | "crisis_blocker" | "micro_goal"
+    startedAt: v.number(),
+    completedAt: v.optional(v.number()),
+    durationSeconds: v.number(),
+    stepsCompleted: v.number(), // 0 to 5
+    totalSteps: v.number(), // 5
+    status: v.string(), // "completed" | "partial" | "abandoned"
+    attemptId: v.optional(v.id("screeningAttempts")),
+    triageId: v.optional(v.id("triages")),
+    createdAt: v.number(),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_createdAt", ["createdAt"])
+    .index("by_userId_and_createdAt", ["userId", "createdAt"])
+    .index("by_attemptId", ["attemptId"])
+    .index("by_triageId", ["triageId"]),
+
+  // Dedicated sequential atomic counters (Priority 11 Step 5A)
+  counters: defineTable({
+    name: v.string(), // e.g. "patientId"
+    value: v.number(), // monotonic sequential counter value
+  }).index("by_name", ["name"]),
 });
+
 

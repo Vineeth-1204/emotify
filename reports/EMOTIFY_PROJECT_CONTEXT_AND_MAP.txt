@@ -1,0 +1,351 @@
+================================================================================
+EMOTIFY PLATFORM — COMPREHENSIVE REPOSITORY & ARCHITECTURE MAP FOR NEW CHAT
+================================================================================
+Generated at: 2026-10-03
+Current Verified Baseline: 445 / 445 Vitest tests passing | 23 test files | TS Clean | Dashboard Build Clean
+Active Priority: Priority 11 (Progress & Insights Scalability) — Steps 1–5C Complete; Step 5D Audit Complete (Implementation Pending)
+
+--------------------------------------------------------------------------------
+1. EXECUTIVE SUMMARY & TECH STACK
+--------------------------------------------------------------------------------
+Emotify is a production mental wellness platform for students and university counselors.
+- Mobile App: React Native (Expo SDK 52, Expo Router v4, React 18.3.1)
+- Backend: Convex (Real-time TypeScript reactive database, server functions, scheduled actions)
+- Authentication: Clerk (Mobile Expo clerk-expo, dashboard clerk-react) mapped to Convex users table
+- Web Dashboard: React 18 + Vite + TailwindCSS (Counselor & Admin clinical oversight)
+- Testing: Vitest + convex-test + @testing-library/react (Full backend mocking & authz tests)
+- AI / LLM: Google Gemini (gemini-1.5-flash primary with mock fallback; model names corrected in P10)
+
+--------------------------------------------------------------------------------
+2. HIGH-LEVEL REPOSITORY DIRECTORY MAP
+--------------------------------------------------------------------------------
+Emotify-Clerk/
+│
+├── app/                              # Mobile Application (Expo Router)
+│   ├── _layout.tsx                   # Root application layout (Providers: Clerk, Convex, Theme, Avatar)
+│   ├── index.tsx                     # Entrypoint & auth redirect
+│   ├── (public)/                     # Public routes (Landing, Sign-in, Sign-up, Verification)
+│   │   ├── welcome.tsx
+│   │   ├── sign-in.tsx
+│   │   └── sign-up.tsx
+│   └── (auth)/                       # Authenticated student routes
+│       ├── _layout.tsx               # Auth layout guarding student screens
+│       ├── onboarding/               # Student onboarding (Demographics, Baseline Screening)
+│       ├── (tabs)/                   # Student Bottom Tabs
+│       │   ├── _layout.tsx           # Tab bar configuration & navigation
+│       │   ├── index.tsx             # Home dashboard (Mitra greeting, daily habits, quick tools)
+│       │   ├── explore.tsx           # Wellness explore & self-care catalog
+│       │   ├── tools.tsx             # Interactive mental health tools hub
+│       │   ├── insights.tsx          # 7-day discrete mood calendar, mindful relaxation telemetry
+│       │   └── profile.tsx           # Student profile & settings
+│       ├── tools/                    # Dedicated intervention tool screens
+│       │   ├── reframe.tsx           # CBT cognitive restructuring & support tools
+│       │   ├── jpmr.tsx              # Jacobson's Progressive Muscle Relaxation (SVG illustrations)
+│       │   ├── microgoals.tsx        # Daily non-clinical habit & micro-goal tracker
+│       │   ├── emotion-map.tsx       # Body emotion scan & somatic awareness
+│       │   ├── companion.tsx         # Mitra conversational wellness companion
+│       │   ├── recovery-plan.tsx     # Student recovery & safety planning
+│       │   ├── breathing.tsx         # Canonical breathing engine player (box_4444, paced_444, etc.)
+│       │   └── grounding.tsx         # 5-4-3-2-1 Sensory Grounding Tool (standalone mode)
+│       └── screening.tsx             # Clinical screening questionnaire runner (PHQ-9, GAD-7, etc.)
+│
+├── components/                       # Shared Mobile UI Components
+│   ├── ui/                           # Primitive UI buttons, cards, inputs, badges
+│   ├── avatar/MitraAvatar.tsx        # Animated Mitra companion SVG avatar (mood-reactive, 13 states)
+│   ├── cbt/                          # Reframe & CBT-specific UI widgets
+│   ├── habit/                        # Habit & streak display widgets
+│   ├── jpmr/JpmrIllustration.tsx     # Local vector SVG anatomical JPMR illustrations (14 groups)
+│   ├── breathing/BreathingPlayer.tsx # Unified animated breathing orb player (accessibility-ready)
+│   ├── grounding/SensoryGroundingPlayer.tsx  # Multi-modal grounding player (standalone/modal/card)
+│   └── svg/system.tsx                # System SVG icons and illustrations
+│
+├── constants/                        # Declarative Protocol Registries
+│   ├── BreathingProtocols.ts         # Canonical breathing protocol definitions (active & inactive)
+│   └── GroundingProtocols.ts         # 5-4-3-2-1 grounding protocol definition
+│
+├── hooks/
+│   └── useBreathingEngine.ts         # Pure breathing state machine (ticks, phases, accessibility)
+│
+├── utils/
+│   ├── date.ts                       # parseLocalDateNoon, getSevenDayLocalWindow (timezone-safe)
+│   └── insights.ts                   # generateInsightMessage heuristic
+│
+├── convex/                           # Authoritative Convex Backend Services
+│   ├── _generated/                   # Auto-generated Convex APIs and data models (DO NOT EDIT)
+│   ├── schema.ts                     # Single authoritative database schema definition
+│   ├── authz.ts                      # Centralized authorization & role-checking helpers
+│   ├── users.ts                      # User management, sync with Clerk, profile preferences
+│   ├── screening.ts                  # Clinical questionnaire intake (PHQ-9, GAD-7, PQ-16)
+│   ├── clinicalScoring.ts            # Deterministic, non-AI clinical score calculators
+│   ├── triage.ts                     # Deterministic clinical triage level assignment (green/amber/red)
+│   ├── alerts.ts                     # Crisis & clinical alert triggers (suicide flag, high PHQ-9, SOS)
+│   ├── timeline.ts                   # Longitudinal clinical timeline builder (18-source dynamic model)
+│   ├── followUps.ts                  # Counselor check-in and re-assessment scheduling
+│   ├── appointments.ts               # Student-counselor booking & availability slots
+│   ├── cbt.ts                        # CBT restructuring state machine, AI orchestration, safety gates
+│   ├── reframes.ts                   # Authoritative saved cognitive reframes (`reframeLogs`)
+│   ├── microGoals.ts                 # Habit tracker, streak engine, non-clinical routine selector
+│   ├── jpmrLogs.ts                   # Somatic JPMR session completion & tension delta logging
+│   ├── jpmrVideos.ts                 # JPMR media admin catalog (admin-only mutations, no remote URLs)
+│   ├── emotionLogs.ts                # Student mood & emotion check-in records
+│   ├── wellness.ts                   # Longitudinal wellness profile metrics & trends
+│   ├── breathing.ts                  # Breathing session persistence (breathingLogs, rate-limited)
+│   ├── grounding.ts                  # Grounding session persistence (groundingLogs, privacy-safe)
+│   ├── companion.ts                  # Mitra AI companion chat engine (Gemini, safety, rate limits)
+│   ├── insights.ts                   # getDailyStats: behavioral telemetry aggregation (P11 corrected)
+│   ├── dashboard.ts                  # Counselor dashboard queries & analytics
+│   ├── rateLimiter.ts                # Server-authoritative sliding-window rate limiting
+│   └── test files:
+│       ├── auth.test.ts              # Authentication & registration tests
+│       ├── authz.test.ts             # Role-based access control tests
+│       ├── authorization.test.ts     # Expanded RBAC tests
+│       ├── screening.test.ts         # Clinical scoring & triage tests
+│       ├── timeline.test.ts          # Counselor longitudinal timeline tests
+│       ├── hardening.test.ts         # Security schema hardening & Mitra isolation tests
+│       ├── longitudinal.test.ts      # Longitudinal analytics & student insights tests
+│       ├── provenance.test.ts        # Screening & triage provenance tracking tests
+│       ├── mitra_avatar.test.ts      # Mitra avatar state machine tests
+│       ├── dashboard_timeline.test.ts # Dashboard clinical query tests
+│       ├── cbt.test.ts               # End-to-end CBT workflow & safety escalation tests
+│       ├── breathing.test.ts         # Breathing session persistence, status, rate limits
+│       ├── breathing_engine.test.ts  # Breathing engine tick, phase, pause/resume tests
+│       ├── grounding.test.ts         # Grounding standalone/modal, log persistence, privacy
+│       ├── priority7.test.ts         # Comprehensive Priority 7 clinical suite (88 tests)
+│       ├── priority8.test.ts         # Priority 8 decoupling & habit engine suite (52 tests)
+│       ├── priority9.test.ts         # Priority 9 JPMR security & provenance suite (24 tests)
+│       ├── priority9_step6b.test.ts  # Timeline breathing/grounding/dedup/dashboard tests (14 tests)
+│       ├── priority11_step3.test.ts  # Metric correctness regression suite (11 tests)
+│       ├── priority11_step4.test.ts  # Mood viz, relaxation telemetry, timezone tests (21 tests)
+│       ├── priority11_step5a.test.ts # Query bounding & patient counter OCC tests (24 tests)
+│       ├── priority11_step5b.test.ts # Compound telemetry index tests (10 tests)
+│       └── priority11_step5c.test.ts # Clinical timeline cursor pagination tests (20 tests)
+│
+├── common/                           # Shared Cross-Platform Utilities & Catalogs
+│   └── interventions.ts              # Centralized non-clinical routine habit catalog & deterministic picker
+│
+├── dashboard/                        # Web Dashboard for University Counselors & Admins
+│   ├── src/
+│   │   ├── pages/                    # Overview, PatientsList, PatientDetail, Alerts, Triage, Calendar,
+│   │   │                             #   Sessions, Analytics, AiMonitoring, Reports, AuditLogs, etc.
+│   │   ├── components/               # Patient timeline, alerts feed, screening charts
+│   │   └── lib/                      # Convex client, Clerk auth, date formatters
+│   └── vite.config.ts
+│
+├── reports/                          # Formal Audit, Remediation, and Closure Reports
+└── assets/                           # Bundled mobile images, icons, fonts
+
+--------------------------------------------------------------------------------
+3. AUTHORITATIVE DATA MODEL (KEY CONVEX TABLES)
+--------------------------------------------------------------------------------
+ 1. users:
+    - _id, clerkId, full_name, mobile_number, role ("patient"|"counsellor"|"admin"), status ("active"|"inactive"),
+      patientId (e.g. STU-001), emergencyContactName, emergencyContactPhone, mitraPreferences, xp (progression).
+ 2. screeningAttempts:
+    - Authoritative questionnaire intake records.
+    - instrumentVersions, responses (phq9, gad7, pq16), results (scores, flags, severities).
+    - attemptType: "baseline" | "periodic" | "followup".
+    - NOTE: WSAS and ReQoL-10 are structurally defined but STRICTLY INACTIVE (pending_approved_content).
+ 3. triages:
+    - Authoritative clinical risk tier.
+    - level: "green" | "amber" | "red", suicideFlag: boolean, psychosisFlag: boolean, attemptId.
+ 4. counsellorAlerts:
+    - Critical clinical alerts requiring counselor action.
+    - type: "suicideRisk" | "severeDepression" | "psychosisRisk" | "manual_sos" | "triageEscalation".
+    - status: "pending" | "acknowledged" | "resolved".
+ 5. cbtSessions:
+    - Interactive, stateful CBT cognitive restructuring session.
+    - status: "active" | "completed" | "abandoned" | "safety_mode" | "expired".
+    - currentStep: "understanding" | "clarification" | "guided_discovery" | "belief_challenge" |
+                   "balanced_thought" | "emotion_rating" | "recovery_coach" | "completed".
+    - conversation: message history. Bridges idempotently to reframeLogs on completion.
+ 6. reframeLogs:
+    - Canonical historical saved cognitive reframes.
+    - situation_text, thought_original, thinking_trap_choice, guided_answers, reframe_text,
+      pre_reframe_intensity, post_reframe_intensity, improvement_percentage, cbtSessionId.
+ 7. jpmrLogs:
+    - Somatic Jacobson's Progressive Muscle Relaxation records.
+    - preIntensity (1-10), postIntensity (1-10), durationSeconds, completed: boolean,
+      sourceType ("self_initiated" | "routine" | "screening" | "triage"), attemptId, triageId.
+ 8. microGoals:
+    - Non-clinical daily habits & challenge goals.
+    - goalId, goalTitle, goalDescription, category, difficulty, points, completed, status ("pending"|"completed"|"skipped").
+ 9. jpmrVideos:
+    - Media storage references (admin-only). No remote CDN URLs. JPMR uses local SVG illustrations.
+    - stepIndex, title, storageId (Id<"_storage">). Admin-only mutations.
+10. breathingLogs:
+    - Paced breathing session records.
+    - protocolId, status ("completed" | "partial" | "abandoned"), cyclesCompleted, targetCycles,
+      durationSeconds, sourceType, attemptId, triageId. Rate-limited (10/min).
+11. groundingLogs:
+    - Sensory grounding (5-4-3-2-1) session records.
+    - status ("completed" | "partial" | "abandoned"), stepsCompleted (0–5), totalSteps,
+      durationSeconds, sourceType ("self_initiated" | "cbt_support" | "crisis_blocker" | "emotion_map").
+    - ZERO free-text sensory observations stored.
+12. aiCompanionLogs:
+    - Authoritative Mitra AI conversation store.
+    - Strictly excluded from Clinical Timeline (enforced by LONG-08 test).
+    - Raw transcripts gated behind active safety alerts for counselor access (P10 architecture).
+13. dailyCheckins:
+    - Student daily self-reported mood ("great" | "good" | "calm" | "low" | "anxious").
+    - dateStr (calendar date string), streak tracking source.
+14. streaks:
+    - Consecutive local calendar day check-in streak per student.
+15. counters:
+    - Monotonic patientId allocator. OCC-safe via Convex STM (hardened in P11 Step 5A).
+
+--------------------------------------------------------------------------------
+4. CRUCIAL ARCHITECTURAL INVARIANTS & CLINICAL GUARDRAILS
+--------------------------------------------------------------------------------
+1. Absolute Clinical Decoupling:
+   - Clinical screening scores (PHQ-9, GAD-7, PQ-16) and triage tiers (green/amber/red)
+     MUST NEVER be used as inputs for ordinary intervention recommendations (daily habits, CBT, JPMR, breathing, grounding).
+   - Clinical scores are NOT injected into Gemini API calls for Mitra.
+   - Provenance fields (sourceType, attemptId, triageId) exist strictly for clinical audit and counselor timeline.
+2. Non-Fabrication Rule:
+   - If an intervention was self-initiated, attemptId and triageId MUST remain undefined.
+   - Never query "latest screening" to fabricate provenance on an unlinked session.
+3. Server-Authoritative Identity:
+   - Every mutation reads userId from `identity.subject` via `ctx.auth.getUserIdentity()`.
+   - Client-provided userId arguments in mutations are strictly ignored or rejected.
+4. Deterministic Habit Engine:
+   - Daily routine micro-goals are chosen deterministically from `common/interventions.ts`
+     using user ID + calendar date hash. Zero `Math.random` in production habit selection.
+5. Reframe Architecture:
+   - `cbtSessions` = active state machine.
+   - `reframeLogs` = permanent saved reframe history.
+   - Bridge from CBT session to `reframeLogs` is idempotent via the `by_cbtSessionId` index.
+   - CBT-linked reframeLogs are deduplicated from the top-level Clinical Timeline.
+6. Crisis & Safety Interception:
+   - In CBT or Mitra companion, any explicit suicidal ideation or self-harm keywords trigger
+     immediate server-authoritative `safety_mode`, generate a `suicideRisk` alert for counselors,
+     and show the Tele-MANAS (14416) / 988 Crisis Lifeline. Sessions in `safety_mode` never bridge to reframeLogs.
+7. Clinical Timeline is a Dynamic Read Model:
+   - `convex/timeline.ts` aggregates 18 source tables dynamically. No materialized timeline table exists.
+   - Abandoned interventions (breathingLogs, groundingLogs, jpmrLogs) are excluded.
+   - Raw AI dialogue and sensory grounding notes are never exposed in the timeline.
+8. Metric Honesty Invariants (P11):
+   - Institutional PHQ-9/GAD-7 dashboard stats are labeled as mean scores, NOT "improvements."
+   - Synthetic DAU/WAU/MAU formulas (patients × 0.45 etc.) are permanently removed.
+   - Student Calm Points count only completed micro-goals (not pending/skipped).
+   - Student mood trend is rendered as a discrete 7-day categorical calendar, NOT a continuous line chart.
+   - Relaxation telemetry covers JPMR + Breathing + Grounding combined ("Mindful Relaxation Minutes").
+9. Mitra Privacy Boundary:
+   - Ordinary Mitra conversations are strictly private (never in Clinical Timeline).
+   - Only structured safety events (safety_alert_created) appear in timeline under category "safety".
+   - Raw chat transcripts in dashboard are safety-gated (viewable only for students with active suicideRisk alerts).
+
+--------------------------------------------------------------------------------
+5. MILESTONE HISTORY & PROGRESS SUMMARY
+--------------------------------------------------------------------------------
+- Priorities 1 to 6: Core app architecture, screening intake, clinical scoring, counselor alerts,
+  role-based access control, longitudinal timeline, and clinical hardening. (CLOSED)
+- Priority 7: Counselor reassessment, longitudinal wellness, follow-ups, and active alert visibility. (CLOSED)
+  - Test coverage: 88 tests in priority7.test.ts
+- Priority 8: Personalized intervention decoupling, deterministic habit engine, CBT→reframeLogs bridge. (CLOSED)
+  - Test coverage: 52 tests in priority8.test.ts
+- Priority 9: CBT / Guided Intervention & Media. (CLOSED — 356/356 tests at closure)
+  - Step 1 (Audit): CBT, JPMR, breathing, sensory grounding, media architecture audit.
+  - Step 2 (JPMR Security & Provenance): Fixed P0 vulnerability in jpmrVideos.ts (assertIsAdmin).
+  - Step 3 (Media Resilience): Excised 15 remote Mixkit URLs; replaced with local SVG illustrations.
+  - Step 4 (Breathing Architecture Audit) + 4B (Implementation): Canonical breathing engine.
+    * constants/BreathingProtocols.ts: 4 active protocols (box_4444, paced_444, calming_434, belly_reset_3).
+    * relaxing_478 protocol: defined but disabled (isActive: false, awaiting clinical approval).
+    * hooks/useBreathingEngine.ts: pure state machine with accessibility & reduced-motion support.
+    * components/breathing/BreathingPlayer.tsx: unified animated orb player.
+    * convex/breathing.ts: breathingLogs persistence with rate limiting (10/min).
+  - Step 5 (Grounding Audit) + 5B (Implementation): Sensory grounding decoupling & privacy.
+    * SensoryGroundingPlayer.tsx: 3 modes (standalone / modal / card).
+    * convex/grounding.ts: groundingLogs — zero free-text observations.
+  - Step 6 (Timeline Audit) + 6B (Implementation): Counselor Dashboard integration.
+    * Breathing & grounding appear under "intervention" filter in Clinical Timeline.
+    * Dashboard PatientDetail Tab 4 renamed "🧘 Somatic & Sensory Interventions."
+    * Duplicate Tab 3 timeline removed.
+  - Test coverage: priority9.test.ts (24), priority9_step6b.test.ts (14), breathing.test.ts (15),
+    breathing_engine.test.ts (7), grounding.test.ts (22), timeline.test.ts (20).
+
+- Priority 10: Mitra AI Architecture, Safety, Privacy & Production Hardening. (IN PROGRESS — Steps 1 & 2 Complete)
+  - Step 1 (Audit): Discovered P0 gaps: no server-side crisis detection in companion.ts,
+    unrestricted counselor transcript access in AiMonitoring.tsx, invalid Gemini model names.
+    Baseline at audit: 356/356 tests.
+  - Step 2 (Decision Alignment): Read-only contract established.
+    * Crisis policy: Tiered server-side escalation (Tier 1 distress → somatic tools; Tier 2 acute → suicideRisk alert + safety_mode).
+    * Counselor visibility: Option D "Hybrid Safety-Gated" — raw transcripts only viewable for students with active crisis alerts.
+    * Gemini model: corrected to gemini-1.5-flash (primary) / gemini-1.5-pro (fallback).
+    * Mock branding: "Emoty" → "Mitra".
+    * Status: DECISION ALIGNMENT COMPLETE — Awaiting clinical sign-off on crisis interaction mode & transcript boundary.
+  - Steps 3–8: NOT YET STARTED (pending clinical approval).
+
+- Priority 11: Progress & Insights Scalability. (IN PROGRESS — Steps 1–5C Complete; 5D Audit Complete)
+  - Step 1 (Audit): Exhaustive read-only audit of Progress, Insights, Dashboard Analytics, and
+    Clinical Timeline. Identified 9 critical issues: fabricated DAU/WAU, Calm Points bug, misleading
+    mood line charts, missing breathing/grounding from Insights, data minimization violations, etc.
+    Baseline at audit: 356/356 tests.
+  - Step 2 (Metric Contract & Decision Alignment): Formal metric definitions & clinical labeling rules established.
+    * Institutional metrics clearly labeled as means (not improvements).
+    * Calm Points = sum of COMPLETED micro-goal points only.
+    * WSAS & ReQoL-10 remain STRICTLY INACTIVE.
+  - Step 3 (Core Metric Correctness & Data Minimization): COMPLETE.
+    * Fixed Calm Points bug (completed filter).
+    * Removed fabricated DAU/WAU from getEnterpriseAnalytics.
+    * Stripped unrendered clinical arrays (screenings, triages) from getDailyStats payload.
+    * Corrected Analytics.tsx KPI labels and CBT terminology guardrails.
+    * 11 new tests in priority11_step3.test.ts. Full suite: 367/367.
+  - Step 4 (Mood Visualization, Relaxation Telemetry, Timezone Hardening): COMPLETE.
+    * Replaced Bézier line chart with discrete 7-day categorical mood card grid.
+    * Integrated breathingLogs + groundingLogs + jpmrLogs into unified "Mindful Relaxation" widget.
+    * Added parseLocalDateNoon & getSevenDayLocalWindow for timezone-safe date handling.
+    * 21 new tests in priority11_step4.test.ts. Full suite: 388/388.
+  - Step 5 Scalability Audit: Identified unbounded queries & P0 auth-after-retrieval bugs.
+  - Step 5A (Student Query Bounding + Patient Counter): COMPLETE.
+    * Bounded getScreeningHistory & getAllAttempts to .take(20).
+    * Hardened patientId counter (OCC-safe, multi-record recovery).
+    * 24 new tests in priority11_step5a.test.ts. Full suite: 412/412.
+  - Step 5B (Compound Telemetry Indexes): COMPLETE.
+    * Added 6 compound indexes to schema.ts: jpmrLogs(by_userId_and_completedAt),
+      emotionLogs(by_userId_and_createdAt), reframeLogs(by_userId_and_createdAt),
+      breathingLogs(by_userId_and_completedAt), groundingLogs(by_userId_and_completedAt),
+      dailyCheckins(by_userId_and_createdAt).
+    * 10 new tests in priority11_step5b.test.ts. Full suite: 422/422.
+  - Step 5C (Clinical Timeline Cursor Pagination): COMPLETE.
+    * getStudentClinicalTimeline supports deterministic cursor pagination across 18 source tables.
+    * Parallel bounded queries via Promise.all; compound index coverage for all sources.
+    * Strict dynamic read model invariant preserved. No materialized table created.
+    * 20 new tests in priority11_step5c.test.ts. Full suite: 442/442.
+  - Step 5D (Counselor Roster & History Pagination Audit): AUDIT COMPLETE — IMPLEMENTATION PENDING.
+    * Baseline at audit: 445/445 tests (3 additional tests added between 5C and 5D).
+    * P0 Findings:
+      - P0-AUTH-01: getAlerts performs auth-after-retrieval (global collect, then student filter).
+      - P0-AUTH-02: getActivityFeed reads global top-50 records, then filters by student in-memory (starvation).
+      - P0-PRIV-01: getPatientAiChatHistoryAdmin has no safety-alert gate (violates P10 privacy contract).
+    * P1 Findings:
+      - listPatients: unbounded .collect() on all patients, in-memory sort & search.
+      - getDashboardOverview: full table scans on users, triages, alerts.
+      - listAllCbtSessions, getCounsellorRequests: hard .take(50/.100) without cursor pagination.
+    * Proposed implementation sequence (5D.1 → 5D.6): Fix P0 auth, add compound roster index,
+      implement cursor pagination on listPatients, CBT sessions, requests, audit logs.
+    * Deferred to Step 5E/5F/5G: institutional analytics rollups, DAU/WAU aggregation, performance benchmarking.
+
+--------------------------------------------------------------------------------
+6. NEW FILES & MODULES ADDED SINCE PRIORITY 8
+--------------------------------------------------------------------------------
+- constants/BreathingProtocols.ts       — Protocol registry (P9 Step 4B)
+- constants/GroundingProtocols.ts       — Grounding protocol registry (P9 Step 5B)
+- hooks/useBreathingEngine.ts           — Pure breathing state machine (P9 Step 4B)
+- components/breathing/BreathingPlayer.tsx  — Unified animated breathing orb (P9 Step 4B)
+- components/grounding/SensoryGroundingPlayer.tsx — Multi-modal grounding player (P9 Step 5B)
+- components/jpmr/JpmrIllustration.tsx  — Local SVG JPMR illustrations (P9 Step 3)
+- app/(auth)/tools/breathing.tsx        — Breathing tool screen (P9 Step 4B)
+- app/(auth)/tools/grounding.tsx        — Grounding tool screen (P9 Step 5B)
+- convex/breathing.ts                   — breathingLogs persistence (P9 Step 4B)
+- convex/grounding.ts                   — groundingLogs persistence (P9 Step 5B)
+- utils/date.ts (extended)              — parseLocalDateNoon, getSevenDayLocalWindow (P11 Step 4)
+
+--------------------------------------------------------------------------------
+7. COMMANDS FOR VERIFICATION
+--------------------------------------------------------------------------------
+- Run all tests:               npx vitest run
+- Run Priority 11 tests only:  npx vitest run convex/priority11_step5c.test.ts
+- TypeScript check:            npx tsc --noEmit
+- Dashboard build check:       npm run build --prefix dashboard
+- Expo start (local dev):      npx expo start
+================================================================================

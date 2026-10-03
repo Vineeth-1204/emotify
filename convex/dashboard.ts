@@ -123,17 +123,97 @@ export const getAlerts = query({
     const isStaff = caller && (caller.role === "admin" || caller.role === "counsellor");
     const callerId = caller ? String(caller._id) : identity.subject;
 
-    // Fetch all explicitly logged alert records
-    let dbAlerts = await ctx.db.query("alerts").order("desc").collect();
-
-    // If student, filter ONLY their own clinical alerts
+    // STEP 5D.1: User-scoped retrieval for non-staff students before database read
     if (!isStaff) {
       const canonicalId = caller ? String(caller._id) : callerId;
-      const legacyId = caller?.clerkId;
-      dbAlerts = dbAlerts.filter(
-        (a) => a.userId === canonicalId || (legacyId && a.userId === legacyId) || a.userId === callerId
-      );
+      const searchIds = new Set<string>([canonicalId, callerId]);
+      if (caller?.clerkId) searchIds.add(caller.clerkId);
+
+      const dbAlerts: any[] = [];
+      const seenIds = new Set<string>();
+
+      for (const uid of Array.from(searchIds)) {
+        const userAlerts = await ctx.db
+          .query("alerts")
+          .withIndex("by_userId", (q) => q.eq("userId", uid))
+          .order("desc")
+          .collect();
+        for (const a of userAlerts) {
+          if (!seenIds.has(String(a._id))) {
+            seenIds.add(String(a._id));
+            dbAlerts.push(a);
+          }
+        }
+      }
+
+      // Check student's own latest triage using user-scoped index
+      let latestTriage: any = null;
+      for (const uid of Array.from(searchIds)) {
+        const triages = await ctx.db
+          .query("triages")
+          .withIndex("by_userId", (q) => q.eq("userId", uid))
+          .order("desc")
+          .take(1);
+        if (triages.length > 0) {
+          if (!latestTriage || (triages[0].createdAt || 0) > (latestTriage.createdAt || 0)) {
+            latestTriage = triages[0];
+          }
+        }
+      }
+
+      const alertUserIds = new Set(dbAlerts.map((a) => a.userId.toString()));
+      const synthesizedAlerts: any[] = [...dbAlerts];
+
+      if (latestTriage) {
+        const hasSuicide = latestTriage.suicideFlag || latestTriage.level === "suicide_flag";
+        const hasPsychosis = latestTriage.psychosisFlag || latestTriage.level === "psychosis_flag";
+        const isSevere = latestTriage.level === "severe";
+
+        if (hasSuicide && !alertUserIds.has(canonicalId)) {
+          synthesizedAlerts.push({
+            _id: `synth_suicide_${canonicalId}` as any,
+            userId: canonicalId,
+            type: "suicideRisk",
+            status: "active",
+            createdAt: latestTriage.createdAt || Date.now(),
+          });
+        }
+        if (hasPsychosis && !alertUserIds.has(canonicalId)) {
+          synthesizedAlerts.push({
+            _id: `synth_psychosis_${canonicalId}` as any,
+            userId: canonicalId,
+            type: "psychosisRisk",
+            status: "active",
+            createdAt: latestTriage.createdAt || Date.now(),
+          });
+        }
+        if (isSevere && !hasSuicide && !hasPsychosis && !alertUserIds.has(canonicalId)) {
+          synthesizedAlerts.push({
+            _id: `synth_severe_${canonicalId}` as any,
+            userId: canonicalId,
+            type: "deterioration",
+            status: "active",
+            createdAt: latestTriage.createdAt || Date.now(),
+          });
+        }
+      }
+
+      const patientName = caller ? (caller.full_name || (caller as any).alias || "Self") : "Self";
+      const patientMobile = caller?.mobile_number || "N/A";
+      const patientId = caller ? (caller.patientId || caller._id) : canonicalId;
+
+      return synthesizedAlerts
+        .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+        .map((alert) => ({
+          ...alert,
+          patientName,
+          patientMobile,
+          patientId,
+        }));
     }
+
+    // Staff path: Institution-wide clinical alerts
+    let dbAlerts = await ctx.db.query("alerts").order("desc").collect();
     
     // Fetch all active patients
     const patients = await ctx.db
@@ -166,9 +246,6 @@ export const getAlerts = query({
 
     // For any patient whose latest triage has suicideFlag or psychosisFlag or severe level, ensure an active alert exists
     for (const [canonicalId, triage] of Object.entries(latestTriageByPatient)) {
-      if (!isStaff && canonicalId !== callerId && canonicalId !== (caller ? String(caller._id) : "") && canonicalId !== (caller?.clerkId || "")) {
-        continue;
-      }
       const patient = patientMap.get(canonicalId);
       if (!patient) continue;
 
@@ -239,17 +316,62 @@ export const getActivityFeed = query({
     const isStaff = caller && (caller.role === "admin" || caller.role === "counsellor");
     const callerId = caller ? String(caller._id) : identity.subject;
 
-    let alerts = await ctx.db.query("alerts").order("desc").take(isStaff ? 15 : 50);
-    let emotionLogs = await ctx.db.query("emotionLogs").order("desc").take(isStaff ? 15 : 50);
-    let microGoals = await ctx.db.query("microGoals").order("desc").take(isStaff ? 15 : 50);
+    let alerts: any[] = [];
+    let emotionLogs: any[] = [];
+    let microGoals: any[] = [];
 
+    // STEP 5D.1: User-scoped retrieval for non-staff students before database read
     if (!isStaff) {
       const canonicalId = caller ? String(caller._id) : callerId;
-      const legacyId = caller?.clerkId;
-      const matchesCaller = (uid: string) => uid === canonicalId || (legacyId && uid === legacyId) || uid === callerId;
-      alerts = alerts.filter(a => matchesCaller(a.userId));
-      emotionLogs = emotionLogs.filter(e => matchesCaller(e.userId));
-      microGoals = microGoals.filter(m => matchesCaller(m.userId));
+      const searchIds = new Set<string>([canonicalId, callerId]);
+      if (caller?.clerkId) searchIds.add(caller.clerkId);
+
+      const seenAlerts = new Set<string>();
+      const seenEmotions = new Set<string>();
+      const seenGoals = new Set<string>();
+
+      for (const uid of Array.from(searchIds)) {
+        const uAlerts = await ctx.db
+          .query("alerts")
+          .withIndex("by_userId", (q) => q.eq("userId", uid))
+          .order("desc")
+          .take(15);
+        for (const a of uAlerts) {
+          if (!seenAlerts.has(String(a._id))) {
+            seenAlerts.add(String(a._id));
+            alerts.push(a);
+          }
+        }
+
+        const uEmotions = await ctx.db
+          .query("emotionLogs")
+          .withIndex("by_userId", (q) => q.eq("userId", uid))
+          .order("desc")
+          .take(15);
+        for (const e of uEmotions) {
+          if (!seenEmotions.has(String(e._id))) {
+            seenEmotions.add(String(e._id));
+            emotionLogs.push(e);
+          }
+        }
+
+        const uGoals = await ctx.db
+          .query("microGoals")
+          .withIndex("by_userId", (q) => q.eq("userId", uid))
+          .order("desc")
+          .take(15);
+        for (const m of uGoals) {
+          if (!seenGoals.has(String(m._id))) {
+            seenGoals.add(String(m._id));
+            microGoals.push(m);
+          }
+        }
+      }
+    } else {
+      // Staff: Institutional feed
+      alerts = await ctx.db.query("alerts").order("desc").take(15);
+      emotionLogs = await ctx.db.query("emotionLogs").order("desc").take(15);
+      microGoals = await ctx.db.query("microGoals").order("desc").take(15);
     }
 
     const feed = [];
@@ -503,11 +625,23 @@ export const getPatientCbtAnalytics = query({
       situation: s.situation || "Unknown Situation",
     }));
 
-    // 8. Somatic & Relaxation Data (JPMR & Emotion Maps)
+    // 8. Somatic & Relaxation Data (JPMR, Breathing, Grounding & Emotion Maps)
     const jpmrLogs = await ctx.db
       .query("jpmrLogs")
       .withIndex("by_userId", (q: any) => q.eq("userId", resolvedUserId))
       .collect();
+
+    const breathingLogs = await ctx.db
+      .query("breathingLogs")
+      .withIndex("by_userId", (q: any) => q.eq("userId", resolvedUserId))
+      .order("desc")
+      .take(50);
+
+    const groundingLogs = await ctx.db
+      .query("groundingLogs")
+      .withIndex("by_userId", (q: any) => q.eq("userId", resolvedUserId))
+      .order("desc")
+      .take(50);
 
     const emotionMaps = await ctx.db
       .query("emotionMaps")
@@ -556,6 +690,8 @@ export const getPatientCbtAnalytics = query({
       recoveryTimeline,
       // Enhanced Telemetry
       jpmrLogs,
+      breathingLogs,
+      groundingLogs,
       emotionMaps,
       emotionLogs,
       reframeLogs,
@@ -569,42 +705,181 @@ export const getPatientCbtAnalytics = query({
   }
 });
 
-export const listAllCbtSessions = query({
-  args: {},
-  handler: async (ctx) => {
-    const caller = await getAuthenticatedUser(ctx);
-    if (!caller || (caller.role !== "admin" && caller.role !== "counsellor")) return [];
+export interface HistoryCursorPayload {
+  timestamp: number;
+  id: string;
+}
 
+export type PaginatedCbtResult = any[] & {
+  sessions: any[];
+  nextCursor: string | null;
+};
+
+export type PaginatedRequestsResult = any[] & {
+  requests: any[];
+  nextCursor: string | null;
+};
+
+export type PaginatedAuditResult = any[] & {
+  logs: any[];
+  nextCursor: string | null;
+};
+
+export function encodeHistoryCursor(payload: HistoryCursorPayload): string {
+  const json = JSON.stringify(payload);
+  if (typeof Buffer !== "undefined") {
+    return Buffer.from(json, "utf-8").toString("base64");
+  }
+  return btoa(json);
+}
+
+export function decodeHistoryCursor(cursorStr: string): HistoryCursorPayload {
+  let json = "";
+  try {
+    if (typeof Buffer !== "undefined") {
+      json = Buffer.from(cursorStr, "base64").toString("utf-8");
+    } else {
+      json = atob(cursorStr);
+    }
+    const parsed = JSON.parse(json);
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      typeof parsed.timestamp !== "number" ||
+      isNaN(parsed.timestamp) ||
+      typeof parsed.id !== "string" ||
+      parsed.id.trim() === ""
+    ) {
+      throw new Error("Invalid history cursor shape");
+    }
+    return parsed;
+  } catch (err) {
+    throw new Error("Invalid cursor format");
+  }
+}
+
+export const listAllCbtSessions = query({
+  args: {
+    cursor: v.optional(v.string()),
+    limit: v.optional(v.number()),
+    paginate: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const caller = await getAuthenticatedUser(ctx);
+    if (!caller || (caller.role !== "admin" && caller.role !== "counsellor")) {
+      return ((args.cursor !== undefined || args.paginate === true)
+        ? { sessions: [], nextCursor: null }
+        : []) as any as PaginatedCbtResult;
+    }
+
+    const effectiveLimit = Math.min(Math.max(args.limit ?? 20, 1), 50);
+
+    let cursorObj: HistoryCursorPayload | null = null;
+    if (args.cursor) {
+      cursorObj = decodeHistoryCursor(args.cursor);
+    }
+
+    const fetchBatchSize = Math.max(effectiveLimit * 3, 60);
     const sessions = await ctx.db
       .query("cbtSessions")
+      .withIndex("by_timestamp", (q) =>
+        cursorObj ? q.lte("timestamp", cursorObj.timestamp) : q
+      )
       .order("desc")
-      .take(50);
+      .take(fetchBatchSize);
+
+    // Compound deterministic ordering: timestamp DESC, _id DESC
+    const eligible = [];
+    for (const session of sessions) {
+      const itemTimestamp = session.timestamp ?? session._creationTime;
+      const itemId = String(session._id);
+
+      if (cursorObj) {
+        if (itemTimestamp > cursorObj.timestamp) continue;
+        if (itemTimestamp === cursorObj.timestamp && itemId.localeCompare(cursorObj.id) >= 0) continue;
+      }
+      eligible.push(session);
+    }
+
+    const pageRecords = eligible.slice(0, effectiveLimit);
+    const hasMore = eligible.length > effectiveLimit;
 
     const results = [];
-    for (const session of sessions) {
+    for (const session of pageRecords) {
       const patientName = await getPatientName(ctx, session.userId);
       results.push({
         ...session,
         patientName,
       });
     }
-    return results;
+
+    const nextCursor =
+      hasMore && pageRecords.length > 0
+        ? encodeHistoryCursor({
+            timestamp: pageRecords[pageRecords.length - 1].timestamp ?? pageRecords[pageRecords.length - 1]._creationTime,
+            id: String(pageRecords[pageRecords.length - 1]._id),
+          })
+        : null;
+
+    if (args.cursor !== undefined || args.paginate === true) {
+      return {
+        sessions: results,
+        nextCursor,
+      } as any as PaginatedCbtResult;
+    }
+
+    return results as any as PaginatedCbtResult;
   }
 });
 
 export const getCounsellorRequests = query({
-  args: {},
-  handler: async (ctx) => {
+  args: {
+    cursor: v.optional(v.string()),
+    limit: v.optional(v.number()),
+    paginate: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
     const caller = await getAuthenticatedUser(ctx);
-    if (!caller || (caller.role !== "admin" && caller.role !== "counsellor")) return [];
+    if (!caller || (caller.role !== "admin" && caller.role !== "counsellor")) {
+      return ((args.cursor !== undefined || args.paginate === true)
+        ? { requests: [], nextCursor: null }
+        : []) as any as PaginatedRequestsResult;
+    }
 
+    const effectiveLimit = Math.min(Math.max(args.limit ?? 25, 1), 50);
+
+    let cursorObj: HistoryCursorPayload | null = null;
+    if (args.cursor) {
+      cursorObj = decodeHistoryCursor(args.cursor);
+    }
+
+    const fetchBatchSize = Math.max(effectiveLimit * 3, 75);
     const requests = await ctx.db
       .query("counsellorRequests")
+      .withIndex("by_timestamp", (q) =>
+        cursorObj ? q.lte("timestamp", cursorObj.timestamp) : q
+      )
       .order("desc")
-      .take(50);
+      .take(fetchBatchSize);
+
+    // Compound deterministic ordering: timestamp DESC, _id DESC
+    const eligible = [];
+    for (const req of requests) {
+      const itemTimestamp = req.timestamp ?? req._creationTime;
+      const itemId = String(req._id);
+
+      if (cursorObj) {
+        if (itemTimestamp > cursorObj.timestamp) continue;
+        if (itemTimestamp === cursorObj.timestamp && itemId.localeCompare(cursorObj.id) >= 0) continue;
+      }
+      eligible.push(req);
+    }
+
+    const pageRecords = eligible.slice(0, effectiveLimit);
+    const hasMore = eligible.length > effectiveLimit;
 
     const results = [];
-    for (const req of requests) {
+    for (const req of pageRecords) {
       const userId = req.user_id || "";
       let patient = null;
       try {
@@ -623,20 +898,74 @@ export const getCounsellorRequests = query({
         patientId: patient ? (patient._id || patient.clerkId) : userId,
       });
     }
-    return results;
+
+    const nextCursor =
+      hasMore && pageRecords.length > 0
+        ? encodeHistoryCursor({
+            timestamp: pageRecords[pageRecords.length - 1].timestamp ?? pageRecords[pageRecords.length - 1]._creationTime,
+            id: String(pageRecords[pageRecords.length - 1]._id),
+          })
+        : null;
+
+    if (args.cursor !== undefined || args.paginate === true) {
+      return {
+        requests: results,
+        nextCursor,
+      } as any as PaginatedRequestsResult;
+    }
+
+    return results as any as PaginatedRequestsResult;
   }
 });
 
 export const getAuditLogs = query({
-  args: {},
-  handler: async (ctx) => {
+  args: {
+    cursor: v.optional(v.string()),
+    limit: v.optional(v.number()),
+    paginate: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
     const caller = await getAuthenticatedUser(ctx);
-    if (!caller || caller.role !== "admin") return [];
+    if (!caller || caller.role !== "admin") {
+      return ((args.cursor !== undefined || args.paginate === true)
+        ? { logs: [], nextCursor: null }
+        : []) as any as PaginatedAuditResult;
+    }
 
-    const logs = await ctx.db.query("auditLogs").order("desc").take(100);
-    const results = [];
+    const effectiveLimit = Math.min(Math.max(args.limit ?? 50, 1), 100);
 
+    let cursorObj: HistoryCursorPayload | null = null;
+    if (args.cursor) {
+      cursorObj = decodeHistoryCursor(args.cursor);
+    }
+
+    const fetchBatchSize = Math.max(effectiveLimit * 3, 150);
+    const logs = await ctx.db
+      .query("auditLogs")
+      .withIndex("by_timestamp", (q) =>
+        cursorObj ? q.lte("timestamp", cursorObj.timestamp) : q
+      )
+      .order("desc")
+      .take(fetchBatchSize);
+
+    // Compound deterministic ordering: timestamp DESC, _id DESC
+    const eligible = [];
     for (const log of logs) {
+      const itemTimestamp = log.timestamp ?? log._creationTime;
+      const itemId = String(log._id);
+
+      if (cursorObj) {
+        if (itemTimestamp > cursorObj.timestamp) continue;
+        if (itemTimestamp === cursorObj.timestamp && itemId.localeCompare(cursorObj.id) >= 0) continue;
+      }
+      eligible.push(log);
+    }
+
+    const pageRecords = eligible.slice(0, effectiveLimit);
+    const hasMore = eligible.length > effectiveLimit;
+
+    const results = [];
+    for (const log of pageRecords) {
       let patientName = "System / Admin";
       if (log.userId) {
         patientName = await getPatientName(ctx, log.userId);
@@ -647,7 +976,22 @@ export const getAuditLogs = query({
       });
     }
 
-    return results;
+    const nextCursor =
+      hasMore && pageRecords.length > 0
+        ? encodeHistoryCursor({
+            timestamp: pageRecords[pageRecords.length - 1].timestamp ?? pageRecords[pageRecords.length - 1]._creationTime,
+            id: String(pageRecords[pageRecords.length - 1]._id),
+          })
+        : null;
+
+    if (args.cursor !== undefined || args.paginate === true) {
+      return {
+        logs: results,
+        nextCursor,
+      } as any as PaginatedAuditResult;
+    }
+
+    return results as any as PaginatedAuditResult;
   }
 });
 
@@ -837,9 +1181,6 @@ export const getEnterpriseAnalytics = query({
 
     return {
       totalPatients: patients.length,
-      dau: Math.round(patients.length * 0.45),
-      wau: Math.round(patients.length * 0.75),
-      mau: patients.length,
       totalSessions: sessions.length,
       completedSessions: sessions.filter(s => s.sessionStatus === "completed").length,
       avgPhqScore: avgPhq,

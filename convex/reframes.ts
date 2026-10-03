@@ -16,6 +16,7 @@ export const create = mutation({
     sourceType: v.optional(v.string()),
     attemptId: v.optional(v.id("screeningAttempts")),
     triageId: v.optional(v.id("triages")),
+    cbtSessionId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
@@ -52,6 +53,7 @@ export const create = mutation({
       sourceType: args.sourceType || "self_initiated",
       attemptId: args.attemptId,
       triageId: args.triageId,
+      cbtSessionId: args.cbtSessionId,
       createdAt: Date.now(),
     });
   },
@@ -114,6 +116,7 @@ export const createLog = mutation({
     sourceType: v.optional(v.string()),
     attemptId: v.optional(v.id("screeningAttempts")),
     triageId: v.optional(v.id("triages")),
+    cbtSessionId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
@@ -145,6 +148,7 @@ export const createLog = mutation({
       sourceType: args.sourceType || "self_initiated",
       attemptId: args.attemptId,
       triageId: args.triageId,
+      cbtSessionId: args.cbtSessionId,
       createdAt: Date.now(),
     });
   },

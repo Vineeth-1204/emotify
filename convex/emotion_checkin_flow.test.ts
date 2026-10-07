@@ -21,6 +21,7 @@
 import { describe, test, expect } from "vitest";
 import { convexTest } from "convex-test";
 import schema from "./schema";
+import { testUserId } from "../test-utils/identity";
 import { api } from "./_generated/api";
 import {
   determineIntervention,
@@ -41,6 +42,7 @@ describe("Emotion Check-in Flow — Phase 1", () => {
     });
 
     const session = t.withIdentity({ subject: "student_101" });
+    const uid_student_101 = await testUserId(session, "student_101");
 
     const logId = await session.mutation(api.emotionLogs.create, {
       emotion: "Worried",
@@ -52,7 +54,7 @@ describe("Emotion Check-in Flow — Phase 1", () => {
 
     expect(logId).toBeDefined();
 
-    const logs = await session.query(api.emotionLogs.getRecent, { userId: "student_101" });
+    const logs = await session.query(api.emotionLogs.getRecent, { userId: uid_student_101 });
     expect(logs).toHaveLength(1);
     expect(logs[0].emotion).toBe("Worried");
     expect(logs[0].strongestEmotion).toBe("Worried");
@@ -72,6 +74,7 @@ describe("Emotion Check-in Flow — Phase 1", () => {
     });
 
     const session = t.withIdentity({ subject: "student_102" });
+    const uid_student_102 = await testUserId(session, "student_102");
 
     const logId = await session.mutation(api.emotionLogs.create, {
       emotion: "Worried",
@@ -83,7 +86,7 @@ describe("Emotion Check-in Flow — Phase 1", () => {
 
     expect(logId).toBeDefined();
 
-    const logs = await session.query(api.emotionLogs.getRecent, { userId: "student_102" });
+    const logs = await session.query(api.emotionLogs.getRecent, { userId: uid_student_102 });
     expect(logs).toHaveLength(1);
     expect(logs[0].emotion).toBe("Worried");
     expect(logs[0].strongestEmotion).toBe("Worried");
@@ -121,6 +124,7 @@ describe("Emotion Check-in Flow — Phase 1", () => {
     });
 
     const session = t.withIdentity({ subject: "student_104" });
+    const uid_student_104 = await testUserId(session, "student_104");
 
     // Empty emotion string
     await expect(
@@ -151,6 +155,7 @@ describe("Emotion Check-in Flow — Phase 1", () => {
     });
 
     const session = t.withIdentity({ subject: "student_105" });
+    const uid_student_105 = await testUserId(session, "student_105");
 
     // "Angry" is NOT in ["Worried", "Sad"]
     await expect(
@@ -178,6 +183,7 @@ describe("Emotion Check-in Flow — Phase 1", () => {
     });
 
     const session = t.withIdentity({ subject: "student_106" });
+    const uid_student_106 = await testUserId(session, "student_106");
 
     // Submitting single emotion without explicit strongestEmotion defaults to that emotion
     const logId = await session.mutation(api.emotionLogs.create, {
@@ -186,7 +192,7 @@ describe("Emotion Check-in Flow — Phase 1", () => {
       bodyRegions: ["Shoulders"],
     });
 
-    const logs = await session.query(api.emotionLogs.getRecent, { userId: "student_106" });
+    const logs = await session.query(api.emotionLogs.getRecent, { userId: uid_student_106 });
     expect(logs[0].strongestEmotion).toBe("Calm");
     expect(logs[0].emotion).toBe("Calm");
   });
@@ -202,6 +208,7 @@ describe("Emotion Check-in Flow — Phase 1", () => {
     });
 
     const session = t.withIdentity({ subject: "student_107" });
+    const uid_student_107 = await testUserId(session, "student_107");
 
     // Body regions empty when user is unsure
     const logId = await session.mutation(api.emotionLogs.create, {
@@ -213,7 +220,7 @@ describe("Emotion Check-in Flow — Phase 1", () => {
     });
 
     expect(logId).toBeDefined();
-    const logs = await session.query(api.emotionLogs.getRecent, { userId: "student_107" });
+    const logs = await session.query(api.emotionLogs.getRecent, { userId: uid_student_107 });
     expect(logs[0].bodyRegions).toEqual([]);
   });
 
@@ -228,6 +235,7 @@ describe("Emotion Check-in Flow — Phase 1", () => {
     });
 
     const session = t.withIdentity({ subject: "student_108" });
+    const uid_student_108 = await testUserId(session, "student_108");
 
     // Valid intensity: 9
     await session.mutation(api.emotionLogs.create, {
@@ -236,7 +244,7 @@ describe("Emotion Check-in Flow — Phase 1", () => {
       preIntensity: 9,
     });
 
-    const logs = await session.query(api.emotionLogs.getRecent, { userId: "student_108" });
+    const logs = await session.query(api.emotionLogs.getRecent, { userId: uid_student_108 });
     expect(logs[0].preIntensity).toBe(9);
 
     // Invalid intensity: 0
@@ -332,6 +340,7 @@ describe("Emotion Check-in Flow — Phase 1", () => {
     });
 
     const session = t.withIdentity({ subject: "student_111" });
+    const uid_student_111 = await testUserId(session, "student_111");
 
     await session.mutation(api.emotionLogs.create, {
       emotion: "Worried",
@@ -341,7 +350,7 @@ describe("Emotion Check-in Flow — Phase 1", () => {
       preIntensity: 6,
     });
 
-    const logs = await session.query(api.emotionLogs.getRecent, { userId: "student_111" });
+    const logs = await session.query(api.emotionLogs.getRecent, { userId: uid_student_111 });
     expect(logs).toHaveLength(1);
   });
 
@@ -352,11 +361,11 @@ describe("Emotion Check-in Flow — Phase 1", () => {
     const t = convexTest(schema);
 
     await t.run(async (ctx) => {
-      await ctx.db.insert("users", { clerkId: "student_112", role: "patient" });
+      const seedId_student_112 = await ctx.db.insert("users", { clerkId: "student_112", role: "patient" });
 
       // Legacy insert without new fields
       await ctx.db.insert("emotionLogs", {
-        userId: "student_112",
+        userId: String(seedId_student_112),
         emotion: "Sad",
         bodyRegions: ["Chest"],
         preIntensity: 5,
@@ -366,8 +375,9 @@ describe("Emotion Check-in Flow — Phase 1", () => {
     });
 
     const session = t.withIdentity({ subject: "student_112" });
+    const uid_student_112 = await testUserId(session, "student_112");
 
-    const logs = await session.query(api.emotionLogs.getRecent, { userId: "student_112" });
+    const logs = await session.query(api.emotionLogs.getRecent, { userId: uid_student_112 });
     expect(logs).toHaveLength(1);
     expect(logs[0].emotion).toBe("Sad");
     expect(logs[0].preIntensity).toBe(5);
@@ -395,6 +405,7 @@ describe("Emotion Check-in Flow — Phase 1", () => {
     });
 
     const bobSession = t.withIdentity({ subject: "student_bob" });
+    const uid_student_bob = await testUserId(bobSession, "student_bob");
 
     // Bob attempts to read Alice's emotion logs
     await expect(

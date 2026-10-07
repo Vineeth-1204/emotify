@@ -355,157 +355,22 @@ describe("P14 Step 2: P0 Critical Vulnerability Remediation Suite", () => {
   // =========================================================================
   // 4. EMOT-SEC-05: LEGACY SCREENING SCORE FORGERY
   // =========================================================================
-  describe("EMOT-SEC-05: Legacy submitScreening Score Forgery Remediation", () => {
-    test("SEC-P0-14: Anonymous submitScreening rejected", async () => {
-      const { anon, studentAId } = await setupSecurityEnvironment();
-      await expect(
-        anon.mutation(api.screening.submitScreening, {
-          userId: studentAId,
-          phq9_total: 20,
-          gad7_total: 18,
-          pq16_total: 5,
-          phq9_item9_flag: true,
-          phq9_item9_score: 2,
-        })
-      ).rejects.toThrow(/Unauthenticated: Must be logged in to submit screening/i);
-    });
-
-    test("SEC-P0-15: Student cannot submit screening for another student", async () => {
-      const { authedA, studentBId } = await setupSecurityEnvironment();
-      await expect(
-        authedA.mutation(api.screening.submitScreening, {
-          userId: studentBId,
-          phq9_total: 25,
-          gad7_total: 20,
-          pq16_total: 8,
-          phq9_item9_flag: true,
-          phq9_item9_score: 3,
-        })
-      ).rejects.toThrow(/Unauthorized: Students can access ONLY their own clinical data/i);
-    });
-
-    test("SEC-P0-16: Authenticated legitimate screening flow remains functional", async () => {
-      const { authedA, studentAId, t } = await setupSecurityEnvironment();
-
-      const screeningId = await authedA.mutation(api.screening.submitScreening, {
-        userId: studentAId,
-        phq9_total: 10,
-        gad7_total: 7,
-        pq16_total: 2,
-        phq9_item9_flag: false,
-        phq9_item9_score: 0,
-      });
-
-      expect(screeningId).toBeDefined();
-
-      const doc = await t.run(async (ctx) => {
-        return await ctx.db.get(screeningId);
-      });
-      expect(doc?.userId).toBe(studentAId);
-      expect(doc?.phq9_total).toBe(10);
-      expect(doc?.gad7_total).toBe(7);
-      expect(doc?.pq16_total).toBe(2);
-    });
-
-    test("SEC-P0-17: Impossible PHQ-9/GAD-7/PQ-16 totals rejected", async () => {
-      const { authedA, studentAId } = await setupSecurityEnvironment();
-
-      // PHQ-9 exceeds max 27
-      await expect(
-        authedA.mutation(api.screening.submitScreening, {
-          userId: studentAId,
-          phq9_total: 28,
-          gad7_total: 10,
-          pq16_total: 0,
-          phq9_item9_flag: false,
-          phq9_item9_score: 0,
-        })
-      ).rejects.toThrow(/Invalid score range/i);
-
-      // GAD-7 exceeds max 21
-      await expect(
-        authedA.mutation(api.screening.submitScreening, {
-          userId: studentAId,
-          phq9_total: 10,
-          gad7_total: 22,
-          pq16_total: 0,
-          phq9_item9_flag: false,
-          phq9_item9_score: 0,
-        })
-      ).rejects.toThrow(/Invalid score range/i);
-
-      // PQ-16 exceeds max 16
-      await expect(
-        authedA.mutation(api.screening.submitScreening, {
-          userId: studentAId,
-          phq9_total: 10,
-          gad7_total: 10,
-          pq16_total: 17,
-          phq9_item9_flag: false,
-          phq9_item9_score: 0,
-        })
-      ).rejects.toThrow(/Invalid score range/i);
-
-      // Negative score rejected
-      await expect(
-        authedA.mutation(api.screening.submitScreening, {
-          userId: studentAId,
-          phq9_total: -1,
-          gad7_total: 10,
-          pq16_total: 0,
-          phq9_item9_flag: false,
-          phq9_item9_score: 0,
-        })
-      ).rejects.toThrow(/Invalid score range/i);
-    });
-
-    test("SEC-P0-18: Clinical scores cannot be arbitrarily forged through inconsistent flags", async () => {
-      const { authedA, studentAId } = await setupSecurityEnvironment();
-
-      // Flag true but score 0
-      await expect(
-        authedA.mutation(api.screening.submitScreening, {
-          userId: studentAId,
-          phq9_total: 12,
-          gad7_total: 8,
-          pq16_total: 1,
-          phq9_item9_flag: true,
-          phq9_item9_score: 0,
-        })
-      ).rejects.toThrow(/flag is true but score is 0/i);
-
-      // Flag false but positive score
-      await expect(
-        authedA.mutation(api.screening.submitScreening, {
-          userId: studentAId,
-          phq9_total: 12,
-          gad7_total: 8,
-          pq16_total: 1,
-          phq9_item9_flag: false,
-          phq9_item9_score: 2,
-        })
-      ).rejects.toThrow(/score is positive but flag is false/i);
-    });
-
-    test("SEC-P0-18b: Staff (Counselor) can submit legacy screening for student", async () => {
-      const { authedCounselor, studentBId, t } = await setupSecurityEnvironment();
-
-      const screeningId = await authedCounselor.mutation(api.screening.submitScreening, {
-        userId: studentBId,
-        phq9_total: 15,
-        gad7_total: 12,
-        pq16_total: 4,
-        phq9_item9_flag: true,
-        phq9_item9_score: 1,
-      });
-
-      expect(screeningId).toBeDefined();
-
-      const doc = await t.run(async (ctx) => {
-        return await ctx.db.get(screeningId);
-      });
-      expect(doc?.userId).toBe(studentBId);
-      expect(doc?.phq9_total).toBe(15);
+  describe("EMOT-SEC-05: Legacy client-scored screening writer removed", () => {
+    test("SEC-P0-14: submitScreening is no longer a callable public function", async () => {
+      const { t, authedA, authedCounselor } = await setupSecurityEnvironment();
+      for (const caller of [t, authedA, authedCounselor]) {
+        await expect(
+          caller.mutation((api.screening as any).submitScreening, {
+            phq9_total: 5,
+            gad7_total: 5,
+            pq16_total: 0,
+            phq9_item9_flag: false,
+            phq9_item9_score: 0,
+          })
+        ).rejects.toThrow();
+      }
+      const rows = await t.run(async (ctx) => ctx.db.query("screenings").collect());
+      expect(rows).toHaveLength(0);
     });
   });
 });

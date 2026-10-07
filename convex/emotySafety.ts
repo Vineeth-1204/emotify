@@ -1,5 +1,6 @@
 import { type EmotySafetyState } from "./emotyContext";
 import { type EmotyResponseContract } from "./emotyContract";
+import { CRISIS_RESOURCES, CRISIS_RESOURCES_SUMMARY } from "../common/crisisResources";
 
 // =========================================================================
 // 1. EMERGENCY RESOURCES CONFIGURATION
@@ -8,15 +9,15 @@ import { type EmotyResponseContract } from "./emotyContract";
 export interface EmergencyResourceConfig {
   teleManasNumber: string;
   teleManasTollFree: string;
-  nationalLifeline: string;
+  emergencyNumber: string;
   displaySummary: string;
 }
 
 export const EMERGENCY_RESOURCES: EmergencyResourceConfig = {
-  teleManasNumber: "14416",
-  teleManasTollFree: "1800-891-4416",
-  nationalLifeline: "988",
-  displaySummary: "Tele-MANAS (14416 / 1800-891-4416) or 988 Lifeline",
+  teleManasNumber: CRISIS_RESOURCES.helplineNumber,
+  teleManasTollFree: CRISIS_RESOURCES.helplineTollFree,
+  emergencyNumber: CRISIS_RESOURCES.emergencyNumber,
+  displaySummary: CRISIS_RESOURCES_SUMMARY,
 };
 
 // =========================================================================
@@ -54,11 +55,112 @@ export function normalizeSafetyText(input: string): string {
 }
 
 /**
+ * Third-party subject markers (friend, roommate, family member, someone else).
+ * Only used to keep GENERIC risk phrases ("my friend attempted suicide") from being
+ * attributed to the student. First-person disclosures always win.
+ */
+const THIRD_PARTY_SUBJECT_PATTERNS: RegExp[] = [
+  /\b(my\s+friend|my\s+best\s+friend|my\s+roommate|my\s+brother|my\s+sister|my\s+mom|my\s+mother|my\s+dad|my\s+father|my\s+cousin|my\s+partner|my\s+boyfriend|my\s+girlfriend|my\s+classmate|someone\s+i\s+know|a\s+friend\s+of\s+mine|a\s+friend)\b/,
+  /\b(friend|roommate|classmate|brother|sister|cousin)\s+(wants\s+to|is\s+going\s+to|might|said|says|is\s+talking\s+about|attempted|tried)\b/,
+  /\bworried\s+(that\s+)?(my\s+friend|my\s+roommate|someone|he|she|they)\b/,
+];
+
+/**
+ * First-person (self-directed) crisis disclosures, matched on normalized text
+ * (lowercase, apostrophes removed: "i'm" -> "im", "don't" -> "dont").
+ * These are ALWAYS treated as a student crisis, even if a third party or an idiom
+ * is also mentioned in the same message.
+ */
+const SELF_CRISIS_PATTERNS: RegExp[] = [
+  // Explicit wish or intent to die
+  /\bi\s+(just\s+|really\s+|honestly\s+|kinda\s+|kind\s+of\s+|sometimes\s+|still\s+|actually\s+)*(want|wanna)\s+(to\s+)?die\b(?!\s+(of\s+)?laughing)/,
+  /\bi\s*m\s+(ready|going|gonna)\s+to\s+die\b/,
+  /\b(want|wanna|going|gonna|plan|planning|decided|ready|trying|tried|try)\s+(to\s+)?(kill|end|take)\s+(myself|my\s+(own\s+)?life|it\s+all)\b/,
+  /\b(kill|killing|hang|hanging|drown|drowning|starve|starving)\s+myself\b/,
+  /\b(ending|end)\s+(it\s+all|my\s+(own\s+)?life)\b/,
+  /\btake\s+my\s+(own\s+)?life\b/,
+  /\b(better\s+off\s+dead|better\s+off\s+without\s+me)\b/,
+  /\bi\s+wish\s+i\s+(was|were)\s+dead\b/,
+  /\b(dont|do\s+not|no\s+longer)\s+want\s+to\s+(live|be\s+alive|exist|be\s+here\s+anymore)\b/,
+  /\b(nothing|no\s+reason)\s+(left\s+)?to\s+live\s+for\b|\bno\s+reason\s+to\s+(live|keep\s+going)\b/,
+  // Suicidal ideation in the first person
+  /\b(i|im|i\s+am|ive\s+been|i\s+have\s+been|i\s+feel|im\s+feeling|feeling|felt)\s+(so\s+|really\s+|very\s+|kind\s+of\s+|kinda\s+|pretty\s+|a\s+bit\s+|a\s+little\s+)?suicidal\b/,
+  /\b(i\s+have|ive|ive\s+been\s+having|im\s+having|having|i\s+get|i\s+keep\s+having|i\s+had)\s+(some\s+)?suicidal\s+(thoughts|feelings|ideation|urges)\b/,
+  /\b(thinking|thought|thoughts|think)\s+(about|of)\s+(suicide|killing\s+myself|ending\s+my\s+life|ending\s+it(\s+all)?|taking\s+my\s+(own\s+)?life|hurting\s+myself|cutting\s+myself)\b/,
+  /\bmy\s+suicide\s+(plan|note|attempt)\b/,
+  /\bi\s+(attempted|tried\s+to\s+commit)\s+suicide\b/,
+  // Self-harm (intent, ongoing, or recent)
+  /\b(want|wanna|going|gonna|might|plan|planning|trying|tried|urge|urges)\s+(to\s+)?(hurt|harm|cut|burn)\s+myself\b/,
+  /\b(cut|cutting|burn|burning|harm|harming)\s+myself\b(?!\s+(shaving|while|accidentally|by\s+accident|on\s+(a|the|some)))/,
+  /\b(keep|been|kept|started)\s+(hurting|harming|cutting)\s+myself\b/,
+  /\bi\s+(self\s+harm|selfharm)\b|\bmy\s+self\s+harm\b/,
+  // Slang
+  /\bkms\b/,
+  /\bunalive\s+myself\b/,
+];
+
+/**
+ * Generic high-risk phrases with no explicit subject. Treated as a student crisis
+ * unless the message is clearly about someone else.
+ */
+const GENERIC_CRISIS_PATTERNS: RegExp[] = [
+  /\b(commit|committing|attempt|attempting|consider|considering|contemplating)\s+suicide\b/,
+  /\bsuicid(e|al)\s+(plan|note|attempt|thoughts|ideation)\b/,
+  /\b(overdose|overdosed|overdosing)\b/,
+  /\b(took|take|taken|swallowed|swallow|taking)\s+(a\s+bunch\s+of|all\s+(my|the|of\s+my)|too\s+many|lots\s+of|a\s+lot\s+of|an\s+entire|the\s+whole|a\s+whole)\s+(bottle\s+of\s+)?(pills|tablets|meds|medicine|medication|sleeping\s+pills)\b/,
+  /\bunalive\b/,
+  // Romanized Hindi / Hinglish
+  /\b(mujhe|main|mai|mein)\s+(marna|mar\s+jana|mar\s+jaana)\s+(hai|chahta|chahti|chahte)\b/,
+  /\b(marna|mar\s+jana|mar\s+jaana|mar\s+jaun|mar\s+jaunga|mar\s+jaungi)\s+(chahta|chahti|chahte|hai)\b/,
+  /\bkhud\s*(ko)?\s+(maar|mar|khatam)\s*(dunga|dungi|lunga|lungi|dena|lena|du|lu|doon|loon)?\b/,
+  /\b(aatmahatya|atmahatya|aatmhatya|khudkushi|khudkhushi)\b/,
+  /\b(jeena|jina|jeene)\s+(nahi|nahin)\s+(chahta|chahti|chahte|hai)\b/,
+  /\bzindagi\s+(khatam|khatm)\s+(karna|kar|karni|kardu|kar\s+du|kar\s+dunga|kar\s+dungi)\b/,
+  /\bsuicide\s+(karna|kar\s+lunga|kar\s+lungi|kar\s+loon|kar\s+lu|karunga|karungi)\b/,
+];
+
+/**
+ * Native-script phrases (Hindi / Tamil / Telugu), matched on the NFC-normalized raw
+ * text because the ASCII normalizer strips non-Latin characters.
+ * NOTE: requires review by native speakers and the clinical lead.
+ */
+const NATIVE_SCRIPT_CRISIS_PATTERNS: RegExp[] = [
+  // Hindi
+  /मरना\s*चाहत/,
+  /मर\s*जाना\s*चाहत/,
+  /मुझे\s*मरना\s*है/,
+  /आत्महत्या/,
+  /ख़ुदकुशी|खुदकुशी/,
+  /(ख़ुद|खुद)\s*को\s*(मार|ख़त्म|खत्म)/,
+  /जीना\s*नहीं\s*चाहत/,
+  // Tamil
+  /தற்கொலை/,
+  /சாக\s*(வேண்டும்|விரும்பு|போகிறேன்)/,
+  // Telugu
+  /ఆత్మహత్య/,
+  /చనిపోవాల/,
+];
+
+function matchesAny(patterns: RegExp[], text: string): boolean {
+  return patterns.some((p) => p.test(text));
+}
+
+function hasThirdPartySubject(normalized: string): boolean {
+  return matchesAny(THIRD_PARTY_SUBJECT_PATTERNS, normalized);
+}
+
+/** Third-party risk talk without any first-person disclosure. */
+function isThirdPartySafetyDisclosure(normalized: string): boolean {
+  if (!hasThirdPartySubject(normalized)) return false;
+  return /\b(die|dying|dead|kill|killing|suicide|suicidal|hurt|harm|cut|cutting|overdose|(end|ending|take|taking)\s+(his|her|their)\s+(own\s+)?life|(kill|hurt|harm|cut)\w*\s+(himself|herself|themselves|themself))\b/.test(normalized);
+}
+
+/**
  * Evaluates whether a message is an idiom, benign hyperbolic expression,
  * or academic context rather than actual self-harm/suicide.
+ * Only consulted AFTER crisis checks, so it can never mask a real disclosure.
  */
 function isContextualIdiom(text: string): boolean {
-  // e.g. "die laughing", "killed me", "kill this assignment", "dead tired"
   const idiomPatterns = [
     /\b(die|dying)\s+(of\s+)?laughing\b/,
     /\b(exam|test|assignment|homework|workout|run|sprint|project|class|lecture)\s+killed\s+me\b/,
@@ -69,63 +171,7 @@ function isContextualIdiom(text: string): boolean {
     /\bwish\s+i\s+wasn'?t\s+here\s+for\s+(this|the)\s+(lecture|class|exam|meeting|talk|presentation)\b/,
     /\b(so|totally|completely)\s+done\s+with\s+(this|the|my)\s+(assignment|homework|project|class|exam|paper)\b/,
   ];
-
   return idiomPatterns.some((p) => p.test(text));
-}
-
-/**
- * Evaluates whether the disclosure pertains to a third party (friend, roommate,
- * family member, someone else) rather than the authenticated student.
- */
-function isThirdPartySafetyDisclosure(text: string): boolean {
-  const thirdPartySubjectPatterns = [
-    /\b(my\s+friend|my\s+roommate|my\s+brother|my\s+sister|my\s+mom|my\s+dad|my\s+cousin|my\s+partner|my\s+boyfriend|my\s+girlfriend|my\s+classmate|someone\s+i\s+know|a\s+friend\s+of\s+mine)\b/,
-    /\b(friend|roommate|classmate|brother|sister|cousin)\s+(wants\s+to|is\s+going\s+to|might|said\s+they\s+will|is\s+talking\s+about)\s+(die|kill\s+(himself|herself|themselves)|hurt\s+(himself|herself|themselves)|suicide)\b/,
-    /\bworried\s+(that\s+)?(my\s+friend|my\s+roommate|someone|he|she|they)\s+(might|is\s+going\s+to)\s+(hurt|kill)\s+(himself|herself|themselves)\b/,
-  ];
-
-  // Self indicators
-  const selfCrisisPatterns = [
-    /\b(i\s+want\s+to\s+die|i\s+want\s+to\s+kill\s+myself|i\s+'?m\s+going\s+to\s+kill\s+myself|i\s+will\s+kill\s+myself|i\s+might\s+hurt\s+myself|i\s+am\s+going\s+to\s+hurt\s+myself)\b/,
-  ];
-
-  const hasThirdParty = thirdPartySubjectPatterns.some((p) => p.test(text));
-  const hasSelfCrisis = selfCrisisPatterns.some((p) => p.test(text));
-
-  // If message mentions both, self crisis must take precedence
-  return hasThirdParty && !hasSelfCrisis;
-}
-
-/**
- * Evaluates explicit self-directed suicidal intent or self-harm intent.
- */
-function isExplicitCrisis(text: string): boolean {
-  const explicitPatterns = [
-    // Suicide intent
-    /\b(i\s+want\s+to\s+die)\b/,
-    /\b(i\s+wanna\s+die)\b/,
-    /\b(i\s+want\s+to\s+kill\s+myself)\b/,
-    /\b(i\s*m\s+going\s+to\s+kill\s+myself)\b/,
-    /\b(i\s+am\s+going\s+to\s+kill\s+myself)\b/,
-    /\b(i\s+will\s+kill\s+myself)\b/,
-    /\b(i\s+have\s+decided\s+to\s+kill\s+myself)\b/,
-    /\b(going\s+to\s+end\s+my\s+life)\b/,
-    /\b(want\s+to\s+end\s+my\s+life)\b/,
-    /\b(i\s+am\s+ending\s+it\s+all)\b/,
-    /\b(i\s+want\s+to\s+end\s+it\s+all)\b/,
-    /\b(i\s+am\s+better\s+off\s+dead)\b/,
-    /\b(better\s+off\s+dead)\b/,
-    // Self-harm intent
-    /\b(i\s+might\s+hurt\s+myself)\b/,
-    /\b(i\s+am\s+going\s+to\s+hurt\s+myself)\b/,
-    /\b(i\s*m\s+going\s+to\s+hurt\s+myself)\b/,
-    /\b(i\s+want\s+to\s+cut\s+myself)\b/,
-    /\b(i\s+am\s+cutting\s+myself)\b/,
-    /\b(i\s+want\s+to\s+harm\s+myself)\b/,
-    /\b(i\s+plan\s+to\s+kill\s+myself)\b/,
-  ];
-
-  return explicitPatterns.some((p) => p.test(text));
 }
 
 /**
@@ -146,19 +192,25 @@ function isElevatedDistress(text: string): boolean {
     /\b(i\s+feel\s+completely\s+hopeless)\b/,
     /\b(no\s+one\s+would\s+care\s+if\s+i\s+was\s+gone)\b/,
     /\b(giving\s+up\s+on\s+everything)\b/,
+    /\b(i\s+(feel|am|m)\s+(so\s+|really\s+)?hopeless)\b/,
+    /\b(i\s+dont\s+want\s+to\s+wake\s+up)\b/,
   ];
-
   return elevatedPatterns.some((p) => p.test(text));
 }
 
 /**
  * Authoritative deterministic Server Safety Gate classifier.
  * Never delegates safety-state decisions or crisis classification to Gemini.
+ *
+ * Order matters: a first-person crisis disclosure is checked BEFORE idioms and
+ * third-party context, so "this exam killed me and I want to die" or
+ * "my friend left and I am better off dead" are still treated as a crisis.
  */
 export function classifyServerSafety(rawMessage: string): SafetyClassificationResult {
   const normalized = normalizeSafetyText(rawMessage);
+  const nativeText = (rawMessage || "").normalize("NFC").toLowerCase();
 
-  if (!normalized) {
+  if (!normalized && !nativeText.trim()) {
     return {
       state: "normal",
       category: "normal",
@@ -167,7 +219,39 @@ export function classifyServerSafety(rawMessage: string): SafetyClassificationRe
     };
   }
 
-  // 1. Contextual Idioms / Hyperboles Check
+  // 1. First-person crisis disclosures always win.
+  if (matchesAny(SELF_CRISIS_PATTERNS, normalized)) {
+    return {
+      state: "crisis",
+      category: "crisis",
+      isSelfCrisis: true,
+      reason: "Explicit self-directed suicidal or self-harm disclosure detected.",
+    };
+  }
+
+  // 2. Generic high-risk phrases (incl. Hinglish / native scripts) unless clearly about someone else.
+  const genericRisk =
+    matchesAny(GENERIC_CRISIS_PATTERNS, normalized) || matchesAny(NATIVE_SCRIPT_CRISIS_PATTERNS, nativeText);
+  if (genericRisk && !hasThirdPartySubject(normalized)) {
+    return {
+      state: "crisis",
+      category: "crisis",
+      isSelfCrisis: true,
+      reason: "High-risk suicide/self-harm phrase detected without a third-party subject.",
+    };
+  }
+
+  // 3. Third-party safety disclosure (student is worried about someone else).
+  if (genericRisk || isThirdPartySafetyDisclosure(normalized)) {
+    return {
+      state: "elevated",
+      category: "third_party",
+      isSelfCrisis: false,
+      reason: "Message pertains to third-party safety concern; not authenticated student crisis.",
+    };
+  }
+
+  // 4. Contextual idioms / hyperbole.
   if (isContextualIdiom(normalized)) {
     return {
       state: "normal",
@@ -177,27 +261,7 @@ export function classifyServerSafety(rawMessage: string): SafetyClassificationRe
     };
   }
 
-  // 2. Third-Party Safety Disclosure Check
-  if (isThirdPartySafetyDisclosure(normalized)) {
-    return {
-      state: "elevated",
-      category: "third_party",
-      isSelfCrisis: false,
-      reason: "Message pertains to third-party safety concern; not authenticated student crisis.",
-    };
-  }
-
-  // 3. Explicit Self-Directed Crisis Check
-  if (isExplicitCrisis(normalized)) {
-    return {
-      state: "crisis",
-      category: "crisis",
-      isSelfCrisis: true,
-      reason: "Explicit self-directed suicidal or self-harm intent detected.",
-    };
-  }
-
-  // 4. Elevated Concerning Distress Check
+  // 5. Elevated concerning distress.
   if (isElevatedDistress(normalized)) {
     return {
       state: "elevated",
@@ -207,7 +271,6 @@ export function classifyServerSafety(rawMessage: string): SafetyClassificationRe
     };
   }
 
-  // 5. Default: Normal
   return {
     state: "normal",
     category: "normal",
@@ -225,14 +288,14 @@ export function classifyServerSafety(rawMessage: string): SafetyClassificationRe
  * Follows clinical product standards:
  * - Acknowledges seriousness
  * - Recommends immediate human support
- * - Delivers configured emergency resources (Tele-MANAS 14416 / 988)
+ * - Delivers configured emergency resources (Tele-MANAS / 112, see common/crisisResources.ts)
  * - Avoids judgment, diagnosis, guilt, or emotional dependency
  */
 export function getControlledCrisisResponse(
   studentName?: string
 ): EmotyResponseContract {
   const greeting = studentName ? `${studentName}, ` : "";
-  const responseText = `${greeting}I'm really concerned to hear that, and your safety is the most important thing right now. Please connect with someone who can support you immediately. You can reach Tele-MANAS toll-free 24/7 at ${EMERGENCY_RESOURCES.teleManasNumber} (or ${EMERGENCY_RESOURCES.teleManasTollFree}), or call/text ${EMERGENCY_RESOURCES.nationalLifeline}. Please reach out to them or a trusted friend, family member, or campus counselor right now.`;
+  const responseText = `${greeting}I'm really concerned to hear that, and your safety is the most important thing right now. Please connect with someone who can support you immediately. You can reach Tele-MANAS toll-free 24/7 at ${EMERGENCY_RESOURCES.teleManasNumber} (or ${EMERGENCY_RESOURCES.teleManasTollFree}), or call ${EMERGENCY_RESOURCES.emergencyNumber} if you are in immediate danger. Please reach out to them or a trusted friend, family member, or campus counselor right now.`;
 
   return {
     mode: "emotional_support",
@@ -253,7 +316,7 @@ export function getControlledCrisisResponse(
 export function getControlledThirdPartyResponse(): EmotyResponseContract {
   return {
     mode: "guidance",
-    response: `Thank you for looking out for your friend. If you believe they are in immediate danger, please encourage them to contact Tele-MANAS at ${EMERGENCY_RESOURCES.teleManasNumber} or the ${EMERGENCY_RESOURCES.nationalLifeline} Lifeline right away, or reach out to campus emergency services or a trusted adult together. You don't have to carry this alone.`,
+    response: `Thank you for looking out for your friend. If you believe they are in immediate danger, please encourage them to contact Tele-MANAS at ${EMERGENCY_RESOURCES.teleManasNumber} right away, call ${EMERGENCY_RESOURCES.emergencyNumber} if there is immediate danger, or reach out to campus emergency services or a trusted adult together. You don't have to carry this alone.`,
     action: {
       type: "open_counsellor_request",
       label: "Ask Campus Counselor",

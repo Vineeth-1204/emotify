@@ -1,5 +1,6 @@
 import { v, ConvexError } from "convex/values";
-import { mutation, query, internalMutation } from "./_generated/server";
+import { internalMutation } from "./_generated/server";
+import { mutation, query } from "./functions";
 import { checkRateLimit } from "./rateLimiter";
 import { logAuditEvent } from "./audit";
 import type { Id } from "./_generated/dataModel";

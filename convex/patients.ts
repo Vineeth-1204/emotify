@@ -1,21 +1,14 @@
-import { mutation, query } from "./_generated/server";
+import { mutation } from "./functions";
 import { v } from "convex/values";
-import { hashPassword } from "./authHelpers";
+import { hashPassword, generateTemporaryPassword } from "./authHelpers";
+import { requireAdmin } from "./authz";
+import { allocateNextPatientId } from "./users";
+import { logAuditEvent } from "./audit";
 
-export const getPatients = query({
-  args: {},
-  handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) {
-      return [];
-    }
-    return await ctx.db
-      .query("users")
-      .filter((q) => q.eq(q.field("role"), "patient"))
-      .collect();
-  },
-});
-
+/**
+ * Admin: Enroll a new student from the dashboard.
+ * The temporary password is returned exactly once and is never persisted in plain text.
+ */
 export const createPatient = mutation({
   args: {
     fullName: v.string(),
@@ -27,28 +20,49 @@ export const createPatient = mutation({
     initialRiskLevel: v.string(),
   },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Unauthenticated");
+    const admin = await requireAdmin(ctx);
 
-    const tempPassword = Math.random().toString(36).slice(-8);
+    const fullName = args.fullName.trim();
+    if (fullName.length < 2) {
+      throw new Error("Full name must be at least 2 characters.");
+    }
+
+    const cleanMobile = args.phone ? args.phone.replace(/\D/g, "") : "";
+    if (cleanMobile) {
+      const existing = await ctx.db
+        .query("users")
+        .withIndex("by_mobile_number", (q) => q.eq("mobile_number", cleanMobile))
+        .first();
+      if (existing) {
+        throw new Error("Mobile number is already registered.");
+      }
+    }
+
+    const tempPassword = generateTemporaryPassword();
     const password_hash = await hashPassword(tempPassword);
+    const patientId = await allocateNextPatientId(ctx);
+    const now = Date.now();
 
     const id = await ctx.db.insert("users", {
-      full_name: args.fullName,
-      email: args.email,
-      mobile_number: args.phone,
+      patientId,
+      full_name: fullName,
+      email: args.email?.trim() || undefined,
+      mobile_number: cleanMobile || undefined,
+      age: args.age > 0 ? args.age : undefined,
+      gender: args.gender || undefined,
       password_hash,
-      temp_password: tempPassword,
       role: "patient",
       status: "active",
       is_first_login: true,
-      created_at: Date.now(),
-      updated_at: Date.now(),
+      created_at: now,
+      updated_at: now,
       onboardingComplete: false,
       screeningComplete: false,
       biometricEnabled: false,
     });
 
-    return { id, patientId: id, tempPassword };
+    await logAuditEvent(ctx, String(admin._id), "patient_enrolled", `Enrolled patient ${patientId}`);
+
+    return { id, patientId, tempPassword };
   },
 });

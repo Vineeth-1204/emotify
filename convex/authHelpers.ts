@@ -20,48 +20,94 @@ export function base64urlEncode(strOrBuffer: string | ArrayBuffer): string {
     .replace(/\//g, "_");
 }
 
-export const STATIC_JWK_PUBLIC = {
-  "kty": "RSA",
-  "n": "0CmBQeFhFsxN4MTkynWRuJbTbBfOk-OJvUAAkPWx55lmr8CqRevedNW2FPFeroB4VZMzMGyORXtfNvTvNWfCgAIdVDWiRfrg21JLf4tk-mirzz0cr2QbOJ6nb4srTDyVxKz6ukvPESNJEitA0EBo5o_e1zWsd1aXcAAH60aN-z_YextzVH9cGMb5RxHPS7ON-nCGLPMkbMgsLvC5fK3N-rt2-N-sjqNFtIhwo6ZLbsas7BmpjTAqDvB8NJQRxVNku6h2JBFf92NppafIcjICEvX5HAwXd_ozLIvqPHrjGGXTyA9VPNJ3EuR451RIZztKnCTY1wxaYqZGRm2c3sV0cQ",
-  "e": "AQAB",
-  "kid": "static-key-1",
-  "alg": "RS256",
-  "use": "sig"
-};
+/**
+ * JWT signing key management.
+ *
+ * The RS256 private key is NEVER stored in source code. It is read from the
+ * Convex environment variable `JWT_PRIVATE_JWK` (a JSON Web Key containing the
+ * private RSA parameters and a `kid`). Generate one with
+ * `node scripts/generate-jwt-key.mjs` and set it with `npx convex env set`.
+ * The public half is derived from it and served at /.well-known/jwks.json.
+ * Rotating the key (new `kid`) invalidates every previously issued token.
+ */
 
-const STATIC_JWK_PRIVATE = {
-  "kty": "RSA",
-  "n": "0CmBQeFhFsxN4MTkynWRuJbTbBfOk-OJvUAAkPWx55lmr8CqRevedNW2FPFeroB4VZMzMGyORXtfNvTvNWfCgAIdVDWiRfrg21JLf4tk-mirzz0cr2QbOJ6nb4srTDyVxKz6ukvPESNJEitA0EBo5o_e1zWsd1aXcAAH60aN-z_YextzVH9cGMb5RxHPS7ON-nCGLPMkbMgsLvC5fK3N-rt2-N-sjqNFtIhwo6ZLbsas7BmpjTAqDvB8NJQRxVNku6h2JBFf92NppafIcjICEvX5HAwXd_ozLIvqPHrjGGXTyA9VPNJ3EuR451RIZztKnCTY1wxaYqZGRm2c3sV0cQ",
-  "e": "AQAB",
-  "d": "GFA8vXvsaewHjaEZww8L6_ZL8ARw18O8LxtmZYgZFT7M6GrVyJB1_YoHuDcAEtxFEeO9VyLa1EFGfAYMWZ3KsUZt9AvGritRL7TTRiy7KOdoZ-6QpujHqCuZzXTBJCiwapY0u-VGZI9NRd7A9YIMbp-vzM3DXPYDfqy2QBQP2eBjYvtdyrE34OK4HsiHnR7xctqPhD_gc2ZZJgGpgJQuujuY5FOK94ZGzWQT8eNrwHkbkXM-jBwqxN5x9XeyXkbv-d_0PC-5vOq4KIl1gImfqsCwuPCEKoUwJovPn0-MXIuocPsytaZx7g22lkqOX-fWQ6dRoH4QsBQ-Di-FkOmydQ",
-  "p": "95GpuEZhAvuhDKFHTc2-ZevWF1vdP1RnfIBdJpH1DORvKJEvfn2zW_t4s1K-gjjgwH6siSa_ydgZbtj_ueyguCZ8XEcfdrK1KrgS6fQIrRr-gQ8poHpLgXGinInvCPGU-0GQ9nsKBhc-z96tmDAI9HLxIMja-1zTk8FrOlljH20",
-  "q": "10BJu1IbwP5cPpVmGIZ1bQYd4LBqPZOwlsnMGeLMPc7tdx3OSStw8Wagtpp6DcofnKE8d3dcylysiOiUW2RwWP9bZyMvf-I7wA1oQSRrqOpX4wOr35vS6FoWANDMZFYNxYQ9arnzuyKaj47nh4IPiqAbWsFGdaJKL4qVWe_IkpU",
-  "dp": "OukrlNEShq4wDZxXJll-JCyxfk9633YLRiIZiHMU9-Nn3CRoQ9ZPluTJPQrEkKJOQSAjmGNjIfnNW4ZBnBGF0Sw_TYoTH6C44Zh5z7glVGPnCfj8s9ZGH2BWDJ_6BIvQItXgU_bFVNu1M6vObTeI-fpcDKwfB893_WH6TSE2KCU",
-  "dq": "OXD1fCCYOXNniGfz-9193p9AP-K0J0SPXl3xsoK8gE4FPsFceFg4ZqM9hh1JLv7eWr0IVtUqlPIQNOTkGlN-S7GxYZ-ZIGZuDX1GcgPXGxeWZoVnS1_Y85p-vq75rFjuieQVQ7Ll4O2GE4NOM_I4VYUOZ7SmKeQqKe-wlXSQsNU",
-  "qi": "h44j-C7mq4934QLzhs4jiEJDHHRgn7342Wszhit69TMvcQWkF1SYVV1lAYqGRWY96QqhlLK_AdVB6kN5eOewD92pK4w66OhUGrJfM37Vx8ib_IG0ga8fWekdgXvsWl8fzV--KoLahV-opYU5zo1dYPYdBUhw88MbOwM9ndqZu04",
-  "kid": "static-key-1",
-  "alg": "RS256",
-  "use": "sig"
-};
+export const JWT_ALGORITHM = "RS256";
+export const JWT_AUDIENCE = "convex";
+export const JWT_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
 
-// Sign a JWT token using RS256 and hardcoded private key (expires in 30 days)
+interface RsaPrivateJwk {
+  kty: "RSA";
+  kid: string;
+  n: string;
+  e: string;
+  d: string;
+  p: string;
+  q: string;
+  dp: string;
+  dq: string;
+  qi: string;
+}
+
+export interface PublicJwk {
+  kty: "RSA";
+  kid: string;
+  n: string;
+  e: string;
+  alg: typeof JWT_ALGORITHM;
+  use: "sig";
+}
+
+function loadPrivateJwk(): RsaPrivateJwk {
+  const raw = process.env.JWT_PRIVATE_JWK;
+  if (!raw) {
+    throw new Error("Server misconfiguration: JWT_PRIVATE_JWK is not set.");
+  }
+  let jwk: any;
+  try {
+    jwk = JSON.parse(raw);
+  } catch {
+    throw new Error("Server misconfiguration: JWT_PRIVATE_JWK is not valid JSON.");
+  }
+  const required = ["kid", "n", "e", "d", "p", "q", "dp", "dq", "qi"];
+  if (jwk?.kty !== "RSA" || required.some((k) => typeof jwk[k] !== "string" || jwk[k].length === 0)) {
+    throw new Error("Server misconfiguration: JWT_PRIVATE_JWK must be a complete RSA private JWK with a kid.");
+  }
+  return jwk as RsaPrivateJwk;
+}
+
+/** Public signing key derived from the configured private key (safe to publish). */
+export function getPublicJwk(): PublicJwk {
+  const { kid, n, e } = loadPrivateJwk();
+  return { kty: "RSA", kid, n, e, alg: JWT_ALGORITHM, use: "sig" };
+}
+
+/** Token issuer. Must match the domain configured in auth.config.ts. */
+export function getJwtIssuer(): string {
+  const siteUrl = process.env.CONVEX_SITE_URL;
+  if (!siteUrl) {
+    throw new Error("Server misconfiguration: CONVEX_SITE_URL is not available.");
+  }
+  return siteUrl;
+}
+
+// Sign a JWT with the configured RS256 key (expires in 30 days)
 export async function signJwt(
-  payload: { sub: string; role: string; mobile_number: string; full_name: string }
+  payload: { sub: string; sid: string; role: string; mobile_number: string; full_name: string }
 ): Promise<string> {
+  const jwk = loadPrivateJwk();
   const header = {
-    alg: "RS256",
+    alg: JWT_ALGORITHM,
     typ: "JWT",
-    kid: "static-key-1",
+    kid: jwk.kid,
   };
 
-  const convexSiteUrl = (globalThis as any).process?.env?.CONVEX_SITE_URL || "https://fabulous-rooster-538.convex.site";
-
+  const nowSeconds = Math.floor(Date.now() / 1000);
   const enrichedPayload = {
     ...payload,
-    iss: convexSiteUrl,
-    aud: "convex",
-    exp: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60, // 30 days expiry
-    iat: Math.floor(Date.now() / 1000),
+    iss: getJwtIssuer(),
+    aud: JWT_AUDIENCE,
+    exp: nowSeconds + JWT_TTL_SECONDS,
+    iat: nowSeconds,
   };
 
   const headerEncoded = base64urlEncode(JSON.stringify(header));
@@ -70,7 +116,18 @@ export async function signJwt(
 
   const privateKey = await crypto.subtle.importKey(
     "jwk",
-    STATIC_JWK_PRIVATE,
+    {
+      kty: jwk.kty,
+      n: jwk.n,
+      e: jwk.e,
+      d: jwk.d,
+      p: jwk.p,
+      q: jwk.q,
+      dp: jwk.dp,
+      dq: jwk.dq,
+      qi: jwk.qi,
+      alg: JWT_ALGORITHM,
+    },
     {
       name: "RSASSA-PKCS1-v1_5",
       hash: { name: "SHA-256" },
@@ -87,6 +144,36 @@ export async function signJwt(
 
   const signatureEncoded = base64urlEncode(signatureBuffer);
   return `${dataToSign}.${signatureEncoded}`;
+}
+
+/**
+ * Reads the `sid` claim from a token WITHOUT verifying its signature.
+ * Only use it on a token that was already matched against a stored session row.
+ */
+export function readUnverifiedSessionId(token: string): string | null {
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  try {
+    const b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = b64 + "=".repeat((4 - (b64.length % 4)) % 4);
+    const json = new TextDecoder().decode(Uint8Array.from(atob(padded), (c) => c.charCodeAt(0)));
+    const payload = JSON.parse(json);
+    return typeof payload?.sid === "string" ? payload.sid : null;
+  } catch {
+    return null;
+  }
+}
+
+// Generate a cryptographically random temporary password (shown once, never stored in plain text)
+export function generateTemporaryPassword(length = 12): string {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
+  const bytes = new Uint8Array(length);
+  crypto.getRandomValues(bytes);
+  let password = "";
+  for (let i = 0; i < length; i++) {
+    password += chars[bytes[i] % chars.length];
+  }
+  return password;
 }
 
 // Hash password with bcryptjs

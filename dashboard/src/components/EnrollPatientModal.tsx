@@ -37,7 +37,7 @@ export default function EnrollPatientModal({ onClose }: { onClose: () => void })
     
     setIsSubmitting(true);
     try {
-      await createPatient({
+      const result = await createPatient({
         fullName: formData.fullName,
         age: parseInt(formData.age) || 0,
         gender: formData.gender || 'Not specified',
@@ -45,6 +45,11 @@ export default function EnrollPatientModal({ onClose }: { onClose: () => void })
         phone: formData.phone,
         initialRiskLevel: formData.initialRiskLevel,
       });
+      // The temporary password is not stored anywhere; this is the only time it can be shown.
+      alert(
+        `Patient enrolled (ID ${result.patientId}).\n\nTemporary password: ${result.tempPassword}\n\n` +
+        "Share it securely now — it cannot be retrieved later. The student must change it at first login."
+      );
       onClose();
     } catch (error) {
       console.error(error);

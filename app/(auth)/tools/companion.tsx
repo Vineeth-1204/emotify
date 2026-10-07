@@ -39,6 +39,8 @@ import { ShieldSafetyIcon } from "@/components/svg/system";
 import { getLocalDateString } from "@/utils/date";
 import { COMPANION_QUICK_ACTIONS, type CompanionQuickAction } from "@/convex/companionQuickActions";
 import { resolveActionNavigation, ACTION_ROUTE_MAP } from "@/convex/emotyActionRouter";
+import { classifyServerSafety } from "@/convex/emotySafety";
+import { CRISIS_RESOURCES, HELPLINE_DIAL_URL } from "@/common/crisisResources";
 import { type EmotyAction } from "@/convex/emotyContract";
 import { resolveAvatarPresentationState } from "@/common/avatarPresentation";
 
@@ -54,18 +56,6 @@ const REACTION_TYPES = [
 ];
 
 // Crisis patterns for Priority 1 Safety invariant
-const CRISIS_PATTERNS = [
-  "suicide",
-  "kill myself",
-  "want to die",
-  "end my life",
-  "ending it all",
-  "cut myself",
-  "self harm",
-  "hurt myself",
-  "better off dead",
-];
-
 // Helper to format timestamps
 function formatTime(timestamp: number) {
   const date = new Date(timestamp);
@@ -366,8 +356,8 @@ export default function AICompanionScreen() {
     const cleanedText = textToSend.trim();
     if (!cleanedText || isAiLoading) return;
 
-    // Check for crisis patterns
-    const isCrisis = CRISIS_PATTERNS.some((p) => cleanedText.toLowerCase().includes(p));
+    // Same deterministic classifier the server uses (single source of truth)
+    const isCrisis = classifyServerSafety(cleanedText).state === "crisis";
     if (isCrisis) {
       triggerSafetyState();
       setShowSafetyBanner(true);
@@ -710,10 +700,10 @@ export default function AICompanionScreen() {
             <View style={styles.safetyBtnRow}>
               <TouchableOpacity
                 style={[styles.safetyCallBtn, { backgroundColor: colors.error }]}
-                onPress={() => Linking.openURL("tel:14416")}
+                onPress={() => Linking.openURL(HELPLINE_DIAL_URL)}
               >
                 <Ionicons name="call" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
-                <Text style={styles.safetyCallText}>Call Tele-MANAS (14416)</Text>
+                <Text style={styles.safetyCallText}>Call {CRISIS_RESOURCES.helplineName} ({CRISIS_RESOURCES.helplineNumber})</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.safetySupportBtn}

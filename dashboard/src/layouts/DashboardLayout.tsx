@@ -7,13 +7,14 @@ import {
   BrainCircuit,
   CalendarDays,
   FileText,
+  Inbox,
   LayoutDashboard,
   LogOut,
   Users,
 } from "lucide-react";
 
 export default function DashboardLayout() {
-  const { user, logout } = useDashboardAuth();
+  const { user, isAdmin, logout } = useDashboardAuth();
 
   return (
     <div className="layout">
@@ -40,14 +41,19 @@ export default function DashboardLayout() {
           <NavLink to="/sessions" className={({ isActive }) => isActive ? "nav-item active" : "nav-item"}>
             <CalendarDays size={18} /> Appointments &amp; sessions
           </NavLink>
+          <NavLink to="/requests" className={({ isActive }) => isActive ? "nav-item active" : "nav-item"}>
+            <Inbox size={18} /> Counsellor requests
+          </NavLink>
 
           <span className="nav-section-label nav-section-spaced">Clinical review</span>
           <NavLink to="/screenings" className={({ isActive }) => isActive ? "nav-item active" : "nav-item"}>
             <FileText size={18} /> Screening
           </NavLink>
-          <NavLink to="/ai-monitoring" className={({ isActive }) => isActive ? "nav-item active" : "nav-item"}>
-            <BrainCircuit size={18} /> AI Monitoring
-          </NavLink>
+          {isAdmin && (
+            <NavLink to="/ai-monitoring" className={({ isActive }) => isActive ? "nav-item active" : "nav-item"}>
+              <BrainCircuit size={18} /> AI Monitoring
+            </NavLink>
+          )}
 
           <span className="nav-section-label nav-section-spaced">Updates</span>
           <NavLink to="/notifications" className={({ isActive }) => isActive ? "nav-item active" : "nav-item"}>
@@ -58,7 +64,7 @@ export default function DashboardLayout() {
 
       <main className="main-content">
         <header className="header">
-          <p className="header-context">Counsellor workspace</p>
+          <p className="header-context">{isAdmin ? "Admin workspace" : "Counsellor workspace · your assigned caseload"}</p>
           <div className="header-actions">
             <span className="header-user" title={user?.full_name || "Staff account"}>
               {user?.full_name || "Staff account"}

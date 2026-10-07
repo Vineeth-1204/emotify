@@ -3,6 +3,7 @@ import { convexTest } from "convex-test";
 import { expect, test, describe, vi, beforeAll, afterAll } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";
+import { testUserId } from "../test-utils/identity";
 import {
   ROUTINE_HABIT_CATALOG,
   ROUTINE_TEMPLATE_BY_ID,
@@ -31,6 +32,7 @@ describe("Priority 8 Step 2: Clinical Decoupling of Intervention Recommendations
       email: "student01@emotify.com",
       name: "Decouple Student 01",
     });
+    const uid_p8_user_decouple_01 = await testUserId(t, "p8_user_decouple_01");
 
     // Start a CBT session and proceed to recovery_coach step
     const initRes = await t.mutation(api.cbt.startSession, { forceNew: true });
@@ -60,7 +62,7 @@ describe("Priority 8 Step 2: Clinical Decoupling of Intervention Recommendations
     await t.run(async (ctx) => {
       const attempts = await ctx.db
         .query("screeningAttempts")
-        .withIndex("by_userId", (q) => q.eq("userId", "p8_user_decouple_01"))
+        .withIndex("by_userId", (q) => q.eq("userId", uid_p8_user_decouple_01))
         .collect();
       expect(attempts).toHaveLength(0);
     });
@@ -76,10 +78,11 @@ describe("Priority 8 Step 2: Clinical Decoupling of Intervention Recommendations
       email: "severe@emotify.com",
       name: "Severe Psychometric Student",
     });
+    const uid_p8_user_severe_phq = await testUserId(tA, "p8_user_severe_phq");
 
     await t.run(async (ctx) => {
       await ctx.db.insert("screeningAttempts", {
-        userId: "p8_user_severe_phq",
+        userId: uid_p8_user_severe_phq,
         status: "completed",
         startedAt: Date.now() - 3600000,
         completedAt: Date.now() - 1800000,
@@ -115,6 +118,7 @@ describe("Priority 8 Step 2: Clinical Decoupling of Intervention Recommendations
       email: "zero@emotify.com",
       name: "Zero Psychometric Student",
     });
+    const uid_p8_user_zero_phq = await testUserId(tB, "p8_user_zero_phq");
 
     const initB = await tB.mutation(api.cbt.startSession, { forceNew: true });
     await tB.mutation(api.cbt.updateSessionContext, {
@@ -167,6 +171,7 @@ describe("Priority 8 Step 2: Clinical Decoupling of Intervention Recommendations
       email: "context@emotify.com",
       name: "Context Student",
     });
+    const uid_p8_user_context_04 = await testUserId(t, "p8_user_context_04");
 
     const init = await t.mutation(api.cbt.startSession, { forceNew: true });
     const sessionId = init.session!._id;
@@ -204,6 +209,7 @@ describe("Priority 8 Step 2: Clinical Decoupling of Intervention Recommendations
       email: "triage05@emotify.com",
       name: "Triage Decouple Student",
     });
+    const uid_p8_user_triage_decouple_05 = await testUserId(t, "p8_user_triage_decouple_05");
 
     // Call daily check-in with NO triage record present
     const checkin = await t.mutation(api.microGoals.submitMorningCheckin, {
@@ -213,7 +219,7 @@ describe("Priority 8 Step 2: Clinical Decoupling of Intervention Recommendations
     expect(checkin.success).toBe(true);
 
     const goals = await t.query(api.microGoals.getTodayGoals, {
-      userId: "p8_user_triage_decouple_05",
+      userId: uid_p8_user_triage_decouple_05,
       dateStr: "2026-09-28",
     });
     // 2 small + 1 medium + 1 large + 1 challenge = 5 goals
@@ -223,7 +229,7 @@ describe("Priority 8 Step 2: Clinical Decoupling of Intervention Recommendations
     await t.run(async (ctx) => {
       const triages = await ctx.db
         .query("triages")
-        .withIndex("by_userId", (q) => q.eq("userId", "p8_user_triage_decouple_05"))
+        .withIndex("by_userId", (q) => q.eq("userId", uid_p8_user_triage_decouple_05))
         .collect();
       expect(triages).toHaveLength(0);
     });
@@ -239,10 +245,11 @@ describe("Priority 8 Step 2: Clinical Decoupling of Intervention Recommendations
       email: "severe_triage@emotify.com",
       name: "Severe Triage Student",
     });
+    const uid_p8_user_severe_triage_06 = await testUserId(tSevere, "p8_user_severe_triage_06");
 
     await t.run(async (ctx) => {
       await ctx.db.insert("triages", {
-        userId: "p8_user_severe_triage_06",
+        userId: uid_p8_user_severe_triage_06,
         level: "severe",
         suicideFlag: true,
         psychosisFlag: false,
@@ -256,7 +263,7 @@ describe("Priority 8 Step 2: Clinical Decoupling of Intervention Recommendations
     });
 
     const severeGoals = await tSevere.query(api.microGoals.getTodayGoals, {
-      userId: "p8_user_severe_triage_06",
+      userId: uid_p8_user_severe_triage_06,
       dateStr: "2026-09-28",
     });
 
@@ -266,10 +273,11 @@ describe("Priority 8 Step 2: Clinical Decoupling of Intervention Recommendations
       email: "mild_triage@emotify.com",
       name: "Mild Triage Student",
     });
+    const uid_p8_user_mild_triage_06 = await testUserId(tMild, "p8_user_mild_triage_06");
 
     await t.run(async (ctx) => {
       await ctx.db.insert("triages", {
-        userId: "p8_user_mild_triage_06",
+        userId: uid_p8_user_mild_triage_06,
         level: "mild",
         suicideFlag: false,
         psychosisFlag: false,
@@ -283,7 +291,7 @@ describe("Priority 8 Step 2: Clinical Decoupling of Intervention Recommendations
     });
 
     const mildGoals = await tMild.query(api.microGoals.getTodayGoals, {
-      userId: "p8_user_mild_triage_06",
+      userId: uid_p8_user_mild_triage_06,
       dateStr: "2026-09-28",
     });
 
@@ -303,6 +311,7 @@ describe("Priority 8 Step 2: Clinical Decoupling of Intervention Recommendations
       email: "valid_goals@emotify.com",
       name: "Valid Goals Student",
     });
+    const uid_p8_user_valid_goals_07 = await testUserId(t, "p8_user_valid_goals_07");
 
     await t.mutation(api.microGoals.submitMorningCheckin, {
       mood: "peaceful",
@@ -310,13 +319,13 @@ describe("Priority 8 Step 2: Clinical Decoupling of Intervention Recommendations
     });
 
     const goals = await t.query(api.microGoals.getTodayGoals, {
-      userId: "p8_user_valid_goals_07",
+      userId: uid_p8_user_valid_goals_07,
       dateStr: "2026-09-28",
     });
 
     expect(goals.length).toBe(5);
     for (const g of goals) {
-      expect(g.userId).toBe("p8_user_valid_goals_07");
+      expect(g.userId).toBe(uid_p8_user_valid_goals_07);
       expect(g.completed).toBe(false);
       expect(g.skipped).toBe(false);
       expect(typeof g.points).toBe("number");
@@ -333,13 +342,14 @@ describe("Priority 8 Step 2: Clinical Decoupling of Intervention Recommendations
       email: "immutable@emotify.com",
       name: "Immutable Clinical Student",
     });
+    const uid_p8_user_immutable_clinical_08 = await testUserId(t, "p8_user_immutable_clinical_08");
 
     let attemptId!: Id<"screeningAttempts">;
     let triageId!: Id<"triages">;
 
     await t.run(async (ctx) => {
       attemptId = await ctx.db.insert("screeningAttempts", {
-        userId: "p8_user_immutable_clinical_08",
+        userId: uid_p8_user_immutable_clinical_08,
         status: "completed",
         startedAt: 1700000000,
         completedAt: 1700001000,
@@ -356,7 +366,7 @@ describe("Priority 8 Step 2: Clinical Decoupling of Intervention Recommendations
       });
 
       triageId = await ctx.db.insert("triages", {
-        userId: "p8_user_immutable_clinical_08",
+        userId: uid_p8_user_immutable_clinical_08,
         level: "moderate",
         suicideFlag: false,
         psychosisFlag: false,
@@ -408,6 +418,7 @@ describe("Priority 8 Step 2: Clinical Decoupling of Intervention Recommendations
       email: "safety@emotify.com",
       name: "Safety Escalation Student",
     });
+    const uid_p8_user_safety_escalation_09 = await testUserId(t, "p8_user_safety_escalation_09");
 
     const init = await t.mutation(api.cbt.startSession, { forceNew: true });
     const sessionId = init.session!._id;
@@ -426,13 +437,13 @@ describe("Priority 8 Step 2: Clinical Decoupling of Intervention Recommendations
 
     // Counselor alert is created
     const alerts = await t.query(api.dashboard.getAlerts);
-    expect(alerts.some((a) => a.userId === "p8_user_safety_escalation_09" && a.type === "suicideRisk")).toBe(true);
+    expect(alerts.some((a) => a.userId === uid_p8_user_safety_escalation_09 && a.type === "suicideRisk")).toBe(true);
 
     // Recommendation generates safety/crisis recovery goals
     const goals = await t.action(api.cbt.recommendGoalAction, { sessionId });
     expect(goals).toHaveLength(4);
     expect(goals[0].id).toBe("crisis_call");
-    expect(goals[0].title).toContain("988");
+    expect(goals[0].title).toContain("14416");
     expect(goals[1].id).toBe("crisis_grounding");
   });
 
@@ -445,6 +456,7 @@ describe("Priority 8 Step 2: Clinical Decoupling of Intervention Recommendations
       email: "owner@emotify.com",
       name: "Owner Student",
     });
+    const uid_p8_user_owner_10 = await testUserId(tOwner, "p8_user_owner_10");
 
     const init = await tOwner.mutation(api.cbt.startSession, { forceNew: true });
     const sessionId = init.session!._id;
@@ -455,6 +467,7 @@ describe("Priority 8 Step 2: Clinical Decoupling of Intervention Recommendations
       email: "other@emotify.com",
       name: "Other Student",
     });
+    const uid_p8_user_other_10 = await testUserId(tOther, "p8_user_other_10");
 
     await expect(
       tOther.query(api.cbt.getSession, { sessionId })
@@ -478,6 +491,7 @@ describe("Priority 8 Step 3: Reframe UX & Session State Remediation", () => {
       email: "ux01@emotify.com",
       name: "UX Student 01",
     });
+    const uid_p8_user_ux_01 = await testUserId(t, "p8_user_ux_01");
 
     const init = await t.mutation(api.cbt.startSession, { forceNew: true });
     const sessionId = init.session!._id;
@@ -514,6 +528,7 @@ describe("Priority 8 Step 3: Reframe UX & Session State Remediation", () => {
       email: "ux02@emotify.com",
       name: "UX Student 02",
     });
+    const uid_p8_user_ux_02 = await testUserId(t, "p8_user_ux_02");
 
     const init = await t.mutation(api.cbt.startSession, { forceNew: true });
     const sessionId = init.session!._id;
@@ -543,6 +558,7 @@ describe("Priority 8 Step 3: Reframe UX & Session State Remediation", () => {
       email: "ux03@emotify.com",
       name: "UX Student 03",
     });
+    const uid_p8_user_ux_03 = await testUserId(t, "p8_user_ux_03");
 
     const init = await t.mutation(api.cbt.startSession, { forceNew: true });
     const sessionId = init.session!._id;
@@ -567,6 +583,7 @@ describe("Priority 8 Step 3: Reframe UX & Session State Remediation", () => {
       email: "ux04@emotify.com",
       name: "UX Student 04",
     });
+    const uid_p8_user_ux_04 = await testUserId(t, "p8_user_ux_04");
 
     const init = await t.mutation(api.cbt.startSession, { forceNew: true });
     const sessionId = init.session!._id;
@@ -597,6 +614,7 @@ describe("Priority 8 Step 3: Reframe UX & Session State Remediation", () => {
       email: "ux05@emotify.com",
       name: "UX Student 05",
     });
+    const uid_p8_user_ux_05 = await testUserId(t, "p8_user_ux_05");
 
     const init = await t.mutation(api.cbt.startSession, { forceNew: true });
     const sessionId = init.session!._id;
@@ -636,6 +654,7 @@ describe("Priority 8 Step 3: Reframe UX & Session State Remediation", () => {
       email: "ux06@emotify.com",
       name: "UX Student 06",
     });
+    const uid_p8_user_ux_06 = await testUserId(t, "p8_user_ux_06");
 
     const init = await t.mutation(api.cbt.startSession, { forceNew: true });
     const sessionId = init.session!._id;
@@ -648,7 +667,7 @@ describe("Priority 8 Step 3: Reframe UX & Session State Remediation", () => {
     await t.mutation(api.cbt.skipQuestion, { sessionId });
 
     const session = await t.query(api.cbt.getSession, { sessionId });
-    expect(session!.userId).toBe("p8_user_ux_06");
+    expect(session!.userId).toBe(uid_p8_user_ux_06);
     expect(session!.sessionStatus).toBe("active");
   });
 
@@ -659,6 +678,7 @@ describe("Priority 8 Step 3: Reframe UX & Session State Remediation", () => {
       email: "ux07@emotify.com",
       name: "UX Student 07",
     });
+    const uid_p8_user_ux_07 = await testUserId(t, "p8_user_ux_07");
 
     // Create a session with activity timestamp 25 hours ago
     const staleTimestamp = Date.now() - 25 * 60 * 60 * 1000;
@@ -666,7 +686,7 @@ describe("Priority 8 Step 3: Reframe UX & Session State Remediation", () => {
 
     await t.run(async (ctx) => {
       oldSessionId = await ctx.db.insert("cbtSessions", {
-        userId: "p8_user_ux_07",
+        userId: uid_p8_user_ux_07,
         conversation: [{ role: "assistant", content: "Hello", timestamp: staleTimestamp }],
         stepIndex: 0,
         timestamp: staleTimestamp,
@@ -697,6 +717,7 @@ describe("Priority 8 Step 3: Reframe UX & Session State Remediation", () => {
       email: "ux08@emotify.com",
       name: "UX Student 08",
     });
+    const uid_p8_user_ux_08 = await testUserId(t, "p8_user_ux_08");
 
     // Start a fresh session
     const init = await t.mutation(api.cbt.startSession, { forceNew: true });
@@ -716,13 +737,14 @@ describe("Priority 8 Step 3: Reframe UX & Session State Remediation", () => {
       email: "ux09@emotify.com",
       name: "UX Student 09",
     });
+    const uid_p8_user_ux_09 = await testUserId(t, "p8_user_ux_09");
 
     const staleTime = Date.now() - 30 * 60 * 60 * 1000;
     let oldSessionId!: Id<"cbtSessions">;
 
     await t.run(async (ctx) => {
       oldSessionId = await ctx.db.insert("cbtSessions", {
-        userId: "p8_user_ux_09",
+        userId: uid_p8_user_ux_09,
         situation: "Historical stressor",
         automaticThought: "Old thought",
         conversation: [{ role: "assistant", content: "Greeting", timestamp: staleTime }],
@@ -751,13 +773,14 @@ describe("Priority 8 Step 3: Reframe UX & Session State Remediation", () => {
       email: "ux10@emotify.com",
       name: "UX Student 10",
     });
+    const uid_p8_user_ux_10 = await testUserId(t, "p8_user_ux_10");
 
     const oldCompletedTime = Date.now() - 72 * 60 * 60 * 1000; // 3 days ago
     let completedSessionId!: Id<"cbtSessions">;
 
     await t.run(async (ctx) => {
       completedSessionId = await ctx.db.insert("cbtSessions", {
-        userId: "p8_user_ux_10",
+        userId: uid_p8_user_ux_10,
         conversation: [{ role: "assistant", content: "Complete", timestamp: oldCompletedTime }],
         stepIndex: 0,
         timestamp: oldCompletedTime,
@@ -780,6 +803,7 @@ describe("Priority 8 Step 3: Reframe UX & Session State Remediation", () => {
       email: "ux11@emotify.com",
       name: "UX Student 11",
     });
+    const uid_p8_user_ux_11 = await testUserId(t, "p8_user_ux_11");
 
     const init = await t.mutation(api.cbt.startSession, { forceNew: true });
     const sessionId = init.session!._id;
@@ -810,6 +834,7 @@ describe("Priority 8 Step 3: Reframe UX & Session State Remediation", () => {
       email: "owner12@emotify.com",
       name: "Owner 12",
     });
+    const uid_p8_user_owner_12 = await testUserId(tOwner, "p8_user_owner_12");
 
     const init = await tOwner.mutation(api.cbt.startSession, { forceNew: true });
     const sessionId = init.session!._id;
@@ -819,6 +844,7 @@ describe("Priority 8 Step 3: Reframe UX & Session State Remediation", () => {
       email: "attacker12@emotify.com",
       name: "Attacker 12",
     });
+    const uid_p8_user_attacker_12 = await testUserId(tAttacker, "p8_user_attacker_12");
 
     // Attacker cannot skip questions in victim's session
     await expect(
@@ -835,6 +861,7 @@ describe("Priority 8 Step 4: CBT → Reframe Logs Data Bridge", () => {
       email: "bridge01@emotify.com",
       name: "Bridge Student 01",
     });
+    const uid_p8_user_bridge_01 = await testUserId(t, "p8_user_bridge_01");
 
     const init = await t.mutation(api.cbt.startSession, { forceNew: true });
     const sessionId = init.session!._id;
@@ -863,7 +890,7 @@ describe("Priority 8 Step 4: CBT → Reframe Logs Data Bridge", () => {
     });
 
     // Verify exactly one reframeLog is created
-    const logs = await t.query(api.reframes.getRecentLogs, { userId: "p8_user_bridge_01" });
+    const logs = await t.query(api.reframes.getRecentLogs, { userId: uid_p8_user_bridge_01 });
     expect(logs).toHaveLength(1);
     expect(logs[0].cbtSessionId).toBe(sessionId);
     expect(logs[0].reframe_text).toBe("I have prepared adequately and will take it one question at a time.");
@@ -876,6 +903,7 @@ describe("Priority 8 Step 4: CBT → Reframe Logs Data Bridge", () => {
       email: "bridge02@emotify.com",
       name: "Bridge Student 02",
     });
+    const uid_p8_user_bridge_02 = await testUserId(t, "p8_user_bridge_02");
 
     const init = await t.mutation(api.cbt.startSession, { forceNew: true });
     const sessionId = init.session!._id;
@@ -899,7 +927,7 @@ describe("Priority 8 Step 4: CBT → Reframe Logs Data Bridge", () => {
       intensity: 4,
     });
 
-    const logs = await t.query(api.reframes.getRecentLogs, { userId: "p8_user_bridge_02" });
+    const logs = await t.query(api.reframes.getRecentLogs, { userId: uid_p8_user_bridge_02 });
     expect(logs).toHaveLength(1);
     expect(logs[0].situation_text).toBe(situationText);
   });
@@ -911,6 +939,7 @@ describe("Priority 8 Step 4: CBT → Reframe Logs Data Bridge", () => {
       email: "bridge03@emotify.com",
       name: "Bridge Student 03",
     });
+    const uid_p8_user_bridge_03 = await testUserId(t, "p8_user_bridge_03");
 
     const init = await t.mutation(api.cbt.startSession, { forceNew: true });
     const sessionId = init.session!._id;
@@ -934,7 +963,7 @@ describe("Priority 8 Step 4: CBT → Reframe Logs Data Bridge", () => {
       intensity: 3,
     });
 
-    const logs = await t.query(api.reframes.getRecentLogs, { userId: "p8_user_bridge_03" });
+    const logs = await t.query(api.reframes.getRecentLogs, { userId: uid_p8_user_bridge_03 });
     expect(logs).toHaveLength(1);
     expect(logs[0].thought_original).toBe(thoughtText);
   });
@@ -946,6 +975,7 @@ describe("Priority 8 Step 4: CBT → Reframe Logs Data Bridge", () => {
       email: "bridge04@emotify.com",
       name: "Bridge Student 04",
     });
+    const uid_p8_user_bridge_04 = await testUserId(t, "p8_user_bridge_04");
 
     const init = await t.mutation(api.cbt.startSession, { forceNew: true });
     const sessionId = init.session!._id;
@@ -969,7 +999,7 @@ describe("Priority 8 Step 4: CBT → Reframe Logs Data Bridge", () => {
       intensity: 2,
     });
 
-    const logs = await t.query(api.reframes.getRecentLogs, { userId: "p8_user_bridge_04" });
+    const logs = await t.query(api.reframes.getRecentLogs, { userId: uid_p8_user_bridge_04 });
     expect(logs).toHaveLength(1);
     expect(logs[0].reframe_text).toBe(balancedText);
   });
@@ -981,6 +1011,7 @@ describe("Priority 8 Step 4: CBT → Reframe Logs Data Bridge", () => {
       email: "bridge05@emotify.com",
       name: "Bridge Student 05",
     });
+    const uid_p8_user_bridge_05 = await testUserId(t, "p8_user_bridge_05");
 
     const init = await t.mutation(api.cbt.startSession, { forceNew: true });
     const sessionId = init.session!._id;
@@ -1011,7 +1042,7 @@ describe("Priority 8 Step 4: CBT → Reframe Logs Data Bridge", () => {
       intensity: 3,
     });
 
-    const logs = await t.query(api.reframes.getRecentLogs, { userId: "p8_user_bridge_05" });
+    const logs = await t.query(api.reframes.getRecentLogs, { userId: uid_p8_user_bridge_05 });
     expect(logs).toHaveLength(1);
     expect(logs[0].thinking_trap_choice).toBe("all_or_nothing");
     expect(logs[0].guided_answers).toEqual(["I rarely miss practices.", "The team still won the scrimmage."]);
@@ -1024,6 +1055,7 @@ describe("Priority 8 Step 4: CBT → Reframe Logs Data Bridge", () => {
       email: "bridge06@emotify.com",
       name: "Bridge Student 06",
     });
+    const uid_p8_user_bridge_06 = await testUserId(t, "p8_user_bridge_06");
 
     const init = await t.mutation(api.cbt.startSession, { forceNew: true });
     const sessionId = init.session!._id;
@@ -1046,7 +1078,7 @@ describe("Priority 8 Step 4: CBT → Reframe Logs Data Bridge", () => {
       intensity: 3,
     });
 
-    const logs = await t.query(api.reframes.getRecentLogs, { userId: "p8_user_bridge_06" });
+    const logs = await t.query(api.reframes.getRecentLogs, { userId: uid_p8_user_bridge_06 });
     expect(logs).toHaveLength(1);
     expect(logs[0].cbtSessionId).toBe(sessionId);
     // Preserves originating session sourceType ("self_initiated") without fabricating clinical provenance
@@ -1062,6 +1094,7 @@ describe("Priority 8 Step 4: CBT → Reframe Logs Data Bridge", () => {
       email: "bridge07@emotify.com",
       name: "Bridge Student 07",
     });
+    const uid_p8_user_bridge_07 = await testUserId(t, "p8_user_bridge_07");
 
     const init = await t.mutation(api.cbt.startSession, { forceNew: true });
     const sessionId = init.session!._id;
@@ -1092,7 +1125,7 @@ describe("Priority 8 Step 4: CBT → Reframe Logs Data Bridge", () => {
     await t.mutation(api.cbt.endSession, { sessionId });
 
     // Verify still exactly ONE reframeLog exists
-    const logs = await t.query(api.reframes.getRecentLogs, { userId: "p8_user_bridge_07" });
+    const logs = await t.query(api.reframes.getRecentLogs, { userId: uid_p8_user_bridge_07 });
     expect(logs).toHaveLength(1);
   });
 
@@ -1103,6 +1136,7 @@ describe("Priority 8 Step 4: CBT → Reframe Logs Data Bridge", () => {
       email: "bridge08@emotify.com",
       name: "Bridge Student 08",
     });
+    const uid_p8_user_bridge_08 = await testUserId(t, "p8_user_bridge_08");
 
     const init = await t.mutation(api.cbt.startSession, { forceNew: true });
     const sessionId = init.session!._id;
@@ -1116,7 +1150,7 @@ describe("Priority 8 Step 4: CBT → Reframe Logs Data Bridge", () => {
     });
 
     // User leaves session without selecting balanced thought or rating post emotion
-    const logs = await t.query(api.reframes.getRecentLogs, { userId: "p8_user_bridge_08" });
+    const logs = await t.query(api.reframes.getRecentLogs, { userId: uid_p8_user_bridge_08 });
     expect(logs).toHaveLength(0);
   });
 
@@ -1127,6 +1161,7 @@ describe("Priority 8 Step 4: CBT → Reframe Logs Data Bridge", () => {
       email: "bridge09@emotify.com",
       name: "Bridge Student 09",
     });
+    const uid_p8_user_bridge_09 = await testUserId(t, "p8_user_bridge_09");
 
     const init = await t.mutation(api.cbt.startSession, { forceNew: true });
     const sessionId = init.session!._id;
@@ -1142,7 +1177,7 @@ describe("Priority 8 Step 4: CBT → Reframe Logs Data Bridge", () => {
     const startRes = await t.mutation(api.cbt.startSession, { forceNew: false });
     expect(startRes.previousSessionExpired).toBe(true);
 
-    const logs = await t.query(api.reframes.getRecentLogs, { userId: "p8_user_bridge_09" });
+    const logs = await t.query(api.reframes.getRecentLogs, { userId: uid_p8_user_bridge_09 });
     expect(logs).toHaveLength(0);
   });
 
@@ -1153,6 +1188,7 @@ describe("Priority 8 Step 4: CBT → Reframe Logs Data Bridge", () => {
       email: "bridge10@emotify.com",
       name: "Bridge Student 10",
     });
+    const uid_p8_user_bridge_10 = await testUserId(t, "p8_user_bridge_10");
 
     const init = await t.mutation(api.cbt.startSession, { forceNew: true });
     const sessionId = init.session!._id;
@@ -1163,7 +1199,7 @@ describe("Priority 8 Step 4: CBT → Reframe Logs Data Bridge", () => {
       content: "I want to kill myself, I cannot handle this life anymore.",
     });
 
-    const logs = await t.query(api.reframes.getRecentLogs, { userId: "p8_user_bridge_10" });
+    const logs = await t.query(api.reframes.getRecentLogs, { userId: uid_p8_user_bridge_10 });
     expect(logs).toHaveLength(0);
   });
 
@@ -1176,6 +1212,7 @@ describe("Priority 8 Step 4: CBT → Reframe Logs Data Bridge", () => {
       email: "student11@emotify.com",
       name: "Student 11",
     });
+    const uid_p8_user_student_11 = await testUserId(tStudent, "p8_user_student_11");
 
     const init = await tStudent.mutation(api.cbt.startSession, { forceNew: true });
     const sessionId = init.session!._id;
@@ -1193,6 +1230,7 @@ describe("Priority 8 Step 4: CBT → Reframe Logs Data Bridge", () => {
       email: "attacker11@emotify.com",
       name: "Attacker 11",
     });
+    const uid_p8_user_attacker_11 = await testUserId(tAttacker, "p8_user_attacker_11");
 
     // Attacker cannot complete or rate victim's session
     await expect(
@@ -1210,6 +1248,7 @@ describe("Priority 8 Step 4: CBT → Reframe Logs Data Bridge", () => {
       email: "bridge12@emotify.com",
       name: "Bridge Student 12",
     });
+    const uid_p8_user_bridge_12 = await testUserId(t, "p8_user_bridge_12");
 
     const init = await t.mutation(api.cbt.startSession, { forceNew: true });
     const sessionId = init.session!._id;
@@ -1217,7 +1256,7 @@ describe("Priority 8 Step 4: CBT → Reframe Logs Data Bridge", () => {
     // User ends session before reaching balanced thought
     await t.mutation(api.cbt.endSession, { sessionId });
 
-    const logs = await t.query(api.reframes.getRecentLogs, { userId: "p8_user_bridge_12" });
+    const logs = await t.query(api.reframes.getRecentLogs, { userId: uid_p8_user_bridge_12 });
     expect(logs).toHaveLength(0);
   });
 
@@ -1228,6 +1267,7 @@ describe("Priority 8 Step 4: CBT → Reframe Logs Data Bridge", () => {
       email: "bridge13@emotify.com",
       name: "Bridge Student 13",
     });
+    const uid_p8_user_bridge_13 = await testUserId(t, "p8_user_bridge_13");
 
     const init = await t.mutation(api.cbt.startSession, { forceNew: true });
     const sessionId = init.session!._id;
@@ -1251,7 +1291,7 @@ describe("Priority 8 Step 4: CBT → Reframe Logs Data Bridge", () => {
     });
 
     // Query via getRecentLogs (which saved-reframes.tsx uses)
-    const logs = await t.query(api.reframes.getRecentLogs, { userId: "p8_user_bridge_13" });
+    const logs = await t.query(api.reframes.getRecentLogs, { userId: uid_p8_user_bridge_13 });
     expect(logs).toHaveLength(1);
     expect(logs[0].saved_reframe_flag).toBe(true);
     expect(logs[0].improvement_percentage).toBe(63); // round(((8-3)/8)*100) = 63%
@@ -1264,6 +1304,7 @@ describe("Priority 8 Step 4: CBT → Reframe Logs Data Bridge", () => {
       email: "bridge14@emotify.com",
       name: "Bridge Student 14",
     });
+    const uid_p8_user_bridge_14 = await testUserId(t, "p8_user_bridge_14");
 
     const init = await t.mutation(api.cbt.startSession, { forceNew: true });
     const sessionId = init.session!._id;
@@ -1286,13 +1327,13 @@ describe("Priority 8 Step 4: CBT → Reframe Logs Data Bridge", () => {
       intensity: 2,
     });
 
-    let logs = await t.query(api.reframes.getRecentLogs, { userId: "p8_user_bridge_14" });
+    let logs = await t.query(api.reframes.getRecentLogs, { userId: uid_p8_user_bridge_14 });
     expect(logs).toHaveLength(1);
     const logId = logs[0]._id;
 
     // 1. Toggle favorite
     await t.mutation(api.reframes.toggleFavoriteLog, { id: logId });
-    logs = await t.query(api.reframes.getRecentLogs, { userId: "p8_user_bridge_14" });
+    logs = await t.query(api.reframes.getRecentLogs, { userId: uid_p8_user_bridge_14 });
     expect(logs[0].favorite).toBe(true);
 
     // 2. Edit reframe text
@@ -1300,12 +1341,12 @@ describe("Priority 8 Step 4: CBT → Reframe Logs Data Bridge", () => {
       id: logId,
       reframe_text: "Another train is coming soon, and I can use this time to read.",
     });
-    logs = await t.query(api.reframes.getRecentLogs, { userId: "p8_user_bridge_14" });
+    logs = await t.query(api.reframes.getRecentLogs, { userId: uid_p8_user_bridge_14 });
     expect(logs[0].reframe_text).toBe("Another train is coming soon, and I can use this time to read.");
 
     // 3. Delete log
     await t.mutation(api.reframes.removeLog, { id: logId });
-    logs = await t.query(api.reframes.getRecentLogs, { userId: "p8_user_bridge_14" });
+    logs = await t.query(api.reframes.getRecentLogs, { userId: uid_p8_user_bridge_14 });
     expect(logs).toHaveLength(0);
   });
 });
@@ -1319,6 +1360,7 @@ describe("Priority 8 Step 6: Non-Clinical Cooldown & Deterministic Habit Engine"
       email: "det01@emotify.com",
       name: "Deterministic Student 01",
     });
+    const uid_p8_user_det_01 = await testUserId(tUser, "p8_user_det_01");
 
     await tUser.mutation(api.microGoals.submitMorningCheckin, {
       mood: "calm",
@@ -1326,7 +1368,7 @@ describe("Priority 8 Step 6: Non-Clinical Cooldown & Deterministic Habit Engine"
     });
 
     const goalsRun1 = await tUser.query(api.microGoals.getTodayGoals, {
-      userId: "p8_user_det_01",
+      userId: uid_p8_user_det_01,
       dateStr: "2026-09-28",
     });
 
@@ -1334,14 +1376,14 @@ describe("Priority 8 Step 6: Non-Clinical Cooldown & Deterministic Habit Engine"
     await t.run(async (ctx) => {
       const todayGoals = await ctx.db
         .query("microGoals")
-        .withIndex("by_userId", (q) => q.eq("userId", "p8_user_det_01"))
+        .withIndex("by_userId", (q) => q.eq("userId", uid_p8_user_det_01))
         .collect();
       for (const g of todayGoals) {
         await ctx.db.delete(g._id);
       }
       const checkins = await ctx.db
         .query("dailyCheckins")
-        .withIndex("by_userId", (q) => q.eq("userId", "p8_user_det_01"))
+        .withIndex("by_userId", (q) => q.eq("userId", uid_p8_user_det_01))
         .collect();
       for (const c of checkins) {
         await ctx.db.delete(c._id);
@@ -1354,7 +1396,7 @@ describe("Priority 8 Step 6: Non-Clinical Cooldown & Deterministic Habit Engine"
     });
 
     const goalsRun2 = await tUser.query(api.microGoals.getTodayGoals, {
-      userId: "p8_user_det_01",
+      userId: uid_p8_user_det_01,
       dateStr: "2026-09-28",
     });
 
@@ -1388,6 +1430,7 @@ describe("Priority 8 Step 6: Non-Clinical Cooldown & Deterministic Habit Engine"
       email: "norandom@emotify.com",
       name: "No Random Student",
     });
+    const uid_p8_user_no_random_03 = await testUserId(tUser, "p8_user_no_random_03");
 
     const spy = vi.spyOn(Math, "random").mockImplementation(() => {
       throw new Error("FAIL: Math.random() was called during daily routine goal generation!");
@@ -1401,7 +1444,7 @@ describe("Priority 8 Step 6: Non-Clinical Cooldown & Deterministic Habit Engine"
       expect(checkin.success).toBe(true);
 
       const goals = await tUser.query(api.microGoals.getTodayGoals, {
-        userId: "p8_user_no_random_03",
+        userId: uid_p8_user_no_random_03,
         dateStr: "2026-09-28",
       });
       expect(goals).toHaveLength(5);
@@ -1418,9 +1461,10 @@ describe("Priority 8 Step 6: Non-Clinical Cooldown & Deterministic Habit Engine"
       email: "cd01@emotify.com",
       name: "Cooldown Student 01",
     });
+    const uid_p8_user_cd_01 = await testUserId(tUser, "p8_user_cd_01");
 
     const baseline = selectDailyRoutineGoalsDeterministically({
-      userId: "p8_user_cd_01",
+      userId: uid_p8_user_cd_01,
       dateStr: "2026-09-28",
     });
     const targetToCool = baseline.selectedSmall[0].id;
@@ -1428,7 +1472,7 @@ describe("Priority 8 Step 6: Non-Clinical Cooldown & Deterministic Habit Engine"
     // Insert an assignment for targetToCool 3 days ago (2026-09-25)
     await t.run(async (ctx) => {
       await ctx.db.insert("microGoals", {
-        userId: "p8_user_cd_01",
+        userId: uid_p8_user_cd_01,
         goalId: targetToCool,
         goalTitle: "Prior Assignment",
         goalDescription: "Assigned 3 days ago",
@@ -1448,7 +1492,7 @@ describe("Priority 8 Step 6: Non-Clinical Cooldown & Deterministic Habit Engine"
     });
 
     const goals = await tUser.query(api.microGoals.getTodayGoals, {
-      userId: "p8_user_cd_01",
+      userId: uid_p8_user_cd_01,
       dateStr: "2026-09-28",
     });
 
@@ -1465,9 +1509,10 @@ describe("Priority 8 Step 6: Non-Clinical Cooldown & Deterministic Habit Engine"
       email: "cd02@emotify.com",
       name: "Cooldown Student 02",
     });
+    const uid_p8_user_cd_02 = await testUserId(tUser, "p8_user_cd_02");
 
     const baseline = selectDailyRoutineGoalsDeterministically({
-      userId: "p8_user_cd_02",
+      userId: uid_p8_user_cd_02,
       dateStr: "2026-09-28",
     });
     const candidateId = baseline.selectedSmall[0].id;
@@ -1475,7 +1520,7 @@ describe("Priority 8 Step 6: Non-Clinical Cooldown & Deterministic Habit Engine"
     // Insert an assignment 10 days ago (2026-09-18), outside 7-day window
     await t.run(async (ctx) => {
       await ctx.db.insert("microGoals", {
-        userId: "p8_user_cd_02",
+        userId: uid_p8_user_cd_02,
         goalId: candidateId,
         goalTitle: "Old Assignment",
         goalDescription: "Assigned 10 days ago",
@@ -1496,7 +1541,7 @@ describe("Priority 8 Step 6: Non-Clinical Cooldown & Deterministic Habit Engine"
     });
 
     const goals = await tUser.query(api.microGoals.getTodayGoals, {
-      userId: "p8_user_cd_02",
+      userId: uid_p8_user_cd_02,
       dateStr: "2026-09-28",
     });
 
@@ -1512,9 +1557,10 @@ describe("Priority 8 Step 6: Non-Clinical Cooldown & Deterministic Habit Engine"
       email: "cd03@emotify.com",
       name: "Cooldown Student 03",
     });
+    const uid_p8_user_cd_03 = await testUserId(tUser, "p8_user_cd_03");
 
     const baseline = selectDailyRoutineGoalsDeterministically({
-      userId: "p8_user_cd_03",
+      userId: uid_p8_user_cd_03,
       dateStr: "2026-09-28",
     });
     const skippedCandidate = baseline.selectedSmall[0].id;
@@ -1522,7 +1568,7 @@ describe("Priority 8 Step 6: Non-Clinical Cooldown & Deterministic Habit Engine"
     // Goal was assigned and skipped 2 days ago (2026-09-26)
     await t.run(async (ctx) => {
       await ctx.db.insert("microGoals", {
-        userId: "p8_user_cd_03",
+        userId: uid_p8_user_cd_03,
         goalId: skippedCandidate,
         goalTitle: "Skipped Goal",
         goalDescription: "Skipped recently",
@@ -1543,7 +1589,7 @@ describe("Priority 8 Step 6: Non-Clinical Cooldown & Deterministic Habit Engine"
     });
 
     const goals = await tUser.query(api.microGoals.getTodayGoals, {
-      userId: "p8_user_cd_03",
+      userId: uid_p8_user_cd_03,
       dateStr: "2026-09-28",
     });
 
@@ -1558,9 +1604,10 @@ describe("Priority 8 Step 6: Non-Clinical Cooldown & Deterministic Habit Engine"
       email: "cd04@emotify.com",
       name: "Cooldown Student 04",
     });
+    const uid_p8_user_cd_04 = await testUserId(tUser, "p8_user_cd_04");
 
     const baseline = selectDailyRoutineGoalsDeterministically({
-      userId: "p8_user_cd_04",
+      userId: uid_p8_user_cd_04,
       dateStr: "2026-09-28",
     });
     const completedCandidate = baseline.selectedMedium[0].id;
@@ -1568,7 +1615,7 @@ describe("Priority 8 Step 6: Non-Clinical Cooldown & Deterministic Habit Engine"
     // Completed 1 day ago (2026-09-27)
     await t.run(async (ctx) => {
       await ctx.db.insert("microGoals", {
-        userId: "p8_user_cd_04",
+        userId: uid_p8_user_cd_04,
         goalId: completedCandidate,
         goalTitle: "Completed Yesterday",
         goalDescription: "Completed goal",
@@ -1589,7 +1636,7 @@ describe("Priority 8 Step 6: Non-Clinical Cooldown & Deterministic Habit Engine"
     });
 
     const goals = await tUser.query(api.microGoals.getTodayGoals, {
-      userId: "p8_user_cd_04",
+      userId: uid_p8_user_cd_04,
       dateStr: "2026-09-28",
     });
 
@@ -1604,6 +1651,7 @@ describe("Priority 8 Step 6: Non-Clinical Cooldown & Deterministic Habit Engine"
       email: "cd05@emotify.com",
       name: "No Duplicates Student",
     });
+    const uid_p8_user_cd_05 = await testUserId(tUser, "p8_user_cd_05");
 
     await tUser.mutation(api.microGoals.submitMorningCheckin, {
       mood: "good",
@@ -1611,7 +1659,7 @@ describe("Priority 8 Step 6: Non-Clinical Cooldown & Deterministic Habit Engine"
     });
 
     const goals = await tUser.query(api.microGoals.getTodayGoals, {
-      userId: "p8_user_cd_05",
+      userId: uid_p8_user_cd_05,
       dateStr: "2026-09-28",
     });
 
@@ -1628,6 +1676,7 @@ describe("Priority 8 Step 6: Non-Clinical Cooldown & Deterministic Habit Engine"
       email: "fb01@emotify.com",
       name: "Fallback Student 01",
     });
+    const uid_p8_user_fb_01 = await testUserId(tUser, "p8_user_fb_01");
 
     // In small tier (8 templates), put 7 templates on cooldown within the last 7 days
     const smallTemplates = ROUTINE_HABIT_CATALOG.small;
@@ -1639,7 +1688,7 @@ describe("Priority 8 Step 6: Non-Clinical Cooldown & Deterministic Habit Engine"
       for (const tpl of coolingTemplates) {
         const pastDate = `2026-09-${String(28 - dayOffset).padStart(2, "0")}`;
         await ctx.db.insert("microGoals", {
-          userId: "p8_user_fb_01",
+          userId: uid_p8_user_fb_01,
           goalId: tpl.id,
           goalTitle: tpl.title,
           goalDescription: tpl.description,
@@ -1661,7 +1710,7 @@ describe("Priority 8 Step 6: Non-Clinical Cooldown & Deterministic Habit Engine"
     });
 
     const goals = await tUser.query(api.microGoals.getTodayGoals, {
-      userId: "p8_user_fb_01",
+      userId: uid_p8_user_fb_01,
       dateStr: "2026-09-28",
     });
 
@@ -1681,6 +1730,7 @@ describe("Priority 8 Step 6: Non-Clinical Cooldown & Deterministic Habit Engine"
       email: "fb02@emotify.com",
       name: "Catalog Student",
     });
+    const uid_p8_user_fb_02 = await testUserId(tUser, "p8_user_fb_02");
 
     await tUser.mutation(api.microGoals.submitMorningCheckin, {
       mood: "calm",
@@ -1688,7 +1738,7 @@ describe("Priority 8 Step 6: Non-Clinical Cooldown & Deterministic Habit Engine"
     });
 
     const goals = await tUser.query(api.microGoals.getTodayGoals, {
-      userId: "p8_user_fb_02",
+      userId: uid_p8_user_fb_02,
       dateStr: "2026-09-28",
     });
 
@@ -1708,6 +1758,7 @@ describe("Priority 8 Step 6: Non-Clinical Cooldown & Deterministic Habit Engine"
       email: "tier01@emotify.com",
       name: "Tier Structure Student",
     });
+    const uid_p8_user_tier_01 = await testUserId(tUser, "p8_user_tier_01");
 
     await tUser.mutation(api.microGoals.submitMorningCheckin, {
       mood: "calm",
@@ -1715,7 +1766,7 @@ describe("Priority 8 Step 6: Non-Clinical Cooldown & Deterministic Habit Engine"
     });
 
     const goals = await tUser.query(api.microGoals.getTodayGoals, {
-      userId: "p8_user_tier_01",
+      userId: uid_p8_user_tier_01,
       dateStr: "2026-09-28",
     });
 
@@ -1750,6 +1801,7 @@ describe("Priority 8 Step 6: Non-Clinical Cooldown & Deterministic Habit Engine"
       email: "a@emotify.com",
       name: "Student A",
     });
+    const uid_student_a_auth_02 = await testUserId(studentA, "student_a_auth_02");
 
     await studentA.mutation(api.microGoals.submitMorningCheckin, {
       mood: "calm",
@@ -1761,10 +1813,11 @@ describe("Priority 8 Step 6: Non-Clinical Cooldown & Deterministic Habit Engine"
       email: "b@emotify.com",
       name: "Student B",
     });
+    const uid_student_b_auth_02 = await testUserId(studentB, "student_b_auth_02");
 
     await expect(
       studentB.query(api.microGoals.getTodayGoals, {
-        userId: "student_a_auth_02",
+        userId: uid_student_a_auth_02,
         dateStr: "2026-09-28",
       })
     ).rejects.toThrow("Unauthorized");
@@ -1778,6 +1831,7 @@ describe("Priority 8 Step 6: Non-Clinical Cooldown & Deterministic Habit Engine"
       email: "decouple_s6@emotify.com",
       name: "Decouple Step 6 Student",
     });
+    const uid_p8_user_decouple_step6 = await testUserId(tUser, "p8_user_decouple_step6");
 
     // Ensure database has zero screening attempts or triages
     await t.run(async (ctx) => {
@@ -1794,7 +1848,7 @@ describe("Priority 8 Step 6: Non-Clinical Cooldown & Deterministic Habit Engine"
     expect(checkin.success).toBe(true);
 
     const goals = await tUser.query(api.microGoals.getTodayGoals, {
-      userId: "p8_user_decouple_step6",
+      userId: uid_p8_user_decouple_step6,
       dateStr: "2026-09-28",
     });
     expect(goals).toHaveLength(5);

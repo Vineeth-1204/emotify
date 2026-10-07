@@ -1,5 +1,6 @@
 import { v, ConvexError } from "convex/values";
-import { mutation, query, action } from "./_generated/server";
+import { internalMutation } from "./_generated/server";
+import { mutation, query, action } from "./functions";
 import { api, internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
@@ -119,11 +120,17 @@ export const getLatestMessages = query({
   },
 });
 
-/** Save a message (user or assistant) in Convex aiCompanionLogs and companionMessages */
-export const createMessage = mutation({
+const messageRoleValidator = v.union(v.literal("user"), v.literal("assistant"));
+
+/**
+ * Internal: persist a companion message for the authenticated student.
+ * Only callable from server actions, so clients cannot forge assistant turns
+ * or bypass the companion rate limiter.
+ */
+export const createMessage = internalMutation({
   args: {
     messageId: v.string(),
-    role: v.string(), // "user" | "assistant"
+    role: messageRoleValidator,
     content: v.string(),
   },
   handler: async (ctx, args) => {
@@ -146,12 +153,12 @@ export const createMessage = mutation({
   },
 });
 
-/** Log a companion message with strict session ownership enforcement (remediates EMOT-SEC-11) */
-export const logMessage = mutation({
+/** Internal: log a companion message with strict session ownership enforcement (remediates EMOT-SEC-11) */
+export const logMessage = internalMutation({
   args: {
     messageId: v.optional(v.string()),
     userId: v.optional(v.string()),
-    role: v.string(), // "user" | "assistant"
+    role: messageRoleValidator,
     content: v.string(),
   },
   handler: async (ctx, args) => {
@@ -359,12 +366,12 @@ export const generateAIResponse = action({
     // Sanitize client input
     const sanitizedInputContent = sanitizeInput(args.content);
 
-    // 1. Save user message first (immediate visual feedback on query)
-    await ctx.runMutation(api.companion.createMessage, {
-      messageId: args.userMessageId,
-      role: "user",
-      content: sanitizedInputContent,
-    });
+    const saveUserMessage = () =>
+      ctx.runMutation(internal.companion.createMessage, {
+        messageId: args.userMessageId,
+        role: "user",
+        content: sanitizedInputContent,
+      });
 
     // 2. SERVER SAFETY GATE: Authoritative deterministic check
     // CRITICAL SAFETY INVARIANT: Safety evaluation MUST run BEFORE rate-limit rejection.
@@ -373,9 +380,14 @@ export const generateAIResponse = action({
 
     // CRISIS PATH: Explicit self-directed crisis -> MUST NOT call Gemini
     if (safetyResult.state === "crisis" && safetyResult.isSelfCrisis) {
+      // Crisis disclosures are always persisted, regardless of rate limits.
+      await saveUserMessage();
+
       // Trigger deduplicated safety alert for counselors
-      await ctx.runMutation(api.alerts.createSafetyAlertWithDeduplication, {
+      await ctx.runMutation(internal.alerts.createSafetyAlertWithDeduplication, {
         type: "suicideRisk",
+        source: "companion",
+        sourceId: args.userMessageId,
       });
 
       // Controlled safety response
@@ -383,7 +395,7 @@ export const generateAIResponse = action({
       const actionValidation = validateAndResolveAction(crisisContract.action, "crisis");
       crisisContract.action = actionValidation.valid ? actionValidation.action : { type: "none" };
 
-      await ctx.runMutation(api.companion.createMessage, {
+      await ctx.runMutation(internal.companion.createMessage, {
         messageId: args.aiMessageId,
         role: "assistant",
         content: crisisContract.response,
@@ -391,7 +403,7 @@ export const generateAIResponse = action({
 
       // Record safe telemetry
       try {
-        await ctx.runMutation(api.emotyTelemetry.recordTelemetry, {
+        await ctx.runMutation(internal.emotyTelemetry.recordTelemetry, {
           durationMs: Date.now() - startTime,
           path: "crisis",
           mode: crisisContract.mode,
@@ -411,8 +423,10 @@ export const generateAIResponse = action({
 
     // THIRD-PARTY CONCERN PATH: Student reports friend in crisis -> Controlled supportive guidance
     if (safetyResult.category === "third_party") {
+      await saveUserMessage();
+
       const thirdPartyContract = getControlledThirdPartyResponse();
-      await ctx.runMutation(api.companion.createMessage, {
+      await ctx.runMutation(internal.companion.createMessage, {
         messageId: args.aiMessageId,
         role: "assistant",
         content: thirdPartyContract.response,
@@ -420,7 +434,7 @@ export const generateAIResponse = action({
 
       // Record safe telemetry
       try {
-        await ctx.runMutation(api.emotyTelemetry.recordTelemetry, {
+        await ctx.runMutation(internal.emotyTelemetry.recordTelemetry, {
           durationMs: Date.now() - startTime,
           path: "third_party",
           mode: thirdPartyContract.mode,
@@ -440,10 +454,10 @@ export const generateAIResponse = action({
 
     // 3. SERVER-AUTHORITATIVE RATE LIMITING (Burst, Daily, Concurrency)
     // Non-crisis AI generation is strictly gated to protect student wellbeing and prevent abuse.
-    const rateCheck = await ctx.runMutation(api.emotyRateLimiter.checkAndAcquireRateLimit);
+    const rateCheck = await ctx.runMutation(internal.emotyRateLimiter.checkAndAcquireRateLimit);
     if (!rateCheck.allowed) {
       try {
-        await ctx.runMutation(api.emotyTelemetry.recordTelemetry, {
+        await ctx.runMutation(internal.emotyTelemetry.recordTelemetry, {
           durationMs: Date.now() - startTime,
           path: "rate_limited",
           mode: "guidance",
@@ -464,6 +478,9 @@ export const generateAIResponse = action({
     }
 
     try {
+      // Non-crisis messages are only persisted once the rate limiter has admitted the request.
+      await saveUserMessage();
+
       // Deterministic non-sensitive memory candidate detection from user input (AI-3 Step 7)
       const memoryCandidate = detectMemoryCandidate(sanitizedInputContent);
       if (memoryCandidate) {
@@ -480,7 +497,7 @@ export const generateAIResponse = action({
       }
 
       // Fetch authoritative, bounded Emoty context with server-derived safety state
-      const emotyContext: EmotyContext = await ctx.runQuery(api.emotyContext.getAuthoritativeEmotyContext, {
+      const emotyContext: EmotyContext = await ctx.runQuery(internal.emotyContext.getAuthoritativeEmotyContext, {
         screen: args.screen,
         clientContext: args.clientContext,
         excludeMessageId: args.userMessageId,
@@ -501,14 +518,14 @@ export const generateAIResponse = action({
           quickAction: args.quickAction,
           language: args.language,
         });
-        await ctx.runMutation(api.companion.createMessage, {
+        await ctx.runMutation(internal.companion.createMessage, {
           messageId: args.aiMessageId,
           role: "assistant",
           content: fallbackContract.response,
         });
 
         try {
-          await ctx.runMutation(api.emotyTelemetry.recordTelemetry, {
+          await ctx.runMutation(internal.emotyTelemetry.recordTelemetry, {
             durationMs: Date.now() - startTime,
             path: "fallback",
             mode: fallbackContract.mode,
@@ -622,7 +639,7 @@ export const generateAIResponse = action({
         contract.response = sanitizeOutput(contract.response);
 
         // Save assistant response in Convex (aiCompanionLogs)
-        await ctx.runMutation(api.companion.createMessage, {
+        await ctx.runMutation(internal.companion.createMessage, {
           messageId: args.aiMessageId,
           role: "assistant",
           content: contract.response,
@@ -630,7 +647,7 @@ export const generateAIResponse = action({
 
         // Record privacy-safe telemetry
         try {
-          await ctx.runMutation(api.emotyTelemetry.recordTelemetry, {
+          await ctx.runMutation(internal.emotyTelemetry.recordTelemetry, {
             durationMs: Date.now() - startTime,
             path: isContractInvalid || isParseError ? "fallback" : "gemini",
             mode: contract.mode,
@@ -659,14 +676,14 @@ export const generateAIResponse = action({
           language: args.language,
         });
 
-        await ctx.runMutation(api.companion.createMessage, {
+        await ctx.runMutation(internal.companion.createMessage, {
           messageId: args.aiMessageId,
           role: "assistant",
           content: fallbackContract.response,
         });
 
         try {
-          await ctx.runMutation(api.emotyTelemetry.recordTelemetry, {
+          await ctx.runMutation(internal.emotyTelemetry.recordTelemetry, {
             durationMs: Date.now() - startTime,
             path: "fallback",
             mode: fallbackContract.mode,
@@ -689,7 +706,7 @@ export const generateAIResponse = action({
     } finally {
       // ALWAYS release in-flight concurrency lock
       try {
-        await ctx.runMutation(api.emotyRateLimiter.releaseRateLimit);
+        await ctx.runMutation(internal.emotyRateLimiter.releaseRateLimit);
       } catch (relErr) {
         console.warn("Failed to release rate limit lock:", relErr);
       }

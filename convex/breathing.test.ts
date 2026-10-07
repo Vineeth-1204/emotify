@@ -14,6 +14,7 @@
 import { describe, test, expect, vi } from "vitest";
 import { convexTest } from "convex-test";
 import schema from "./schema";
+import { testUserId, assignAllPatientsToCounsellors } from "../test-utils/identity";
 import { api } from "./_generated/api";
 import {
   BREATHING_PROTOCOLS,
@@ -126,6 +127,7 @@ describe("Priority 9 Step 4B: Canonical Breathing Engine & Protocols", () => {
       subject: "student_breathe_01",
       issuer: "https://clerk.emotify.com",
     });
+    const uid_student_breathe_01 = await testUserId(studentSession, "student_breathe_01");
 
     const logId = await studentSession.mutation(api.breathing.logSession, {
       protocolId: "box_4444",
@@ -145,7 +147,7 @@ describe("Priority 9 Step 4B: Canonical Breathing Engine & Protocols", () => {
     await t.run(async (ctx) => {
       const doc = await ctx.db.get(logId);
       expect(doc).toBeDefined();
-      expect(doc!.userId).toBe("student_breathe_01");
+      expect(doc!.userId).toBe(uid_student_breathe_01);
       expect(doc!.protocolId).toBe("box_4444");
       expect(doc!.durationSeconds).toBe(64);
       expect(doc!.cyclesCompleted).toBe(4);
@@ -159,6 +161,7 @@ describe("Priority 9 Step 4B: Canonical Breathing Engine & Protocols", () => {
   test("BREATH-08: Validation Rejections - Invalid duration, status, or source are strictly rejected", async () => {
     const t = convexTest(schema);
     const studentSession = t.withIdentity({ subject: "student_breathe_02" });
+    const uid_student_breathe_02 = await testUserId(studentSession, "student_breathe_02");
 
     // Negative duration
     await expect(
@@ -213,13 +216,13 @@ describe("Priority 9 Step 4B: Canonical Breathing Engine & Protocols", () => {
     let triageId: any;
 
     await t.run(async (ctx) => {
-      await ctx.db.insert("users", {
+      const seedId_student_breathe_03 = await ctx.db.insert("users", {
         clerkId: "student_breathe_03",
         role: "patient",
       });
 
       attemptId = await ctx.db.insert("screeningAttempts", {
-        userId: "student_breathe_03",
+        userId: String(seedId_student_breathe_03),
         status: "completed",
         startedAt: Date.now() - 100000,
         instrumentVersions: { phq9: "1.0", gad7: "1.0", pq16: "1.0" },
@@ -235,7 +238,7 @@ describe("Priority 9 Step 4B: Canonical Breathing Engine & Protocols", () => {
       });
 
       triageId = await ctx.db.insert("triages", {
-        userId: "student_breathe_03",
+        userId: String(seedId_student_breathe_03),
         level: "mild",
         suicideFlag: false,
         psychosisFlag: false,
@@ -245,6 +248,7 @@ describe("Priority 9 Step 4B: Canonical Breathing Engine & Protocols", () => {
     });
 
     const studentSession = t.withIdentity({ subject: "student_breathe_03" });
+    const uid_student_breathe_03 = await testUserId(studentSession, "student_breathe_03");
 
     const logId = await studentSession.mutation(api.breathing.logSession, {
       protocolId: "calming_434",
@@ -291,6 +295,7 @@ describe("Priority 9 Step 4B: Canonical Breathing Engine & Protocols", () => {
     });
 
     const studentSession = t.withIdentity({ subject: "student_breathe_04" });
+    const uid_student_breathe_04 = await testUserId(studentSession, "student_breathe_04");
 
     await expect(
       studentSession.mutation(api.breathing.logSession, {
@@ -314,11 +319,11 @@ describe("Priority 9 Step 4B: Canonical Breathing Engine & Protocols", () => {
     const t = convexTest(schema);
 
     await t.run(async (ctx) => {
-      await ctx.db.insert("users", { clerkId: "student_alice", role: "patient" });
-      await ctx.db.insert("users", { clerkId: "student_bob", role: "patient" });
+      const seedId_student_alice = await ctx.db.insert("users", { clerkId: "student_alice", role: "patient" });
+      const seedId_student_bob = await ctx.db.insert("users", { clerkId: "student_bob", role: "patient" });
 
       await ctx.db.insert("breathingLogs", {
-        userId: "student_alice",
+        userId: String(seedId_student_alice),
         protocolId: "box_4444",
         protocolName: "Box Breathing",
         sourceType: "self_initiated",
@@ -332,15 +337,17 @@ describe("Priority 9 Step 4B: Canonical Breathing Engine & Protocols", () => {
     });
 
     const aliceSession = t.withIdentity({ subject: "student_alice" });
+    const uid_student_alice = await testUserId(aliceSession, "student_alice");
     const bobSession = t.withIdentity({ subject: "student_bob" });
+    const uid_student_bob = await testUserId(bobSession, "student_bob");
 
     // Alice queries own logs -> succeeds
-    const aliceLogs = await aliceSession.query(api.breathing.getUserLogs, { userId: "student_alice" });
+    const aliceLogs = await aliceSession.query(api.breathing.getUserLogs, { userId: uid_student_alice });
     expect(aliceLogs).toHaveLength(1);
 
     // Bob attempts to query Alice's logs -> rejected
     await expect(
-      bobSession.query(api.breathing.getUserLogs, { userId: "student_alice" })
+      bobSession.query(api.breathing.getUserLogs, { userId: uid_student_alice })
     ).rejects.toThrow("Unauthorized");
   });
 
@@ -366,7 +373,9 @@ describe("Priority 9 Step 4B: Canonical Breathing Engine & Protocols", () => {
       });
     });
 
+    await assignAllPatientsToCounsellors(t);
     const counselorSession = t.withIdentity({ subject: "counselor_dan" });
+    const uid_counselor_dan = await testUserId(counselorSession, "counselor_dan");
 
     const logs = await counselorSession.query(api.breathing.getUserLogs, { userId: "student_carol" });
     expect(logs).toHaveLength(1);
@@ -396,6 +405,7 @@ describe("Priority 9 Step 4B: Canonical Breathing Engine & Protocols", () => {
     });
 
     const session = t.withIdentity({ subject: "student_jpmr_test" });
+    const uid_student_jpmr_test = await testUserId(session, "student_jpmr_test");
     const breathingHistory = await session.query(api.breathing.getUserLogs, {});
     expect(breathingHistory).toHaveLength(0); // breathingLogs remains clean
   });
@@ -404,11 +414,11 @@ describe("Priority 9 Step 4B: Canonical Breathing Engine & Protocols", () => {
     const t = convexTest(schema);
 
     await t.run(async (ctx) => {
-      await ctx.db.insert("users", { clerkId: "student_emap_test", role: "patient" });
+      const seedId_student_emap_test = await ctx.db.insert("users", { clerkId: "student_emap_test", role: "patient" });
 
       // Student logs somatic emotion map
       await ctx.db.insert("emotionMaps", {
-        userId: "student_emap_test",
+        userId: String(seedId_student_emap_test),
         emotionLabel: "anxiety",
         selectedRegions: ["chest", "shoulders"],
         bodyRatings: [
@@ -422,7 +432,7 @@ describe("Priority 9 Step 4B: Canonical Breathing Engine & Protocols", () => {
 
       // Student completes breathing session from emotion map recommendation
       await ctx.db.insert("breathingLogs", {
-        userId: "student_emap_test",
+        userId: String(seedId_student_emap_test),
         protocolId: "paced_444",
         protocolName: "Paced Calming Breath",
         sourceType: "emotion_map",
@@ -436,9 +446,10 @@ describe("Priority 9 Step 4B: Canonical Breathing Engine & Protocols", () => {
     });
 
     const session = t.withIdentity({ subject: "student_emap_test" });
+    const uid_student_emap_test = await testUserId(session, "student_emap_test");
 
     // Emotion maps remain distinct somatic scans
-    const maps = await session.query(api.emotionMaps.getRecentLogs, { userId: "student_emap_test" });
+    const maps = await session.query(api.emotionMaps.getRecentLogs, { userId: uid_student_emap_test });
     expect(maps).toHaveLength(1);
     expect(maps[0].averageIntensity).toBe(7.5);
 
@@ -455,6 +466,7 @@ describe("Priority 9 Step 4B: Canonical Breathing Engine & Protocols", () => {
   test("BREATH-15: Rate Limiting - Excessive rapid breathing log requests are throttled", async () => {
     const t = convexTest(schema);
     const session = t.withIdentity({ subject: "student_rate_limit_breath" });
+    const uid_student_rate_limit_breath = await testUserId(session, "student_rate_limit_breath");
 
     // Insert 10 sessions (allowed quota)
     for (let i = 0; i < 10; i++) {

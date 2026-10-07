@@ -4,6 +4,7 @@ import { expect, test, describe } from "vitest";
 import { api } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import schema from "./schema";
+import { assignAllPatientsToCounsellors } from "../test-utils/identity";
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -117,6 +118,9 @@ describe("P12 Step 5: Follow-Up Management System", () => {
       subject: adminSubject,
       tokenIdentifier: `https://issuer.example.com|${adminSubject}`,
     });
+
+    // Legacy fixtures: counsellors share every student (caseload assignments)
+    await assignAllPatientsToCounsellors(t);
 
     return {
       t,
@@ -303,21 +307,28 @@ describe("P12 Step 5: Follow-Up Management System", () => {
     expect(record?.completedBy).toBeDefined();
   });
 
-  test("FOLLOWUP-09: Student can complete their own follow-up if supported by existing semantics", async () => {
+  test("FOLLOWUP-09: Students close only self-initiated follow-ups; counsellor-created ones stay with staff", async () => {
     const { counselorClient, studentAClient, studentAId, t } = await setupEnvironment();
 
-    const fuId = await counselorClient.mutation(api.followUps.create, {
+    const clinicalId = await counselorClient.mutation(api.followUps.create, {
       userId: studentAId,
       type: "routine_checkin",
       dueDate: Date.now() + 86400000,
     });
+    await expect(studentAClient.mutation(api.followUps.markComplete, { id: clinicalId })).rejects.toThrow(
+      /only be completed by a counsellor/
+    );
 
-    // Student A completes their own follow-up
-    await studentAClient.mutation(api.followUps.markComplete, {
-      id: fuId,
+    // A student-created follow-up is always self-initiated (even if a clinical sourceType is requested)
+    const selfId = await studentAClient.mutation(api.followUps.create, {
+      type: "routine_checkin",
+      dueDate: Date.now() + 86400000,
+      sourceType: "screening",
     });
+    await studentAClient.mutation(api.followUps.markComplete, { id: selfId });
 
-    const record = await t.run(async (ctx) => ctx.db.get(fuId));
+    const record = await t.run(async (ctx) => ctx.db.get(selfId));
+    expect(record?.sourceType).toBe("self_initiated");
     expect(record?.completed).toBe(true);
     expect(record?.status).toBe("completed");
     expect(record?.completedAt).toBeDefined();

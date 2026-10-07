@@ -3,6 +3,7 @@ import { convexTest } from "convex-test";
 import { expect, test, describe } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";
+import { assignAllPatientsToCounsellors } from "../test-utils/identity";
 import type { Id } from "./_generated/dataModel";
 
 const modules = import.meta.glob("./**/*.ts");
@@ -89,6 +90,9 @@ describe("P14 Step 5: Final Security & Cross-Cutting Verification Suite", () => 
     const authedCounselor = t.withIdentity({ subject: "clerk_counselor_1" });
     const authedAdmin = t.withIdentity({ subject: "clerk_admin_1" });
 
+    // Legacy fixtures: counsellors share every student (caseload assignments)
+    await assignAllPatientsToCounsellors(t);
+
     return {
       t,
       studentAId,
@@ -161,43 +165,31 @@ describe("P14 Step 5: Final Security & Cross-Cutting Verification Suite", () => 
     ).rejects.toThrow("Unauthorized");
   });
 
-  test("FINAL-P0-04: Legacy submitScreening mandates authentication, ownership and bounds validation", async () => {
-    const { t, authedStudentA, studentBId } = await setupFinalEnvironment();
+  test("FINAL-P0-04: Legacy client-scored screening and triage writers are no longer callable", async () => {
+    const { t, authedStudentA } = await setupFinalEnvironment();
 
-    // Anonymous
-    await expect(
-      t.mutation(api.screening.submitScreening, {
-        phq9_total: 10,
-        gad7_total: 8,
-        pq16_total: 0,
-        phq9_item9_flag: false,
-        phq9_item9_score: 0,
-      })
-    ).rejects.toThrow("Unauthenticated");
+    for (const caller of [t, authedStudentA]) {
+      await expect(
+        caller.mutation((api.screening as any).submitScreening, {
+          phq9_total: 10,
+          gad7_total: 8,
+          pq16_total: 0,
+          phq9_item9_flag: false,
+          phq9_item9_score: 0,
+        })
+      ).rejects.toThrow();
 
-    // Cross-student
-    await expect(
-      authedStudentA.mutation(api.screening.submitScreening, {
-        userId: String(studentBId),
-        phq9_total: 10,
-        gad7_total: 8,
-        pq16_total: 0,
-        phq9_item9_flag: false,
-        phq9_item9_score: 0,
-      })
-    ).rejects.toThrow("Unauthorized");
-
-    // Out-of-bounds score
-    await expect(
-      authedStudentA.mutation(api.screening.submitScreening, {
-        phq9_total: 50,
-        gad7_total: 8,
-        pq16_total: 0,
-        phq9_item9_flag: false,
-        phq9_item9_score: 0,
-      })
-    ).rejects.toThrow("Invalid score range");
+      await expect(
+        caller.mutation((api.triage as any).processTriage, {
+          phq9_total: 0,
+          gad7_total: 0,
+          pq16_total: 0,
+          phq9_item9_score: 0,
+        })
+      ).rejects.toThrow();
+    }
   });
+
 
   // =========================================================================
   // 2. FINAL P1 VERIFICATION: PRIVACY, INTEGRITY & LOG ISOLATION

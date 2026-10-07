@@ -14,7 +14,8 @@
  */
 
 import { v, ConvexError } from "convex/values";
-import { mutation, query, internalMutation } from "./_generated/server";
+import { internalMutation } from "./_generated/server";
+import { query } from "./functions";
 import { requireAdmin } from "./authz";
 
 export const TELEMETRY_PATHS = [
@@ -42,7 +43,7 @@ export type TelemetryFallbackReason = (typeof TELEMETRY_FALLBACK_REASONS)[number
  * Records a privacy-safe telemetry event into aiTelemetryLogs.
  * Enforces session ownership and strict metadata validator.
  */
-export const recordTelemetry = mutation({
+export const recordTelemetry = internalMutation({
   args: {
     durationMs: v.number(),
     path: v.union(

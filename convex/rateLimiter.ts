@@ -1,4 +1,5 @@
-import { MutationCtx } from "./_generated/server";
+import { MutationCtx, internalMutation } from "./_generated/server";
+import { v } from "convex/values";
 import { logAuditEvent } from "./audit";
 
 /**
@@ -54,3 +55,22 @@ export async function checkRateLimit(
     count: existing.count + 1,
   });
 }
+
+/**
+ * Internal: consume one rate-limit token for the authenticated caller.
+ * Used by actions (which have no direct DB access), e.g. text-to-speech.
+ */
+export const consumeForCaller = internalMutation({
+  args: {
+    action: v.string(),
+    maxRequests: v.number(),
+    windowMs: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity || !identity.subject) {
+      throw new Error("Unauthenticated: Login required.");
+    }
+    await checkRateLimit(ctx, identity.subject, args.action, args.maxRequests, args.windowMs);
+  },
+});

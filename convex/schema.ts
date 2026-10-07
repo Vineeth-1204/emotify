@@ -205,6 +205,10 @@ export default defineSchema({
     acknowledgedAt: v.optional(v.number()),
     attemptId: v.optional(v.id("screeningAttempts")),
     triageId: v.optional(v.id("triages")),
+    source: v.optional(v.string()), // "screening" | "companion" | "cbt" | "system"
+    sourceId: v.optional(v.string()), // e.g. companion messageId or cbtSessions._id
+    studentDismissedAt: v.optional(v.number()), // last time the student closed the emergency screen
+    studentDismissCount: v.optional(v.number()),
   })
     .index("by_userId", ["userId"])
     .index("by_status", ["status"])
@@ -717,6 +721,19 @@ export default defineSchema({
     name: v.string(), // e.g. "patientId"
     value: v.number(), // monotonic sequential counter value
   }).index("by_name", ["name"]),
+
+  // Counsellor caseload: which counsellor is responsible for which student.
+  // Counsellors can only access students with an active assignment; admins see everyone.
+  counsellorAssignments: defineTable({
+    counsellorId: v.id("users"),
+    studentId: v.id("users"),
+    assignedBy: v.id("users"),
+    assignedAt: v.number(),
+    active: v.boolean(),
+    endedAt: v.optional(v.number()),
+  })
+    .index("by_counsellor_and_active", ["counsellorId", "active"])
+    .index("by_student_and_active", ["studentId", "active"]),
 
   // AI-3 Step 7: Dedicated Non-Sensitive Persistent Memory Table
   emotyMemories: defineTable({

@@ -3,6 +3,7 @@ import { convexTest } from "convex-test";
 import { expect, test, describe } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";
+import { testUserId } from "../test-utils/identity";
 import {
   scorePHQ9Responses,
   scoreGAD7Responses,
@@ -73,9 +74,10 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
     const t = convexTest(schema, modules).withIdentity({
       subject: "student_pq16_active",
     });
+    const uid_student_pq16_active = await testUserId(t, "student_pq16_active");
 
     const attempt = await t.mutation(api.screening.submitScreeningAttempt, {
-      userId: "student_pq16_active",
+      userId: uid_student_pq16_active,
       responses: {
         phq9: makePHQ9Responses(),
         gad7: makeGAD7Responses(),
@@ -94,9 +96,10 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
     const t = convexTest(schema, modules).withIdentity({
       subject: "student_pq16_nonzero",
     });
+    const uid_student_pq16_nonzero = await testUserId(t, "student_pq16_nonzero");
 
     await t.mutation(api.screening.submitScreeningAttempt, {
-      userId: "student_pq16_nonzero",
+      userId: uid_student_pq16_nonzero,
       responses: {
         phq9: makePHQ9Responses([0, 0, 0, 0, 0, 0, 0, 0, 0]),
         gad7: makeGAD7Responses([0, 0, 0, 0, 0, 0, 0]),
@@ -106,7 +109,7 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
 
     // Check latest legacy screening mirror (consumed by counselor dashboard)
     const latestScreening = await t.query(api.screening.getLatest, {
-      userId: "student_pq16_nonzero",
+      userId: uid_student_pq16_nonzero,
     });
 
     expect(latestScreening).toBeDefined();
@@ -119,6 +122,7 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
     const t = convexTest(schema, modules).withIdentity({
       subject: "student_item_level",
     });
+    const uid_student_item_level = await testUserId(t, "student_item_level");
 
     const phq9Items = [2, 1, 0, 3, 1, 2, 0, 1, 1];
     const gad7Items = [1, 2, 1, 0, 2, 1, 1];
@@ -127,7 +131,7 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
     const pq16Resp = makePQ16Responses(2);
 
     const submission = await t.mutation(api.screening.submitScreeningAttempt, {
-      userId: "student_item_level",
+      userId: uid_student_item_level,
       responses: {
         phq9: phq9Resp,
         gad7: gad7Resp,
@@ -150,10 +154,11 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
     const t = convexTest(schema, modules).withIdentity({
       subject: "student_multi_attempt",
     });
+    const uid_student_multi_attempt = await testUserId(t, "student_multi_attempt");
 
     // Attempt 1: Low symptoms
     const attempt1 = await t.mutation(api.screening.submitScreeningAttempt, {
-      userId: "student_multi_attempt",
+      userId: uid_student_multi_attempt,
       responses: {
         phq9: makePHQ9Responses([0, 0, 0, 0, 0, 0, 0, 0, 0]),
         gad7: makeGAD7Responses([0, 0, 0, 0, 0, 0, 0]),
@@ -163,7 +168,7 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
 
     // Attempt 2: Higher symptoms
     const attempt2 = await t.mutation(api.screening.submitScreeningAttempt, {
-      userId: "student_multi_attempt",
+      userId: uid_student_multi_attempt,
       responses: {
         phq9: makePHQ9Responses([2, 2, 2, 2, 2, 1, 1, 1, 0]),
         gad7: makeGAD7Responses([1, 1, 1, 1, 1, 1, 1]),
@@ -172,7 +177,7 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
     });
 
     const allAttempts = await t.query(api.screening.getAllAttempts, {
-      userId: "student_multi_attempt",
+      userId: uid_student_multi_attempt,
     });
 
     expect(allAttempts).toHaveLength(2);
@@ -187,6 +192,7 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
     const t = convexTest(schema, modules).withIdentity({
       subject: "student_invalid_q",
     });
+    const uid_student_invalid_q = await testUserId(t, "student_invalid_q");
 
     // Invalid: Only 8 of 9 questions answered for PHQ-9
     const incompletePHQ9: Record<string, number> = {
@@ -203,7 +209,7 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
 
     await expect(
       t.mutation(api.screening.submitScreeningAttempt, {
-        userId: "student_invalid_q",
+        userId: uid_student_invalid_q,
         responses: {
           phq9: incompletePHQ9,
           gad7: makeGAD7Responses(),
@@ -216,7 +222,7 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
     const outOfRangePHQ9 = makePHQ9Responses([5, 1, 1, 1, 1, 1, 1, 1, 0]);
     await expect(
       t.mutation(api.screening.submitScreeningAttempt, {
-        userId: "student_invalid_q",
+        userId: uid_student_invalid_q,
         responses: {
           phq9: outOfRangePHQ9,
           gad7: makeGAD7Responses(),
@@ -231,6 +237,7 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
     const t = convexTest(schema, modules).withIdentity({
       subject: "student_invalid_pq16",
     });
+    const uid_student_invalid_pq16 = await testUserId(t, "student_invalid_pq16");
 
     // PQ-16 only accepts 0 or 1
     const invalidPQ16 = makePQ16Responses(0);
@@ -238,7 +245,7 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
 
     await expect(
       t.mutation(api.screening.submitScreeningAttempt, {
-        userId: "student_invalid_pq16",
+        userId: uid_student_invalid_pq16,
         responses: {
           phq9: makePHQ9Responses(),
           gad7: makeGAD7Responses(),
@@ -253,12 +260,13 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
     const t = convexTest(schema, modules).withIdentity({
       subject: "student_auth_calc",
     });
+    const uid_student_auth_calc = await testUserId(t, "student_auth_calc");
 
     // Answers sum to 18 (moderately severe depression)
     const responses = makePHQ9Responses([2, 2, 2, 2, 2, 2, 2, 2, 2]);
 
     const attempt = await t.mutation(api.screening.submitScreeningAttempt, {
-      userId: "student_auth_calc",
+      userId: uid_student_auth_calc,
       responses: {
         phq9: responses,
         gad7: makeGAD7Responses([0, 0, 0, 0, 0, 0, 0]),
@@ -277,12 +285,13 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
     const t = convexTest(schema, modules).withIdentity({
       subject: "student_item9_flag",
     });
+    const uid_student_item9_flag = await testUserId(t, "student_item9_flag");
 
     // Item 9 has score 2 (> 0)
     const responses = makePHQ9Responses([0, 0, 0, 0, 0, 0, 0, 0, 2]);
 
     const attempt = await t.mutation(api.screening.submitScreeningAttempt, {
-      userId: "student_item9_flag",
+      userId: uid_student_item9_flag,
       responses: {
         phq9: responses,
         gad7: makeGAD7Responses([0, 0, 0, 0, 0, 0, 0]),
@@ -317,26 +326,30 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
     const t = convexTest(schema, modules).withIdentity({
       subject: "student_legacy_read",
     });
+    const uid_student_legacy_read = await testUserId(t, "student_legacy_read");
 
-    // Insert a legacy record using legacy submitScreening
-    await t.mutation(api.screening.submitScreening, {
-      userId: "student_legacy_read",
-      phq9_total: 8,
-      gad7_total: 6,
-      pq16_total: 0,
-      phq9_item9_flag: false,
-      phq9_item9_score: 0,
+    // Seed a historical legacy record directly (the legacy writer has been removed)
+    await t.run(async (ctx) => {
+      await ctx.db.insert("screenings", {
+        userId: uid_student_legacy_read,
+        phq9_total: 8,
+        gad7_total: 6,
+        pq16_total: 0,
+        phq9_item9_flag: false,
+        phq9_item9_score: 0,
+        createdAt: Date.now(),
+      });
     });
 
     const latest = await t.query(api.screening.getLatest, {
-      userId: "student_legacy_read",
+      userId: uid_student_legacy_read,
     });
     expect(latest).toBeDefined();
     expect(latest?.phq9_total).toBe(8);
     expect(latest?.gad7_total).toBe(6);
 
     const all = await t.query(api.screening.getAll, {
-      userId: "student_legacy_read",
+      userId: uid_student_legacy_read,
     });
     expect(all).toHaveLength(1);
   });
@@ -346,11 +359,12 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
     const t = convexTest(schema, modules).withIdentity({
       subject: "student_incomplete_screening",
     });
+    const uid_student_incomplete_screening = await testUserId(t, "student_incomplete_screening");
 
     // Attempting to submit without PQ-16 responses
     await expect(
       t.mutation(api.screening.submitScreeningAttempt, {
-        userId: "student_incomplete_screening",
+        userId: uid_student_incomplete_screening,
         responses: {
           phq9: makePHQ9Responses(),
           gad7: makeGAD7Responses(),
@@ -448,6 +462,7 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
 
     // Test a user without patientId: ensure patientId is undefined (never guessed)
     const authedUnknown = t.withIdentity({ subject: "non_existent_user_id" });
+    const uid_non_existent_user_id = await testUserId(authedUnknown, "non_existent_user_id");
     const attemptUnknown = await authedUnknown.mutation(api.screening.submitScreeningAttempt, {
       responses: {
         phq9: makePHQ9Responses(),
@@ -459,7 +474,7 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
     const savedUnknown = await authedUnknown.query(api.screening.getAttemptById, {
       attemptId: attemptUnknown.attemptId,
     });
-    expect(savedUnknown?.userId).toBe("non_existent_user_id");
+    expect(savedUnknown?.userId).toBe(uid_non_existent_user_id);
     expect(savedUnknown?.patientId).toBeUndefined();
   });
 

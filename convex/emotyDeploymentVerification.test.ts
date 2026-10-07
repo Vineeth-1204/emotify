@@ -1,8 +1,9 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { expect, test, describe } from "vitest";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import schema from "./schema";
+import { testUserId } from "../test-utils/identity";
 import { classifyServerSafety } from "./emotySafety";
 import { buildStructuredFallbackResponse } from "./emotyFallback";
 import { validateEmotyResponse, getSafeStructuredFallback, EMOTY_ACTION_TYPES, EMOTY_AVATAR_STATES } from "./emotyContract";
@@ -19,6 +20,7 @@ describe("AI-3 Step 11: Production Deployment, Provider Activation & Live Monito
   test("DEP-01: Provider missing key correctly triggers offline fallback with safe telemetry", async () => {
     const t = convexTest(schema, modules);
     const student = t.withIdentity({ subject: "student_dep_1", role: "student" });
+    const uid_student_dep_1 = await testUserId(student, "student_dep_1");
 
     const response = await student.action(api.companion.generateAIResponse, {
       userMessageId: "msg_dep_1",
@@ -36,7 +38,7 @@ describe("AI-3 Step 11: Production Deployment, Provider Activation & Live Monito
     const telem = await t.run(async (ctx) => {
       return await ctx.db
         .query("aiTelemetryLogs")
-        .withIndex("by_userId", (q) => q.eq("userId", "student_dep_1"))
+        .withIndex("by_userId", (q) => q.eq("userId", uid_student_dep_1))
         .first();
     });
 
@@ -50,6 +52,7 @@ describe("AI-3 Step 11: Production Deployment, Provider Activation & Live Monito
   test("DEP-02: Multi-turn conversation flows seamlessly through fallback", async () => {
     const t = convexTest(schema, modules);
     const student = t.withIdentity({ subject: "student_dep_multiturn", role: "student" });
+    const uid_student_dep_multiturn = await testUserId(student, "student_dep_multiturn");
 
     // Turn 1: Greeting
     const turn1 = await student.action(api.companion.generateAIResponse, {
@@ -114,30 +117,32 @@ describe("AI-3 Step 11: Production Deployment, Provider Activation & Live Monito
   test("DEP-04: In-flight concurrency lock prevents duplicate simultaneous generation", async () => {
     const t = convexTest(schema, modules);
     const student = t.withIdentity({ subject: "student_dep_concurrency", role: "student" });
+    const uid_student_dep_concurrency = await testUserId(student, "student_dep_concurrency");
 
     // Acquire lock
-    const firstCall = await student.mutation(api.emotyRateLimiter.checkAndAcquireRateLimit, {});
+    const firstCall = await student.mutation(internal.emotyRateLimiter.checkAndAcquireRateLimit, {});
     expect(firstCall.allowed).toBe(true);
 
     // Simultaneous second call
-    const secondCall = await student.mutation(api.emotyRateLimiter.checkAndAcquireRateLimit, {});
+    const secondCall = await student.mutation(internal.emotyRateLimiter.checkAndAcquireRateLimit, {});
     expect(secondCall.allowed).toBe(false);
     expect(secondCall.reason).toBe("CONCURRENT_REQUEST");
 
     // Release lock
-    await student.mutation(api.emotyRateLimiter.releaseRateLimit, {});
-    const thirdCall = await student.mutation(api.emotyRateLimiter.checkAndAcquireRateLimit, {});
+    await student.mutation(internal.emotyRateLimiter.releaseRateLimit, {});
+    const thirdCall = await student.mutation(internal.emotyRateLimiter.checkAndAcquireRateLimit, {});
     expect(thirdCall.allowed).toBe(true);
   });
 
   test("DEP-05: Rate limits survive conversation clearing", async () => {
     const t = convexTest(schema, modules);
     const student = t.withIdentity({ subject: "student_dep_clearchat", role: "student" });
+    const uid_student_dep_clearchat = await testUserId(student, "student_dep_clearchat");
 
     // Seed rate limit counter to 45
     await t.run(async (ctx) => {
       await ctx.db.insert("companionRateLimits", {
-        userId: "student_dep_clearchat",
+        userId: uid_student_dep_clearchat,
         burstCount: 2,
         burstWindowStart: Date.now(),
         dailyCount: 45,
@@ -146,7 +151,7 @@ describe("AI-3 Step 11: Production Deployment, Provider Activation & Live Monito
       });
       await ctx.db.insert("aiCompanionLogs", {
         messageId: "seed_msg",
-        userId: "student_dep_clearchat",
+        userId: uid_student_dep_clearchat,
         role: "user",
         content: "seed",
         createdAt: Date.now(),
@@ -168,11 +173,12 @@ describe("AI-3 Step 11: Production Deployment, Provider Activation & Live Monito
   test("DEP-06: Safety Gate runs before Rate Limiting - Crisis is NEVER rate-limited", async () => {
     const t = convexTest(schema, modules);
     const student = t.withIdentity({ subject: "student_dep_safety_precedence", role: "student" });
+    const uid_student_dep_safety_precedence = await testUserId(student, "student_dep_safety_precedence");
 
     // User is completely out of daily quota (50/50 messages used)
     await t.run(async (ctx) => {
       await ctx.db.insert("companionRateLimits", {
-        userId: "student_dep_safety_precedence",
+        userId: uid_student_dep_safety_precedence,
         burstCount: 10,
         burstWindowStart: Date.now(),
         dailyCount: 50,
@@ -191,14 +197,15 @@ describe("AI-3 Step 11: Production Deployment, Provider Activation & Live Monito
     // Crisis contract returned immediately
     expect(crisisContract.mode).toBe("emotional_support");
     expect(crisisContract.response).toContain("14416");
-    expect(crisisContract.response).toContain("988");
+    expect(crisisContract.response).toContain("112");
+    expect(crisisContract.response).not.toContain("988");
     expect(crisisContract.action.type).toBe("open_counsellor_request");
 
     // Counselor alert created
     const alerts = await t.run(async (ctx) => {
       return await ctx.db
         .query("alerts")
-        .withIndex("by_userId", (q) => q.eq("userId", "student_dep_safety_precedence"))
+        .withIndex("by_userId", (q) => q.eq("userId", uid_student_dep_safety_precedence))
         .collect();
     });
     expect(alerts.length).toBe(1);
@@ -209,6 +216,7 @@ describe("AI-3 Step 11: Production Deployment, Provider Activation & Live Monito
   test("DEP-07: Third-party safety path executes without rate limiting", async () => {
     const t = convexTest(schema, modules);
     const student = t.withIdentity({ subject: "student_dep_third_party", role: "student" });
+    const uid_student_dep_third_party = await testUserId(student, "student_dep_third_party");
 
     const thirdPartyResponse = await student.action(api.companion.generateAIResponse, {
       userMessageId: "usr_tp",
@@ -228,6 +236,7 @@ describe("AI-3 Step 11: Production Deployment, Provider Activation & Live Monito
   test("DEP-08: Telemetry stores strictly metadata and excludes all clinical and conversation content", async () => {
     const t = convexTest(schema, modules);
     const student = t.withIdentity({ subject: "student_dep_telemetry", role: "student" });
+    const uid_student_dep_telemetry = await testUserId(student, "student_dep_telemetry");
 
     // Send a message with synthetic clinical details
     await student.action(api.companion.generateAIResponse, {
@@ -239,7 +248,7 @@ describe("AI-3 Step 11: Production Deployment, Provider Activation & Live Monito
     const telemRecords = await t.run(async (ctx) => {
       return await ctx.db
         .query("aiTelemetryLogs")
-        .withIndex("by_userId", (q) => q.eq("userId", "student_dep_telemetry"))
+        .withIndex("by_userId", (q) => q.eq("userId", uid_student_dep_telemetry))
         .collect();
     });
 
@@ -271,7 +280,7 @@ describe("AI-3 Step 11: Production Deployment, Provider Activation & Live Monito
 
     // Unauthenticated recordTelemetry
     await expect(
-      t.mutation(api.emotyTelemetry.recordTelemetry, {
+      t.mutation(internal.emotyTelemetry.recordTelemetry, {
         durationMs: 100,
         path: "gemini",
         mode: "casual",

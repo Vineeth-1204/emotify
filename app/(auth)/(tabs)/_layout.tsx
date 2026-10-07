@@ -14,6 +14,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ShieldSafetyIcon } from "@/components/svg/system";
 
 import { useLanguage } from "@/context/LanguageContext";
+import { CRISIS_RESOURCES, HELPLINE_DIAL_URL, EMERGENCY_DIAL_URL } from "@/common/crisisResources";
 
 export default function TabLayout() {
   const { user, isAuthenticated, logout } = useAppAuth();
@@ -34,8 +35,8 @@ export default function TabLayout() {
     userId: user!.id,
   } : "skip");
 
-  const createAlert = useMutation(api.alerts.createAlert);
   const createCounsellorRequest = useMutation(api.counsellorRequests.create);
+  const recordEmergencyDismissal = useMutation(api.alerts.recordEmergencyScreenDismissal);
 
   React.useEffect(() => {
     if (latestTriage?.level === "force_retest") {
@@ -48,15 +49,12 @@ export default function TabLayout() {
   const handleTalkToCounselor = async () => {
     if (!user) return;
     try {
-      // 1. Canonical counselor request record
+      // Canonical counselor request record (server notifies staff)
       await createCounsellorRequest({
         sourceType: "emergency_modal",
         triageId: latestTriage?._id ? (latestTriage._id as any) : undefined,
         situation_text: "Student requested immediate counselor contact from emergency modal",
       });
-
-      // 2. Preserve safety alert for crisis path
-      await createAlert({ userId: user.id, type: "counselor_request" });
 
       Alert.alert("Request Sent", "A counselor has been notified and will reach out to you shortly.");
     } catch (err: any) {
@@ -69,7 +67,11 @@ export default function TabLayout() {
       <View style={[styles.container, { padding: Theme.spacing.xl, paddingTop: 80, backgroundColor: colors.white }]}>
         <TouchableOpacity
           style={styles.closeButton}
-          onPress={() => setDismissedEmergency(true)}
+          onPress={() => {
+            setDismissedEmergency(true);
+            // Counsellors can see that the student closed the safety screen.
+            recordEmergencyDismissal({}).catch((err) => console.warn("Failed to record dismissal:", err));
+          }}
           activeOpacity={0.7}
         >
           <Ionicons name="close" size={28} color={colors.textSecondary} />
@@ -84,9 +86,15 @@ export default function TabLayout() {
         
         <View style={{ gap: Theme.spacing.md }}>
           <Button 
-            title="Call Emergency Services" 
-            onPress={() => Linking.openURL('tel:911')} 
+            title={`Call Emergency Services (${CRISIS_RESOURCES.emergencyNumber})`} 
+            onPress={() => Linking.openURL(EMERGENCY_DIAL_URL)} 
             variant="danger" 
+            size="lg" 
+          />
+          <Button 
+            title={`Call ${CRISIS_RESOURCES.helplineName} (${CRISIS_RESOURCES.helplineNumber})`} 
+            onPress={() => Linking.openURL(HELPLINE_DIAL_URL)} 
+            variant="outline" 
             size="lg" 
           />
           {appUser?.emergencyContactPhone && (

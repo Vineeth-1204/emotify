@@ -1,7 +1,9 @@
 import { v } from "convex/values";
-import { mutation, query, internalMutation } from "./_generated/server";
+import { internalMutation } from "./_generated/server";
+import { mutation, query } from "./functions";
 import type { Id } from "./_generated/dataModel";
-import { signJwt, verifyPassword, hashPassword } from "./authHelpers";
+import { signJwt, verifyPassword, hashPassword, generateTemporaryPassword, readUnverifiedSessionId } from "./authHelpers";
+import { internal } from "./_generated/api";
 import { logAuditEvent } from "./audit";
 import { assertCanAccessStudent, requireAdmin, getAuthenticatedUser } from "./authz";
 
@@ -36,36 +38,14 @@ export const getByClerkId = query({
 
 /** Required Admin Auth Helper */
 async function checkAdmin(ctx: any) {
-  const identity = await ctx.auth.getUserIdentity();
-  if (!identity) return null;
-  let user = null;
-  try {
-    user = await ctx.db.get(identity.subject as Id<"users">);
-  } catch (e) {}
-  if (!user) {
-    user = await ctx.db
-      .query("users")
-      .withIndex("by_clerkId", (q: any) => q.eq("clerkId", identity.subject))
-      .first();
-  }
+  const user = await getAuthenticatedUser(ctx);
   if (!user || user.role !== "admin") return null;
   return user;
 }
 
 /** Required Staff (Counselor or Admin) Auth Helper */
 async function checkStaff(ctx: any) {
-  const identity = await ctx.auth.getUserIdentity();
-  if (!identity) return null;
-  let user = null;
-  try {
-    user = await ctx.db.get(identity.subject as Id<"users">);
-  } catch (e) {}
-  if (!user) {
-    user = await ctx.db
-      .query("users")
-      .withIndex("by_clerkId", (q: any) => q.eq("clerkId", identity.subject))
-      .first();
-  }
+  const user = await getAuthenticatedUser(ctx);
   if (!user || (user.role !== "admin" && user.role !== "counsellor")) return null;
   return user;
 }
@@ -113,6 +93,31 @@ export function decodePatientCursor(cursorStr: string): PatientCursorPayload {
   }
 }
 
+/** Counsellor caseload as sanitized patient rows (most recent first), optionally filtered by search. */
+async function getCaseloadPatients(ctx: any, counsellorId: Id<"users">, search?: string) {
+  const assignments = await ctx.db
+    .query("counsellorAssignments")
+    .withIndex("by_counsellor_and_active", (q: any) => q.eq("counsellorId", counsellorId).eq("active", true))
+    .collect();
+  const s = search && search.trim() ? search.trim().toLowerCase() : null;
+  const rows: any[] = [];
+  for (const a of assignments) {
+    const u = await ctx.db.get(a.studentId);
+    if (!u) continue;
+    if (
+      s &&
+      !(u.patientId || "").toLowerCase().includes(s) &&
+      !(u.full_name || "").toLowerCase().includes(s) &&
+      !(u.mobile_number || "").includes(s)
+    ) {
+      continue;
+    }
+    rows.push({ ...sanitizeUser(u), patientId: u.patientId || String(u._id) });
+  }
+  rows.sort((a, b) => (b.created_at ?? b._creationTime ?? 0) - (a.created_at ?? a._creationTime ?? 0));
+  return rows;
+}
+
 /** Admin/Counselor: List all patient users with deterministic cursor pagination */
 export const listPatients = query({
   args: {
@@ -130,6 +135,13 @@ export const listPatients = query({
     }
 
     const effectiveLimit = Math.min(Math.max(args.limit ?? 25, 1), 50);
+
+    if (staff.role === "counsellor") {
+      const caseload = (await getCaseloadPatients(ctx, staff._id, args.search)).slice(0, 200);
+      return ((args.cursor !== undefined || args.paginate === true)
+        ? { patients: caseload, nextCursor: null }
+        : caseload) as any as PaginatedPatientsResult;
+    }
 
     let cursorObj: PatientCursorPayload | null = null;
     if (args.cursor) {
@@ -317,6 +329,17 @@ export const searchPatientSelector = query({
     const staff = await checkStaff(ctx);
     if (!staff) return [];
 
+    if (staff.role === "counsellor") {
+      const caseload = await getCaseloadPatients(ctx, staff._id, args.search);
+      return caseload.slice(0, Math.min(Math.max(args.limit ?? 50, 1), 50)).map((u: any) => ({
+        _id: u._id,
+        full_name: u.full_name || "Unknown Patient",
+        patientId: u.patientId,
+        mobile_number: u.mobile_number || "N/A",
+        status: u.status || "active",
+      }));
+    }
+
     const effectiveLimit = Math.min(Math.max(args.limit ?? 50, 1), 50);
     const searchStr = args.search && args.search.trim() ? args.search.trim().toLowerCase() : null;
 
@@ -472,7 +495,7 @@ export const createUser = mutation({
     email: v.optional(v.string()),
     password: v.string(),
     status: v.string(), // "active" | "inactive"
-    role: v.string(), // "admin" | "patient"
+    role: v.union(v.literal("patient"), v.literal("counsellor"), v.literal("admin")),
   },
   handler: async (ctx, args) => {
     const admin = await checkAdmin(ctx);
@@ -584,21 +607,14 @@ export const resetPassword = mutation({
     const admin = await checkAdmin(ctx);
     if (!admin) throw new Error("Unauthorized");
 
-    // Generate a secure random 12-char alphanumeric password
-    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
-    let newPassword = "";
-    const arr = new Uint8Array(12);
-    crypto.getRandomValues(arr);
-    for (let i = 0; i < 12; i++) {
-      newPassword += chars[arr[i] % chars.length];
-    }
-
+    const newPassword = generateTemporaryPassword();
     const password_hash = await hashPassword(newPassword);
 
+    // The plain-text password is returned once to the admin and never persisted.
     await ctx.db.patch(args.userId, {
       password_hash,
       is_first_login: true, // Force password change on next login
-      temp_password: newPassword, // Stored plain-text temporarily for admin to read & share
+      temp_password: undefined,
       updated_at: Date.now(),
     });
 
@@ -606,22 +622,29 @@ export const resetPassword = mutation({
   },
 });
 
-/** Admin: Get the temporary plain-text password for a user (cleared after reading) */
-export const getAndClearTempPassword = mutation({
-  args: { userId: v.id("users") },
+/**
+ * One-off maintenance: clear plain-text temp passwords stored by earlier versions.
+ * Run with `npx convex run users:clearLegacyTempPasswords`; reschedules itself until done.
+ */
+export const clearLegacyTempPasswords = internalMutation({
+  args: { cursor: v.optional(v.union(v.string(), v.null())) },
   handler: async (ctx, args) => {
-    const admin = await checkAdmin(ctx);
-    if (!admin) throw new Error("Unauthorized");
-
-    const user = await ctx.db.get(args.userId);
-    if (!user) throw new Error("User not found");
-
-    const temp = (user as any).temp_password || null;
-    // Clear the temp password after reading
-    if (temp) {
-      await ctx.db.patch(args.userId, { temp_password: undefined });
+    const page = await ctx.db
+      .query("users")
+      .paginate({ cursor: args.cursor ?? null, numItems: 200 });
+    let cleared = 0;
+    for (const user of page.page) {
+      if (user.temp_password !== undefined) {
+        await ctx.db.patch(user._id, { temp_password: undefined });
+        cleared++;
+      }
     }
-    return temp;
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.users.clearLegacyTempPasswords, {
+        cursor: page.continueCursor,
+      });
+    }
+    return { cleared, done: page.isDone };
   },
 });
 
@@ -670,6 +693,7 @@ export const completeOnboarding = mutation({
         if (!isStaff) {
           throw new Error("Unauthorized: Cannot modify another student's onboarding.");
         }
+        await assertCanAccessStudent(ctx, args.userId);
         targetUserId = args.userId;
       }
     }
@@ -932,6 +956,44 @@ export const updateLastLogin = mutation({
   },
 });
 
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * Replaces the user's sessions with a fresh one and returns a JWT bound to it via
+ * the `sid` claim. The token stops working as soon as that session row is deleted
+ * (logout, deactivation, deletion, or a newer sign-in).
+ */
+async function issueSessionToken(
+  ctx: any,
+  user: { _id: Id<"users">; role?: string; mobile_number?: string; full_name?: string }
+): Promise<string> {
+  const existingSessions = await ctx.db
+    .query("sessions")
+    .withIndex("by_userId", (q: any) => q.eq("userId", user._id))
+    .collect();
+  for (const session of existingSessions) {
+    await ctx.db.delete(session._id);
+  }
+
+  const now = Date.now();
+  const sessionId = await ctx.db.insert("sessions", {
+    userId: user._id,
+    token: "",
+    createdAt: now,
+    expiresAt: now + SESSION_TTL_MS,
+  });
+
+  const token = await signJwt({
+    sub: user._id,
+    sid: sessionId,
+    role: user.role || "patient",
+    mobile_number: user.mobile_number || "",
+    full_name: user.full_name || "",
+  });
+  await ctx.db.patch(sessionId, { token });
+  return token;
+}
+
 /** Public Student Self-Registration */
 export const registerStudent = mutation({
   args: {
@@ -991,20 +1053,12 @@ export const registerStudent = mutation({
 
     await logAuditEvent(ctx, userId, "student_registered", `Student self-registered with patientId ${nextPatientId}`);
 
-    // Generate JWT and session immediately
-    const token = await signJwt({
-      sub: userId,
+    // Create the session and a JWT bound to it
+    const token = await issueSessionToken(ctx, {
+      _id: userId,
       role: "patient",
       mobile_number: cleanMobile,
       full_name: fullName,
-    });
-
-    const expiresAt = now + 30 * 24 * 60 * 60 * 1000;
-    await ctx.db.insert("sessions", {
-      userId,
-      token,
-      createdAt: now,
-      expiresAt,
     });
 
     return {
@@ -1076,31 +1130,8 @@ export const login = mutation({
 
     await logAuditEvent(ctx, user._id, "login", "Successful user login");
 
-    // Generate JWT
-    const token = await signJwt({
-      sub: user._id,
-      role: user.role || "patient",
-      mobile_number: user.mobile_number || "",
-      full_name: user.full_name || "",
-    });
-
-    // Delete existing sessions to enforce single session per user
-    const existingSessions = await ctx.db
-      .query("sessions")
-      .withIndex("by_userId", (q) => q.eq("userId", user._id))
-      .collect();
-    for (const session of existingSessions) {
-      await ctx.db.delete(session._id);
-    }
-
-    // Create session (expires in 30 days)
-    const expiresAt = Date.now() + 30 * 24 * 60 * 60 * 1000;
-    await ctx.db.insert("sessions", {
-      userId: user._id,
-      token,
-      createdAt: Date.now(),
-      expiresAt,
-    });
+    // Replace any existing session (single session per user) and issue a JWT bound to it
+    const token = await issueSessionToken(ctx, user);
 
     // Generate a cryptographically secure biometricToken for this user
     const tokenBytes = new Uint8Array(24);
@@ -1155,7 +1186,8 @@ export const validateSession = mutation({
 
     if (!session) return null;
 
-    if (Date.now() > session.expiresAt) {
+    // Sessions from before session-bound tokens (no matching `sid`) are no longer valid.
+    if (Date.now() > session.expiresAt || readUnverifiedSessionId(args.token) !== String(session._id)) {
       await ctx.db.delete(session._id);
       return null;
     }
@@ -1189,7 +1221,7 @@ export const checkSessionActive = query({
       .first();
     if (!session) return false;
 
-    if (Date.now() > session.expiresAt) {
+    if (Date.now() > session.expiresAt || readUnverifiedSessionId(args.token) !== String(session._id)) {
       return false;
     }
 
@@ -1242,30 +1274,8 @@ export const biometricLogin = mutation({
       return { error: "Account is inactive. Please contact administrator." };
     }
 
-    // Generate a new 30-day JWT
-    const token = await signJwt({
-      sub: user._id,
-      role: user.role || "patient",
-      mobile_number: user.mobile_number || "",
-      full_name: user.full_name || "",
-    });
-
-    // Delete existing sessions to enforce single session per user
-    const existingSessions = await ctx.db
-      .query("sessions")
-      .withIndex("by_userId", (q) => q.eq("userId", user._id))
-      .collect();
-    for (const session of existingSessions) {
-      await ctx.db.delete(session._id);
-    }
-
-    const expiresAt = Date.now() + 30 * 24 * 60 * 60 * 1000;
-    await ctx.db.insert("sessions", {
-      userId: user._id,
-      token,
-      createdAt: Date.now(),
-      expiresAt,
-    });
+    // Replace any existing session (single session per user) and issue a JWT bound to it
+    const token = await issueSessionToken(ctx, user);
 
     return {
       token,
@@ -1302,14 +1312,138 @@ export const clearExpiredSessions = internalMutation({
   },
 });
 
-/** Admin: Delete a user and all their associated records */
+/**
+ * Every table holding a student's data, with the index used to find their rows.
+ * `idOnly` tables store `v.id("users")` and are only searched by the canonical id.
+ * Keep this list in sync with schema.ts when adding user-owned tables.
+ */
+const USER_OWNED_TABLES: Array<{ table: string; index: string; field: string; idOnly?: boolean }> = [
+  { table: "sessions", index: "by_userId", field: "userId", idOnly: true },
+  { table: "appointments", index: "by_userId", field: "userId", idOnly: true },
+  { table: "screenings", index: "by_userId", field: "userId" },
+  { table: "screeningAttempts", index: "by_userId", field: "userId" },
+  { table: "triages", index: "by_userId", field: "userId" },
+  { table: "alerts", index: "by_userId", field: "userId" },
+  { table: "followUps", index: "by_userId", field: "userId" },
+  { table: "counsellorRequests", index: "by_user_id", field: "user_id" },
+  { table: "clinicalTimelines", index: "by_userId", field: "userId" },
+  { table: "cbtSessions", index: "by_userId", field: "userId" },
+  { table: "reframes", index: "by_userId", field: "userId" },
+  { table: "reframeLogs", index: "by_user", field: "userId" },
+  { table: "emotionLogs", index: "by_userId", field: "userId" },
+  { table: "emotionMaps", index: "by_userId", field: "userId" },
+  { table: "dailyCheckins", index: "by_userId", field: "userId" },
+  { table: "jpmrLogs", index: "by_userId", field: "userId" },
+  { table: "breathingLogs", index: "by_userId", field: "userId" },
+  { table: "groundingLogs", index: "by_userId", field: "userId" },
+  { table: "microGoals", index: "by_userId", field: "userId" },
+  { table: "points", index: "by_userId", field: "userId" },
+  { table: "badges", index: "by_userId", field: "userId" },
+  { table: "streaks", index: "by_userId", field: "userId" },
+  { table: "weeklyMissions", index: "by_userId_and_weekStart", field: "userId" },
+  { table: "monthlyChallenges", index: "by_userId_and_monthStr", field: "userId" },
+  { table: "wellnessProfiles", index: "by_userId", field: "userId" },
+  { table: "companionMessages", index: "by_userId", field: "userId" },
+  { table: "aiCompanionLogs", index: "by_userId", field: "userId" },
+  { table: "emotyMemories", index: "by_userId", field: "userId" },
+  { table: "companionRateLimits", index: "by_userId", field: "userId" },
+  { table: "aiTelemetryLogs", index: "by_userId", field: "userId" },
+  { table: "aiMonitoringLogs", index: "by_userId", field: "userId" },
+  { table: "loginHistory", index: "by_userId", field: "userId" },
+  { table: "notifications", index: "by_recipientId", field: "recipientId" },
+];
+
+/** Maximum documents deleted per transaction before the purge continues in a new one. */
+const DELETE_BATCH_BUDGET = 1000;
+
+/**
+ * Deletes up to `budget` documents belonging to the user (by canonical id and legacy aliases).
+ * Returns true when nothing is left. auditLogs are intentionally retained (security record).
+ */
+async function purgeUserData(ctx: any, userId: Id<"users">, aliases: string[], budget: number): Promise<boolean> {
+  let remaining = budget;
+  const canonical = String(userId);
+
+  for (const { table, index, field, idOnly } of USER_OWNED_TABLES) {
+    const keys = idOnly ? [canonical] : aliases;
+    for (const key of keys) {
+      while (true) {
+        if (remaining <= 0) return false;
+        const batch = await ctx.db
+          .query(table)
+          .withIndex(index, (q: any) => q.eq(field, key))
+          .take(Math.min(remaining, 200));
+        if (batch.length === 0) break;
+        for (const doc of batch) {
+          await ctx.db.delete(doc._id);
+        }
+        remaining -= batch.length;
+      }
+    }
+  }
+
+  // rateLimits keys are "<userId>:<action>"
+  for (const key of aliases) {
+    while (true) {
+      if (remaining <= 0) return false;
+      const batch = await ctx.db
+        .query("rateLimits")
+        .withIndex("by_key", (q: any) => q.gte("key", `${key}:`).lt("key", `${key};`))
+        .take(Math.min(remaining, 200));
+      if (batch.length === 0) break;
+      for (const doc of batch) {
+        await ctx.db.delete(doc._id);
+      }
+      remaining -= batch.length;
+    }
+  }
+
+  return true;
+}
+
+async function finalizeUserDeletion(ctx: any, userId: Id<"users">, email?: string) {
+  const counsellorRows = await ctx.db.query("counsellors").collect();
+  for (const doc of counsellorRows) {
+    const linkedById = doc.userId && doc.userId === userId;
+    const linkedByEmail = email && doc.email && doc.email.toLowerCase() === email.toLowerCase();
+    if (linkedById || linkedByEmail) {
+      await ctx.db.delete(doc._id);
+    }
+  }
+  const user = await ctx.db.get(userId);
+  if (user) await ctx.db.delete(userId);
+}
+
+/** Internal: continues a large user purge in a fresh transaction. */
+export const continueUserPurge = internalMutation({
+  args: {
+    userId: v.id("users"),
+    aliases: v.array(v.string()),
+    email: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const done = await purgeUserData(ctx, args.userId, args.aliases, DELETE_BATCH_BUDGET);
+    if (done) {
+      await finalizeUserDeletion(ctx, args.userId, args.email);
+    } else {
+      await ctx.scheduler.runAfter(0, internal.users.continueUserPurge, args);
+    }
+    return { done };
+  },
+});
+
+/**
+ * Admin: permanently delete a user and every record associated with them.
+ * Access is revoked and credentials are wiped immediately; data is purged in
+ * batches (continuing in the background for very large accounts).
+ * The trash entry is a redacted tombstone (no personal data, no credentials).
+ */
 export const deleteUser = mutation({
   args: { userId: v.id("users") },
   handler: async (ctx, args) => {
     const admin = await checkAdmin(ctx);
     if (!admin) throw new Error("Unauthorized");
 
-    // Don't allow an admin to delete themselves
     if (args.userId === admin._id) {
       throw new Error("You cannot delete your own admin account.");
     }
@@ -1317,319 +1451,75 @@ export const deleteUser = mutation({
     const user = await ctx.db.get(args.userId);
     if (!user) throw new Error("User not found");
 
-    // Create soft-delete entry in trash table
+    const now = Date.now();
+
+    // Redacted tombstone for the admin audit trail
     await ctx.db.insert("trash", {
       itemType: "patient",
       itemId: user.patientId || String(args.userId),
-      deletedData: JSON.stringify({ user }),
+      deletedData: JSON.stringify({
+        redacted: true,
+        patientId: user.patientId ?? null,
+        role: user.role ?? null,
+      }),
       deletedBy: admin.full_name || admin.email || "Admin",
-      deletedAt: Date.now(),
+      deletedAt: now,
     });
 
-    // List of tables referencing user data:
-    // 1. sessions
-    const sessions = await ctx.db
-      .query("sessions")
-      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
-      .collect();
-    for (const doc of sessions) {
-      await ctx.db.delete(doc._id);
+    // Revoke access and wipe credentials before purging anything else
+    await ctx.db.patch(args.userId, {
+      status: "inactive",
+      password_hash: undefined,
+      biometricToken: undefined,
+      biometricEnabled: false,
+      temp_password: undefined,
+      updated_at: now,
+    });
+
+    await logAuditEvent(ctx, String(admin._id), "user_deleted", `Deleted user ${user.patientId || String(args.userId)}`);
+
+    const aliases = Array.from(new Set([String(args.userId), user.clerkId].filter((x): x is string => !!x)));
+    const done = await purgeUserData(ctx, args.userId, aliases, DELETE_BATCH_BUDGET);
+    if (done) {
+      await finalizeUserDeletion(ctx, args.userId, user.email);
+    } else {
+      await ctx.scheduler.runAfter(0, internal.users.continueUserPurge, {
+        userId: args.userId,
+        aliases,
+        email: user.email,
+      });
     }
 
-    // 2. screenings
-    const screenings = await ctx.db
-      .query("screenings")
-      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
-      .collect();
-    for (const doc of screenings) {
-      await ctx.db.delete(doc._id);
-    }
+    return { success: true, completed: done };
+  },
+});
 
-    // 3. triages
-    const triages = await ctx.db
-      .query("triages")
-      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
-      .collect();
-    for (const doc of triages) {
-      await ctx.db.delete(doc._id);
+/** One-off maintenance: strip credentials/PII from trash entries written by earlier versions. */
+export const redactLegacyTrashEntries = internalMutation({
+  args: { cursor: v.optional(v.union(v.string(), v.null())) },
+  handler: async (ctx, args) => {
+    const page = await ctx.db.query("trash").paginate({ cursor: args.cursor ?? null, numItems: 200 });
+    let redacted = 0;
+    for (const item of page.page) {
+      if (item.itemType !== "patient") continue;
+      let parsed: any = null;
+      try {
+        parsed = JSON.parse(item.deletedData);
+      } catch {}
+      if (parsed?.redacted) continue;
+      await ctx.db.patch(item._id, {
+        deletedData: JSON.stringify({
+          redacted: true,
+          patientId: parsed?.user?.patientId ?? null,
+          role: parsed?.user?.role ?? null,
+        }),
+      });
+      redacted++;
     }
-
-    // 4. alerts
-    const alerts = await ctx.db
-      .query("alerts")
-      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
-      .collect();
-    for (const doc of alerts) {
-      await ctx.db.delete(doc._id);
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.users.redactLegacyTrashEntries, { cursor: page.continueCursor });
     }
-
-    // 5. emotionLogs
-    const emotionLogs = await ctx.db
-      .query("emotionLogs")
-      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
-      .collect();
-    for (const doc of emotionLogs) {
-      await ctx.db.delete(doc._id);
-    }
-
-    // 6. jpmrLogs
-    const jpmrLogs = await ctx.db
-      .query("jpmrLogs")
-      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
-      .collect();
-    for (const doc of jpmrLogs) {
-      await ctx.db.delete(doc._id);
-    }
-
-    // 7. microGoals
-    const microGoals = await ctx.db
-      .query("microGoals")
-      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
-      .collect();
-    for (const doc of microGoals) {
-      await ctx.db.delete(doc._id);
-    }
-
-    // 8. reframes
-    const reframes = await ctx.db
-      .query("reframes")
-      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
-      .collect();
-    for (const doc of reframes) {
-      await ctx.db.delete(doc._id);
-    }
-
-    // 9. followUps
-    const followUps = await ctx.db
-      .query("followUps")
-      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
-      .collect();
-    for (const doc of followUps) {
-      await ctx.db.delete(doc._id);
-    }
-
-    // 10. wellnessProfiles
-    const wellnessProfiles = await ctx.db
-      .query("wellnessProfiles")
-      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
-      .collect();
-    for (const doc of wellnessProfiles) {
-      await ctx.db.delete(doc._id);
-    }
-
-    // 11. screeningAttempts
-    const attempts = await ctx.db
-      .query("screeningAttempts")
-      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
-      .collect();
-    for (const doc of attempts) {
-      await ctx.db.delete(doc._id);
-    }
-
-    // 12. cbtSessions
-    const cbtSessions = await ctx.db
-      .query("cbtSessions")
-      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
-      .collect();
-    for (const doc of cbtSessions) {
-      await ctx.db.delete(doc._id);
-    }
-
-    // 13. appointments
-    const appointments = await ctx.db
-      .query("appointments")
-      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
-      .collect();
-    for (const doc of appointments) {
-      await ctx.db.delete(doc._id);
-    }
-
-    // 14. counsellorRequests
-    const counsellorRequests = await ctx.db
-      .query("counsellorRequests")
-      .withIndex("by_user_id", (q) => q.eq("user_id", args.userId))
-      .collect();
-    for (const doc of counsellorRequests) {
-      await ctx.db.delete(doc._id);
-    }
-
-    // 15. reframeLogs
-    const reframeLogs = await ctx.db
-      .query("reframeLogs")
-      .withIndex("by_user", (q) => q.eq("userId", args.userId))
-      .collect();
-    for (const doc of reframeLogs) {
-      await ctx.db.delete(doc._id);
-    }
-
-    // 16. companionMessages
-    const companionMessages = await ctx.db
-      .query("companionMessages")
-      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
-      .collect();
-    for (const doc of companionMessages) {
-      await ctx.db.delete(doc._id);
-    }
-
-    // 17. aiCompanionLogs
-    const aiCompanionLogs = await ctx.db
-      .query("aiCompanionLogs")
-      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
-      .collect();
-    for (const doc of aiCompanionLogs) {
-      await ctx.db.delete(doc._id);
-    }
-
-    // 18. points
-    const points = await ctx.db
-      .query("points")
-      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
-      .collect();
-    for (const doc of points) {
-      await ctx.db.delete(doc._id);
-    }
-
-    // 19. badges
-    const badges = await ctx.db
-      .query("badges")
-      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
-      .collect();
-    for (const doc of badges) {
-      await ctx.db.delete(doc._id);
-    }
-
-    // 20. streaks
-    const streaks = await ctx.db
-      .query("streaks")
-      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
-      .collect();
-    for (const doc of streaks) {
-      await ctx.db.delete(doc._id);
-    }
-
-    // 21. emotionMaps
-    const emotionMaps = await ctx.db
-      .query("emotionMaps")
-      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
-      .collect();
-    for (const doc of emotionMaps) {
-      await ctx.db.delete(doc._id);
-    }
-
-    // 22. dailyCheckins
-    const dailyCheckins = await ctx.db
-      .query("dailyCheckins")
-      .withIndex("by_userId_and_dateStr", (q) => q.eq("userId", args.userId))
-      .collect();
-    for (const doc of dailyCheckins) {
-      await ctx.db.delete(doc._id);
-    }
-
-    // 23. weeklyMissions
-    const weeklyMissions = await ctx.db
-      .query("weeklyMissions")
-      .withIndex("by_userId_and_weekStart", (q) => q.eq("userId", args.userId))
-      .collect();
-    for (const doc of weeklyMissions) {
-      await ctx.db.delete(doc._id);
-    }
-
-    // 24. monthlyChallenges
-    const monthlyChallenges = await ctx.db
-      .query("monthlyChallenges")
-      .withIndex("by_userId_and_monthStr", (q) => q.eq("userId", args.userId))
-      .collect();
-    for (const doc of monthlyChallenges) {
-      await ctx.db.delete(doc._id);
-    }
-
-    // 25. clinicalTimelines
-    const clinicalTimelines = await ctx.db
-      .query("clinicalTimelines")
-      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
-      .collect();
-    for (const doc of clinicalTimelines) {
-      await ctx.db.delete(doc._id);
-    }
-
-    // 26. aiMonitoringLogs
-    const aiMonitoringLogs = await ctx.db
-      .query("aiMonitoringLogs")
-      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
-      .collect();
-    for (const doc of aiMonitoringLogs) {
-      await ctx.db.delete(doc._id);
-    }
-
-    // 27. notifications
-    const notifications = await ctx.db
-      .query("notifications")
-      .withIndex("by_recipientId", (q) => q.eq("recipientId", args.userId))
-      .collect();
-    for (const doc of notifications) {
-      await ctx.db.delete(doc._id);
-    }
-
-    // 28. loginHistory
-    const loginHistory = await ctx.db
-      .query("loginHistory")
-      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
-      .collect();
-    for (const doc of loginHistory) {
-      await ctx.db.delete(doc._id);
-    }
-
-    // 29. breathingLogs
-    const breathingLogs1 = await ctx.db
-      .query("breathingLogs")
-      .withIndex("by_userId", (q) => q.eq("userId", String(args.userId)))
-      .collect();
-    for (const doc of breathingLogs1) {
-      await ctx.db.delete(doc._id);
-    }
-    if (user.clerkId && user.clerkId !== String(args.userId)) {
-      const breathingLogs2 = await ctx.db
-        .query("breathingLogs")
-        .withIndex("by_userId", (q) => q.eq("userId", user.clerkId!))
-        .collect();
-      for (const doc of breathingLogs2) {
-        await ctx.db.delete(doc._id);
-      }
-    }
-
-    // 30. groundingLogs
-    const groundingLogs1 = await ctx.db
-      .query("groundingLogs")
-      .withIndex("by_userId", (q) => q.eq("userId", String(args.userId)))
-      .collect();
-    for (const doc of groundingLogs1) {
-      await ctx.db.delete(doc._id);
-    }
-    if (user.clerkId && user.clerkId !== String(args.userId)) {
-      const groundingLogs2 = await ctx.db
-        .query("groundingLogs")
-        .withIndex("by_userId", (q) => q.eq("userId", user.clerkId!))
-        .collect();
-      for (const doc of groundingLogs2) {
-        await ctx.db.delete(doc._id);
-      }
-    }
-
-    // 31. counsellors
-    const allCounsellors = await ctx.db.query("counsellors").collect();
-    for (const doc of allCounsellors) {
-      if (
-        (doc.userId && doc.userId === args.userId) ||
-        (user.email && doc.email && doc.email.toLowerCase() === user.email.toLowerCase())
-      ) {
-        await ctx.db.delete(doc._id);
-      }
-    }
-
-    // 32. Finally delete the user
-    await ctx.db.delete(args.userId);
-
-    return { success: true };
+    return { redacted, done: page.isDone };
   },
 });
 

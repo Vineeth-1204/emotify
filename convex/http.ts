@@ -1,6 +1,6 @@
 import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
-import { STATIC_JWK_PUBLIC } from "./authHelpers";
+import { getPublicJwk, getJwtIssuer } from "./authHelpers";
 
 const http = httpRouter();
 
@@ -19,7 +19,7 @@ http.route({
   path: "/.well-known/openid-configuration",
   method: "GET",
   handler: httpAction(async (_ctx, _req) => {
-    const siteUrl = (globalThis as any).process?.env?.CONVEX_SITE_URL || "https://fabulous-rooster-538.convex.site";
+    const siteUrl = getJwtIssuer();
     const body = {
       issuer: siteUrl,
       jwks_uri: `${siteUrl}/.well-known/jwks.json`,
@@ -42,9 +42,16 @@ http.route({
   path: "/.well-known/jwks.json",
   method: "GET",
   handler: httpAction(async (_ctx, _req) => {
-    const body = {
-      keys: [STATIC_JWK_PUBLIC],
-    };
+    let body;
+    try {
+      body = { keys: [getPublicJwk()] };
+    } catch (err) {
+      console.error("JWKS unavailable:", err);
+      return new Response(JSON.stringify({ error: "Signing key not configured" }), {
+        status: 500,
+        headers: getCorsHeaders(),
+      });
+    }
     return new Response(JSON.stringify(body), {
       status: 200,
       headers: getCorsHeaders(),

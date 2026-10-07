@@ -3,6 +3,7 @@ import { convexTest } from "convex-test";
 import { expect, test, describe } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";
+import { assignAllPatientsToCounsellors } from "../test-utils/identity";
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -91,6 +92,9 @@ describe("Priority 4 Step 3: Authorization & Access Control Suite (AUTH-01 to AU
       situation_text: "Study hall",
       timestamp: Date.now(),
     });
+
+    // Legacy fixtures: counsellors share every student (caseload assignments)
+    await assignAllPatientsToCounsellors(t);
 
     return {
       t,

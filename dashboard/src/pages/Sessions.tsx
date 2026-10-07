@@ -8,10 +8,12 @@ import {
   RotateCcw, Search, ChevronRight, MessageSquare, Brain, Smile, Activity, HelpCircle, CheckSquare, Plus 
 } from "lucide-react";
 import { createPortal } from "react-dom";
+import { useDashboardAuth } from "../components/AuthContext";
 
 type TabStatus = "pending" | "waiting" | "accepted" | "rejected" | "completed";
 
 export default function Sessions() {
+  const { isAdmin } = useDashboardAuth();
   // Queries & Mutations
   const { results: appointments, status: queryStatus, loadMore } = usePaginatedQuery(
     api.appointments.listAllTwoWayAppointmentsPaginated,
@@ -530,9 +532,11 @@ export default function Sessions() {
                                <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Awaiting User</span>
                             )}
                             
-                            <button className="btn btn-secondary" onClick={() => handleDelete(appt._id)} style={{ color: 'var(--danger)', padding: '4px 8px' }} title="Delete Appointment">
-                               <Trash2 size={14} />
-                            </button>
+                            {isAdmin && (
+                              <button className="btn btn-secondary" onClick={() => handleDelete(appt._id)} style={{ color: 'var(--danger)', padding: '4px 8px' }} title="Delete Appointment">
+                                 <Trash2 size={14} />
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>

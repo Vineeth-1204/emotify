@@ -9,6 +9,7 @@ import { useQuery, useMutation, useConvex } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { useNavigate } from "react-router-dom";
 import AddUserModal from "../components/AddUserModal";
+import { useDashboardAuth } from "../components/AuthContext";
 import EditUserModal from "../components/EditUserModal";
 
 /* ─── Tiny helpers ────────────────────────────────────────────── */
@@ -157,6 +158,7 @@ function CredField({ label, value, onCopy }: { label: string; value: string; onC
 /* â”€â”€â”€ Main Component â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 export default function PatientsList() {
   const navigate = useNavigate();
+  const { isAdmin } = useDashboardAuth();
   const convex = useConvex();
   const [searchTerm, setSearchTerm] = useState("");
   const page1 = useQuery(api.users.listPatients, { search: searchTerm || undefined, paginate: true });
@@ -300,12 +302,16 @@ export default function PatientsList() {
             Students
           </h1>
           <p style={{ color: "var(--text-secondary)", fontSize: "0.95rem" }}>
-            Manage access and view records for registered students.
+            {isAdmin
+              ? "Manage access and view records for registered students."
+              : "Students assigned to your caseload. Contact an administrator to change assignments."}
           </p>
         </div>
-        <button className="btn btn-primary" onClick={() => setShowAddModal(true)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "11px 20px" }}>
-          <UserPlus size={16} /> Add Student
-        </button>
+        {isAdmin && (
+          <button className="btn btn-primary" onClick={() => setShowAddModal(true)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "11px 20px" }}>
+            <UserPlus size={16} /> Add User
+          </button>
+        )}
       </div>
 
       {showAddModal && <AddUserModal onClose={() => setShowAddModal(false)} onSuccess={() => {}} />}
@@ -438,27 +444,31 @@ export default function PatientsList() {
                 <button onClick={() => navigate(`/patients/${patient._id}`)} title="View clinical state" style={actionBtnStyle("blue")}>
                   <BarChart2 size={13} /><span>View</span>
                 </button>
-                <button onClick={() => setEditingUser(patient)} title="Edit user" style={actionBtnStyle("default")}>
-                  <Edit2 size={13} /><span>Edit</span>
-                </button>
-                <button
-                  onClick={() => handleResetPassword(patient)}
-                  disabled={resetLoading === patient._id}
-                  title="Reset password"
-                  style={actionBtnStyle("amber")}
-                >
-                  <KeyRound size={13} /><span>{resetLoading === patient._id ? "..." : "Reset"}</span>
-                </button>
-                <button
-                  onClick={() => handleToggleStatus(patient._id, patient.status || "active")}
-                  title={isActive ? "Deactivate" : "Activate"}
-                  style={actionBtnStyle(isActive ? "orange" : "green")}
-                >
-                  {isActive ? <UserX size={13} /> : <UserCheck size={13} />}
-                </button>
-                <button onClick={() => handleDeleteUser(patient._id, patient.full_name)} title="Delete user" style={actionBtnStyle("red")}>
-                  <Trash2 size={13} />
-                </button>
+                {isAdmin && (
+                  <>
+                    <button onClick={() => setEditingUser(patient)} title="Edit user" style={actionBtnStyle("default")}>
+                      <Edit2 size={13} /><span>Edit</span>
+                    </button>
+                    <button
+                      onClick={() => handleResetPassword(patient)}
+                      disabled={resetLoading === patient._id}
+                      title="Reset password"
+                      style={actionBtnStyle("amber")}
+                    >
+                      <KeyRound size={13} /><span>{resetLoading === patient._id ? "..." : "Reset"}</span>
+                    </button>
+                    <button
+                      onClick={() => handleToggleStatus(patient._id, patient.status || "active")}
+                      title={isActive ? "Deactivate" : "Activate"}
+                      style={actionBtnStyle(isActive ? "orange" : "green")}
+                    >
+                      {isActive ? <UserX size={13} /> : <UserCheck size={13} />}
+                    </button>
+                    <button onClick={() => handleDeleteUser(patient._id, patient.full_name)} title="Delete user" style={actionBtnStyle("red")}>
+                      <Trash2 size={13} />
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           );

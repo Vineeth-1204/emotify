@@ -1,9 +1,12 @@
 import { v, ConvexError } from "convex/values";
-import { mutation, query, action, internalMutation, internalQuery } from "./_generated/server";
+import { internalMutation, internalQuery } from "./_generated/server";
+import { mutation, query, action } from "./functions";
 import { api, internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import { assertCanAccessStudent, requireAdmin } from "./authz";
 import { getGeminiModels } from "./emotyContract";
+import { classifyServerSafety, getControlledCrisisResponse } from "./emotySafety";
+import { CRISIS_RESOURCES } from "../common/crisisResources";
 
 // Helper to sanitize inputs
 function sanitizeInput(input: string): string {
@@ -584,6 +587,40 @@ export const updateSessionInternal = internalMutation({
 // 3. AI ACTION - PROCESS INCOMING MESSAGES (BRAIN 1 & 2)
 // ----------------------------------------------------
 
+/**
+ * Puts a CBT session into safety mode and raises a (deduplicated) safety alert.
+ * Shared by the deterministic pre-check and the model's riskDetected signal, which
+ * may only ever RAISE the risk level, never lower it.
+ */
+async function enterCbtSafetyMode(
+  ctx: any,
+  sessionId: Id<"cbtSessions">,
+  history: any[],
+  riskFlags: string[],
+  responseMessage?: string
+): Promise<{ responseMessage: string; step: "safety_mode" }> {
+  const safetyMessage = responseMessage || getControlledCrisisResponse().response;
+
+  await ctx.runMutation(internal.alerts.createSafetyAlertWithDeduplication, {
+    type: "suicideRisk",
+    source: "cbt",
+    sourceId: String(sessionId),
+  });
+
+  const updatedHistory = [...history, { role: "assistant", content: safetyMessage, timestamp: Date.now() }];
+  await ctx.runMutation(internal.cbt.updateSessionInternal, {
+    sessionId,
+    updates: {
+      conversation: updatedHistory,
+      sessionStatus: "safety_mode",
+      currentStep: "safety_mode",
+      riskFlags,
+      timestamp: Date.now(),
+    },
+  });
+  return { responseMessage: safetyMessage, step: "safety_mode" };
+}
+
 export const submitMessage = action({
   args: {
     sessionId: v.id("cbtSessions"),
@@ -610,6 +647,11 @@ export const submitMessage = action({
       updates: { conversation: conversationHistory, timestamp: Date.now() }
     });
 
+    // Deterministic safety gate runs before (and independently of) the model.
+    if (classifyServerSafety(args.content).state === "crisis") {
+      return await enterCbtSafetyMode(ctx, args.sessionId, conversationHistory, ["suicide"]);
+    }
+
     const dbKey = await ctx.runQuery(internal.cbt.getActiveApiKeyInternal);
     const envKey = process.env.GEMINI_API_KEY || null;
     const apiKeys = Array.from(new Set([dbKey, envKey].filter(Boolean) as string[]));
@@ -623,28 +665,15 @@ export const submitMessage = action({
       // Construct prompt based on current step
       const responseJson = await callGeminiEngine(apiKeys, session.currentStep, conversationHistory);
 
-      // 2. SAFETY GATE: Assess Immediate Danger
+      // 2. MODEL SAFETY SIGNAL: may only raise risk (never lowers the deterministic gate)
       if (responseJson.riskDetected) {
-        const safetyMessage = responseJson.responseMessage || "I'm hearing that you are going through a really difficult time right now, and I want to make sure you are safe. Please know you are not alone and help is available. I encourage you to contact the Suicide & Crisis Lifeline by calling or texting 988, or reach out to a trusted family member or counsellor. Please contact someone who can help support you right now.";
-
-        // Save safety alerts in database
-        await ctx.runMutation(api.alerts.createAlert, {
-          userId: session.userId,
-          type: "suicideRisk",
-        });
-
-        const updatedHistory = [...conversationHistory, { role: "assistant", content: safetyMessage, timestamp: Date.now() }];
-        await ctx.runMutation(internal.cbt.updateSessionInternal, {
-          sessionId: args.sessionId,
-          updates: {
-            conversation: updatedHistory,
-            sessionStatus: "safety_mode",
-            currentStep: "safety_mode",
-            riskFlags: responseJson.riskFlags || ["high_distress"],
-            timestamp: Date.now()
-          }
-        });
-        return { responseMessage: safetyMessage, step: "safety_mode" };
+        return await enterCbtSafetyMode(
+          ctx,
+          args.sessionId,
+          conversationHistory,
+          responseJson.riskFlags || ["high_distress"],
+          responseJson.responseMessage
+        );
       }
 
       // 3. SUPPORT MODE GATE: Check Unresponsive / Rejecting
@@ -830,7 +859,8 @@ export const submitMessage = action({
 // 4. AI ACTION - RECOVERY COACH GOAL RECOMMENDATION (BRAIN 3)
 // ----------------------------------------------------
 
-export const getRecentPatientGoals = query({
+/** Internal: recent goals for the recommendation action (never client-callable). */
+export const getRecentPatientGoals = internalQuery({
   args: { userId: v.string() },
   handler: async (ctx, args) => {
     return await ctx.db
@@ -857,7 +887,7 @@ export const recommendGoalAction = action({
     // are strictly excluded to preserve medical domain separation (P8-F01).
     const wellness = await ctx.runQuery(api.wellness.getProfile, { userId });
     const streak = await ctx.runQuery(api.microGoals.getStreak, { userId });
-    const recentGoals = await ctx.runQuery(api.cbt.getRecentPatientGoals, { userId });
+    const recentGoals = await ctx.runQuery(internal.cbt.getRecentPatientGoals, { userId });
 
     const isHighRisk = session.riskFlags !== undefined && session.riskFlags.length > 0;
 
@@ -899,7 +929,7 @@ Choose from actions like:
 1. Contacting a trusted person (friend, parent, relative) for support.
 2. Reaching out to their clinical counselor.
 3. Conducting a 5-4-3-2-1 sensory grounding exercise.
-4. Accessing emergency crisis resources (dialing 988 Lifeline).
+4. Accessing emergency crisis resources (calling Tele-MANAS ${CRISIS_RESOURCES.helplineNumber}, or ${CRISIS_RESOURCES.emergencyNumber} in an emergency).
 
 Output the result ONLY as a JSON object matching this structure:
 {
@@ -1237,30 +1267,6 @@ async function handleMockResponse(ctx: any, sessionId: Id<"cbtSessions">, sessio
   const clean = userMsg.toLowerCase();
   const now = Date.now();
 
-  // Safety trigger mock check
-  const safetyRegex = /\b(die|suicide|kill myself|self harm|hurt myself)\b/i;
-  if (safetyRegex.test(clean)) {
-    const safetyMessage = "I'm really concerned to hear that, and I want to support your safety. Please reach out to the Crisis Lifeline by dialing 988 immediately, or contact a trusted friend or counsellor. You are not alone, and there is help available.";
-
-    await ctx.runMutation(api.alerts.createAlert, {
-      userId: session.userId,
-      type: "suicideRisk",
-    });
-
-    const updated = [...history, { role: "assistant", content: safetyMessage, timestamp: now }];
-    await ctx.runMutation(internal.cbt.updateSessionInternal, {
-      sessionId,
-      updates: {
-        conversation: updated,
-        sessionStatus: "safety_mode",
-        currentStep: "safety_mode",
-        riskFlags: ["suicide"],
-        timestamp: now
-      }
-    });
-    return { responseMessage: safetyMessage, step: "safety_mode" };
-  }
-
   // Unresponsive mock check
   if (clean === "nothing" || clean === "leave me alone" || clean === "i don't know") {
     const supportMessage = "I understand. Taking a break is completely okay. Let's pause and guide you to some calming exercises. I'm here when you're ready.";
@@ -1422,8 +1428,8 @@ function getMockGoalRecommendations(situation: string, isHighRisk = false) {
     return [
       {
         id: "crisis_call",
-        title: "Call or text 988 Lifeline",
-        description: "Reach out to the 988 Suicide & Crisis Lifeline for free, confidential, 24/7 support.",
+        title: `Call Tele-MANAS ${CRISIS_RESOURCES.helplineNumber}`,
+        description: `Reach out to Tele-MANAS (${CRISIS_RESOURCES.helplineNumber} / ${CRISIS_RESOURCES.helplineTollFree}) for free, confidential, 24/7 support. In an emergency, call ${CRISIS_RESOURCES.emergencyNumber}.`,
         category: "Self Care",
         difficulty: "Easy",
         estimatedMinutes: 2,

@@ -40,11 +40,11 @@ function createPQ16Record(val = 0): Record<string, number> {
   return rec;
 }
 
-describe("PHQ-9 Student-Friendly Questionnaire Adaptation Tests", () => {
+describe("PHQ-9 Validated Questionnaire Wording & Scoring Tests", () => {
   // =========================================================================
-  // TEST A — ALL NEVER (0,0,0,0,0,0,0,0,0) -> Total 0
+  // TEST A — ALL NOT AT ALL (0,0,0,0,0,0,0,0,0) -> Total 0
   // =========================================================================
-  test("TEST A: All 'Never' (zeros) produces total score 0 with minimal severity", () => {
+  test("TEST A: All 'Not at all' (zeros) produces total score 0 with minimal severity", () => {
     const rawAnswers = [0, 0, 0, 0, 0, 0, 0, 0, 0];
 
     // Client-side scoring
@@ -66,9 +66,9 @@ describe("PHQ-9 Student-Friendly Questionnaire Adaptation Tests", () => {
   });
 
   // =========================================================================
-  // TEST B — ALL ALMOST EVERY DAY (3,3,3,3,3,3,3,3,3) -> Total 27
+  // TEST B — ALL NEARLY EVERY DAY (3,3,3,3,3,3,3,3,3) -> Total 27
   // =========================================================================
-  test("TEST B: All 'Almost every day' (threes) produces total score 27 with severe depression", () => {
+  test("TEST B: All 'Nearly every day' (threes) produces total score 27 with severe depression", () => {
     const rawAnswers = [3, 3, 3, 3, 3, 3, 3, 3, 3];
 
     // Client-side scoring
@@ -115,50 +115,31 @@ describe("PHQ-9 Student-Friendly Questionnaire Adaptation Tests", () => {
   });
 
   // =========================================================================
-  // TEST D — OPTION MAPPING & STUDENT-FRIENDLY WORDING VERIFICATION
+  // TEST D — OPTION MAPPING & VALIDATED WORDING VERIFICATION
   // =========================================================================
-  test("TEST D: Option mapping and student-friendly wording meet exact client requirements", () => {
-    // 1. Answer choices
-    expect(PHQ9_OPTIONS).toHaveLength(4);
-    expect(PHQ9_OPTIONS[0]).toEqual({ label: "Never", value: 0 });
-    expect(PHQ9_OPTIONS[1]).toEqual({ label: "A few days", value: 1 });
-    expect(PHQ9_OPTIONS[2]).toEqual({ label: "Most days", value: 2 });
-    expect(PHQ9_OPTIONS[3]).toEqual({ label: "Almost every day", value: 3 });
+  test("TEST D: Items, answer labels and instruction are the validated PHQ-9 wording", () => {
+    expect(PHQ9_OPTIONS).toEqual([
+      { label: "Not at all", value: 0 },
+      { label: "Several days", value: 1 },
+      { label: "More than half the days", value: 2 },
+      { label: "Nearly every day", value: 3 },
+    ]);
 
-    // 2. 2-week timeframe instruction
-    expect(PHQ9_INSTRUCTION).toBe("Over the last 2 weeks, how often have you experienced any of these?");
-    expect(PHQ9_INSTRUCTION).toContain("Over the last 2 weeks");
+    expect(PHQ9_INSTRUCTION).toBe("Over the last 2 weeks, how often have you been bothered by any of the following problems?");
 
-    // 3. Exactly 9 questions
-    expect(PHQ9_QUESTIONS).toHaveLength(9);
-
-    // 4. Exact client-approved question wording
-    expect(PHQ9_QUESTIONS[0].text).toBe("Have you had little or no interest in things you usually enjoy?");
-    expect(PHQ9_QUESTIONS[1].text).toBe("Have you been feeling sad, low, or hopeless?");
-    expect(PHQ9_QUESTIONS[2].text).toBe("Have you had trouble sleeping, slept too much, or had an irregular sleep pattern?");
-    expect(PHQ9_QUESTIONS[3].text).toBe("Have you often felt tired or low on energy?");
-    expect(PHQ9_QUESTIONS[4].text).toBe("Have you been eating much less or much more than usual?");
-    expect(PHQ9_QUESTIONS[5].text).toBe("Have you felt bad about yourself, like you are not good enough or have let yourself or others down?");
-    expect(PHQ9_QUESTIONS[6].text).toBe("Have you had difficulty concentrating on things, such as studying, reading, or watching something?");
-    expect(PHQ9_QUESTIONS[7].text).toBe(
-      "Have you been noticeably slower than usual in your movements or speech, or unusually restless and unable to sit still?"
-    );
-    expect(PHQ9_QUESTIONS[8].text).toBe(
-      "Have you had thoughts that you would be better off dead, or thoughts of hurting yourself?"
-    );
-
-    // Verify Q8 preserves both sides: psychomotor slowing AND restlessness
-    expect(PHQ9_QUESTIONS[7].text).toContain("slower than usual");
-    expect(PHQ9_QUESTIONS[7].text).toContain("unusually restless");
-
-    // Verify Q9 explicitly mentions thoughts of being better off dead AND self-harm
-    expect(PHQ9_QUESTIONS[8].text).toContain("better off dead");
-    expect(PHQ9_QUESTIONS[8].text).toContain("hurting yourself");
+    expect(PHQ9_QUESTIONS.map((q) => q.text)).toEqual([
+      "Little interest or pleasure in doing things",
+      "Feeling down, depressed, or hopeless",
+      "Trouble falling or staying asleep, or sleeping too much",
+      "Feeling tired or having little energy",
+      "Poor appetite or overeating",
+      "Feeling bad about yourself — or that you are a failure or have let yourself or your family down",
+      "Trouble concentrating on things, such as reading the newspaper or watching television",
+      "Moving or speaking so slowly that other people could have noticed? Or the opposite — being so fidgety or restless that you have been moving around a lot more than usual",
+      "Thoughts that you would be better off dead or of hurting yourself in some way",
+    ]);
   });
 
-  // =========================================================================
-  // TEST E — ITEM 9 SAFETY BEHAVIOR FOR ALL VALUES (Q9 = 0, 1, 2, 3)
-  // =========================================================================
   test("TEST E: Item 9 safety handling correctly gates risk on Q9 = 0, 1, 2, 3", async () => {
     // Case 1: Q9 = 0 -> normal baseline triage
     const triage0 = evaluateClinicalTriage({
@@ -328,7 +309,7 @@ describe("PHQ-9 Student-Friendly Questionnaire Adaptation Tests", () => {
     let answers: (number | null)[] = new Array(PHQ9_QUESTIONS.length).fill(null);
     let currentIndex = 0;
 
-    // Step 1: User selects option "A few days" (value 1) for Question 1
+    // Step 1: User selects option "Several days" (value 1) for Question 1
     answers[currentIndex] = 1;
     expect(answers[0]).toBe(1);
 
@@ -336,7 +317,7 @@ describe("PHQ-9 Student-Friendly Questionnaire Adaptation Tests", () => {
     currentIndex = 1;
     expect(currentIndex).toBe(1);
 
-    // Step 3: User selects option "Most days" (value 2) for Question 2
+    // Step 3: User selects option "More than half the days" (value 2) for Question 2
     answers[currentIndex] = 2;
     expect(answers[1]).toBe(2);
 
@@ -344,7 +325,7 @@ describe("PHQ-9 Student-Friendly Questionnaire Adaptation Tests", () => {
     currentIndex = 0;
     expect(answers[0]).toBe(1); // Answer is preserved
 
-    // Step 5: User changes Question 1 to "Almost every day" (value 3)
+    // Step 5: User changes Question 1 to "Nearly every day" (value 3)
     answers[0] = 3;
     expect(answers[0]).toBe(3);
 

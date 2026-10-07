@@ -4,13 +4,26 @@ import { X, User, Phone, Lock, Eye, EyeOff, RefreshCw, CheckCircle } from "lucid
 import { useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 
+const PASSWORD_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%^&*";
+
+function generateSecurePassword(length = 12): string {
+  const bytes = new Uint32Array(length);
+  crypto.getRandomValues(bytes);
+  let pass = "";
+  for (let i = 0; i < length; i++) {
+    pass += PASSWORD_CHARS.charAt(bytes[i] % PASSWORD_CHARS.length);
+  }
+  return pass;
+}
+
 export default function AddUserModal({ onClose, onSuccess }: { onClose: () => void, onSuccess: () => void }) {
   const createUser = useMutation(api.users.createUser);
 
   const [fullName, setFullName] = useState("");
   const [mobileNumber, setMobileNumber] = useState("");
   const [email, setEmail] = useState("");
-  const [tempPassword, setTempPassword] = useState("Password@123");
+  const [tempPassword, setTempPassword] = useState(() => generateSecurePassword());
+  const [role, setRole] = useState<"patient" | "counsellor">("patient");
   const [status, setStatus] = useState("active");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -18,12 +31,7 @@ export default function AddUserModal({ onClose, onSuccess }: { onClose: () => vo
   const [createdUserInfo, setCreatedUserInfo] = useState<{ fullName: string; mobile: string; email?: string; pass: string } | null>(null);
 
   const generatePassword = () => {
-    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*";
-    let pass = "";
-    for (let i = 0; i < 10; i++) {
-      pass += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    setTempPassword(pass);
+    setTempPassword(generateSecurePassword());
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -49,7 +57,7 @@ export default function AddUserModal({ onClose, onSuccess }: { onClose: () => vo
         email: email.trim() || undefined,
         password: tempPassword.trim(),
         status,
-        role: "patient",
+        role,
       });
 
       // Save info to show in success step
@@ -158,9 +166,9 @@ export default function AddUserModal({ onClose, onSuccess }: { onClose: () => vo
           <>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
               <div>
-                <h2 style={{ fontSize: "1.5rem", fontWeight: 600, color: "var(--text-primary)", margin: "0 0 4px 0" }}>Add Student</h2>
+                <h2 style={{ fontSize: "1.5rem", fontWeight: 600, color: "var(--text-primary)", margin: "0 0 4px 0" }}>Add User</h2>
                 <p style={{ color: "var(--text-secondary)", fontSize: "0.875rem", margin: 0 }}>
-                  Create a student profile with secure temporary access.
+                  Create a student or counsellor account with secure temporary access.
                 </p>
               </div>
               <button
@@ -179,6 +187,36 @@ export default function AddUserModal({ onClose, onSuccess }: { onClose: () => vo
             </div>
 
             <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                <label style={{ fontSize: "0.85rem", color: "var(--text-secondary)", fontWeight: 500 }}>Account Type</label>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                  {([["patient", "Student"], ["counsellor", "Counsellor"]] as const).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => setRole(value)}
+                      aria-pressed={role === value}
+                      style={{
+                        padding: "10px",
+                        borderRadius: "8px",
+                        border: role === value ? "1px solid var(--accent-primary)" : "1px solid var(--border-color)",
+                        background: role === value ? "rgba(37, 99, 235, 0.08)" : "#f8fafc",
+                        color: role === value ? "var(--accent-primary)" : "var(--text-secondary)",
+                        fontWeight: 600,
+                        cursor: "pointer"
+                      }}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {role === "counsellor" && (
+                  <span style={{ fontSize: "0.78rem", color: "var(--text-secondary)" }}>
+                    Counsellors can sign in to this dashboard and see only the students you assign to them.
+                  </span>
+                )}
+              </div>
+
               <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
                 <label style={{ fontSize: "0.85rem", color: "var(--text-secondary)", fontWeight: 500 }}>Full Name</label>
                 <div style={{ position: "relative" }}>
@@ -208,7 +246,7 @@ export default function AddUserModal({ onClose, onSuccess }: { onClose: () => vo
                 <div style={{ position: "relative" }}>
                   <input
                     type="email"
-                    placeholder="patient@example.com"
+                    placeholder="name@example.com"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     style={{

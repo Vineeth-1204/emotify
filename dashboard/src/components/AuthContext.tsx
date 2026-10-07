@@ -15,9 +15,13 @@ interface AuthContextType {
   token: string | null;
   user: User | null;
   isLoading: boolean;
+  /** True for administrators; counsellors see only their assigned caseload. */
+  isAdmin: boolean;
   login: (mobile_number: string, password: string) => Promise<{ error?: string }>;
   logout: () => void;
 }
+
+const STAFF_ROLES = ["admin", "counsellor"];
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
@@ -37,7 +41,7 @@ export function AuthProvider({ children, convex }: { children: React.ReactNode; 
 
         if (savedToken && savedUserStr) {
           const validatedUser = await convex.mutation(api.users.validateSession, { token: savedToken });
-          if (validatedUser) {
+          if (validatedUser && STAFF_ROLES.includes(validatedUser.role ?? "")) {
             const mappedUser: User = {
               id: validatedUser.id,
               full_name: validatedUser.full_name || "",
@@ -74,8 +78,8 @@ export function AuthProvider({ children, convex }: { children: React.ReactNode; 
         return { error: data.error || "Login failed" };
       }
 
-      if (data.user.role !== "admin") {
-        return { error: "Access denied. Admin access only." };
+      if (!STAFF_ROLES.includes(data.user.role ?? "")) {
+        return { error: "Access denied. Staff (admin or counsellor) access only." };
       }
 
       const mappedUser: User = {
@@ -116,6 +120,7 @@ export function AuthProvider({ children, convex }: { children: React.ReactNode; 
         token,
         user,
         isLoading,
+        isAdmin: user?.role === "admin",
         login,
         logout,
       }}

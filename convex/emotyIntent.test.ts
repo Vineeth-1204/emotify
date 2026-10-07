@@ -3,6 +3,7 @@ import { convexTest } from "convex-test";
 import { expect, test, describe } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";
+import { testUserId } from "../test-utils/identity";
 import {
   determineSemanticIntent,
   enforceConversationalGuardrails,
@@ -332,6 +333,7 @@ describe("AI-3 Step 3: Intent, Conversational Reasoning & Personality Foundation
 
   test("INTENT-20: Authentication, rate-limit, and security behavior remains intact", async () => {
     const t = convexTest(schema, modules);
+    const uid_student_rate_limit_test = await testUserId(t, "student_rate_limit_test");
 
     // Unauthenticated call to generateAIResponse or createMessage must fail
     await expect(
@@ -344,8 +346,7 @@ describe("AI-3 Step 3: Intent, Conversational Reasoning & Personality Foundation
 
     // Rate limiting: 20 messages per day
     const studentUser = await t.run(async (ctx) => {
-      return await ctx.db.insert("users", {
-        clerkId: "student_rate_limit_test",
+      return await ctx.db.patch(uid_student_rate_limit_test as any, {
         full_name: "Student Tester",
         role: "patient",
         createdAt: Date.now(),
@@ -360,7 +361,7 @@ describe("AI-3 Step 3: Intent, Conversational Reasoning & Personality Foundation
     // Seed companionRateLimits at daily limit (50 messages)
     await t.run(async (ctx) => {
       await ctx.db.insert("companionRateLimits", {
-        userId: "student_rate_limit_test",
+        userId: uid_student_rate_limit_test,
         burstCount: 1,
         burstWindowStart: Date.now(),
         dailyCount: 50,

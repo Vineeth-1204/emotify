@@ -122,8 +122,6 @@ export default function ScreeningScreen() {
   }
 
   const submitScreeningAttempt = useMutation(api.screening.submitScreeningAttempt);
-  const markScreeningComplete = useMutation(api.users.markScreeningComplete);
-  const scheduleFollowUp = useMutation(api.followUps.scheduleFollowUp);
 
   async function finishScreening() {
     if (!user) return;
@@ -146,8 +144,8 @@ export default function ScreeningScreen() {
         pq16Responses[`pq16_q${idx + 1}`] = val;
       });
 
-      // 2. Authoritative server-side scoring, triage, alert generation, and persistence
-      const attempt = await submitScreeningAttempt({
+      // 2. Authoritative server-side scoring, triage, alerts, follow-up and completion (one transaction)
+      await submitScreeningAttempt({
         userId: user.id,
         startedAt: screeningStartTime,
         responses: {
@@ -157,24 +155,13 @@ export default function ScreeningScreen() {
         },
       });
 
-      // 3. Schedule follow-up based on authoritative triage level with causal provenance
-      await scheduleFollowUp({
-        userId: user.id,
-        level: attempt.triageLevel,
-        attemptId: attempt.attemptId,
-        triageId: attempt.triageId,
-      });
-
-      // 4. Mark screening complete on user record
-      await markScreeningComplete({ clerkId: user.id });
-
-      // 5. Delete cached draft progress
+      // 3. Delete cached draft progress
       try {
         const key = `${SCREENING_STORE_KEY}_${user.id}`;
         await SecureStore.deleteItemAsync(key);
       } catch (e) {}
 
-      // 6. Navigate to main tabs
+      // 4. Navigate to main tabs
       router.replace("/(auth)/(tabs)");
     } catch (error) {
       console.error("Failed to submit screening attempt", error);

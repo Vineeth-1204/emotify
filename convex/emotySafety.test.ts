@@ -1,8 +1,9 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { expect, test, describe } from "vitest";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import schema from "./schema";
+import { testUserId } from "../test-utils/identity";
 import {
   classifyServerSafety,
   getControlledCrisisResponse,
@@ -184,10 +185,10 @@ describe("AI-3 Step 4: Safety Architecture (SAFETY-01 to SAFETY-26)", () => {
 
   test("SAFETY-08 & SAFETY-11: CRISIS does not call Gemini and produces controlled safety response", async () => {
     const t = convexTest(schema, modules);
+    const uid_student_crisis_suppression_test = await testUserId(t, "student_crisis_suppression_test");
 
     await t.run(async (ctx) => {
-      await ctx.db.insert("users", {
-        clerkId: "student_crisis_suppression_test",
+      await ctx.db.patch(uid_student_crisis_suppression_test as any, {
         full_name: "Crisis Student",
         role: "patient",
         createdAt: Date.now(),
@@ -211,7 +212,7 @@ describe("AI-3 Step 4: Safety Architecture (SAFETY-01 to SAFETY-26)", () => {
 
     // 1. Result must be controlled crisis response containing Tele-MANAS resources
     expect(resContract.response).toContain(EMERGENCY_RESOURCES.teleManasNumber);
-    expect(resContract.response).toContain(EMERGENCY_RESOURCES.nationalLifeline);
+    expect(resContract.response).toContain(EMERGENCY_RESOURCES.emergencyNumber);
     expect(resContract.response).toContain("Tele-MANAS");
     expect(resContract.avatarState).toBe("supportive");
     expect(resContract.action.type).toBe("open_counsellor_request");
@@ -222,7 +223,7 @@ describe("AI-3 Step 4: Safety Architecture (SAFETY-01 to SAFETY-26)", () => {
     const savedAiMsg = await t.run(async (ctx) => {
       return await ctx.db
         .query("aiCompanionLogs")
-        .withIndex("by_userId", (q) => q.eq("userId", "student_crisis_suppression_test"))
+        .withIndex("by_userId", (q) => q.eq("userId", uid_student_crisis_suppression_test))
         .filter((q) => q.eq(q.field("role"), "assistant"))
         .first();
     });
@@ -262,10 +263,10 @@ describe("AI-3 Step 4: Safety Architecture (SAFETY-01 to SAFETY-26)", () => {
 
   test("SAFETY-12: CRISIS creates appropriate backend safety alert", async () => {
     const t = convexTest(schema, modules);
+    const uid_student_alert_creation_test = await testUserId(t, "student_alert_creation_test");
 
     await t.run(async (ctx) => {
-      await ctx.db.insert("users", {
-        clerkId: "student_alert_creation_test",
+      await ctx.db.patch(uid_student_alert_creation_test as any, {
         full_name: "Alert Test Student",
         role: "patient",
         createdAt: Date.now(),
@@ -286,7 +287,7 @@ describe("AI-3 Step 4: Safety Architecture (SAFETY-01 to SAFETY-26)", () => {
     const alerts = await t.run(async (ctx) => {
       return await ctx.db
         .query("alerts")
-        .withIndex("by_userId", (q) => q.eq("userId", "student_alert_creation_test"))
+        .withIndex("by_userId", (q) => q.eq("userId", uid_student_alert_creation_test))
         .collect();
     });
 
@@ -297,10 +298,10 @@ describe("AI-3 Step 4: Safety Architecture (SAFETY-01 to SAFETY-26)", () => {
 
   test("SAFETY-13: Repeated CRISIS does not create unlimited duplicate alerts (Deduplication)", async () => {
     const t = convexTest(schema, modules);
+    const uid_student_dedup_test = await testUserId(t, "student_dedup_test");
 
     await t.run(async (ctx) => {
-      await ctx.db.insert("users", {
-        clerkId: "student_dedup_test",
+      await ctx.db.patch(uid_student_dedup_test as any, {
         full_name: "Dedup Test Student",
         role: "patient",
         createdAt: Date.now(),
@@ -336,7 +337,7 @@ describe("AI-3 Step 4: Safety Architecture (SAFETY-01 to SAFETY-26)", () => {
     const alerts = await t.run(async (ctx) => {
       return await ctx.db
         .query("alerts")
-        .withIndex("by_userId", (q) => q.eq("userId", "student_dedup_test"))
+        .withIndex("by_userId", (q) => q.eq("userId", uid_student_dedup_test))
         .collect();
     });
 
@@ -398,10 +399,10 @@ describe("AI-3 Step 4: Safety Architecture (SAFETY-01 to SAFETY-26)", () => {
 
   test("SAFETY-16: Client-provided userId cannot affect safety ownership", async () => {
     const t = convexTest(schema, modules);
+    const uid_attacker_user = await testUserId(t, "attacker_user");
 
     await t.run(async (ctx) => {
-      await ctx.db.insert("users", {
-        clerkId: "attacker_user",
+      await ctx.db.patch(uid_attacker_user as any, {
         full_name: "Attacker",
         role: "patient",
         createdAt: Date.now(),
@@ -439,7 +440,7 @@ describe("AI-3 Step 4: Safety Architecture (SAFETY-01 to SAFETY-26)", () => {
     const attackerAlerts = await t.run(async (ctx) => {
       return await ctx.db
         .query("alerts")
-        .withIndex("by_userId", (q) => q.eq("userId", "attacker_user"))
+        .withIndex("by_userId", (q) => q.eq("userId", uid_attacker_user))
         .collect();
     });
     expect(attackerAlerts.length).toBe(1);
@@ -447,10 +448,10 @@ describe("AI-3 Step 4: Safety Architecture (SAFETY-01 to SAFETY-26)", () => {
 
   test("SAFETY-17 & SAFETY-18 & SAFETY-19: Raw scores, counselor notes, and clinical timeline are not passed to Gemini context", async () => {
     const t = convexTest(schema, modules);
+    const uid_student_privacy_audit = await testUserId(t, "student_privacy_audit");
 
     await t.run(async (ctx) => {
-      const uId = await ctx.db.insert("users", {
-        clerkId: "student_privacy_audit",
+      const uId = await ctx.db.patch(uid_student_privacy_audit as any, {
         full_name: "Private Student",
         role: "patient",
         createdAt: Date.now(),
@@ -458,7 +459,7 @@ describe("AI-3 Step 4: Safety Architecture (SAFETY-01 to SAFETY-26)", () => {
 
       // Insert clinical screening attempt with raw scores
       const triageId = await ctx.db.insert("triages", {
-        userId: "student_privacy_audit",
+        userId: uid_student_privacy_audit,
         level: "severe",
         suicideFlag: true,
         psychosisFlag: false,
@@ -466,7 +467,7 @@ describe("AI-3 Step 4: Safety Architecture (SAFETY-01 to SAFETY-26)", () => {
       });
 
       await ctx.db.insert("screeningAttempts", {
-        userId: "student_privacy_audit",
+        userId: uid_student_privacy_audit,
         startedAt: Date.now() - 10000,
         completedAt: Date.now(),
         status: "completed",
@@ -493,7 +494,7 @@ describe("AI-3 Step 4: Safety Architecture (SAFETY-01 to SAFETY-26)", () => {
 
       // Insert private counselor note in counsellorRequests
       await ctx.db.insert("counsellorRequests", {
-        user_id: "student_privacy_audit",
+        user_id: uid_student_privacy_audit,
         timestamp: Date.now(),
         status: "pending",
         notes: "CONFIDENTIAL CLINICAL SESSION NOTE: Student showing severe signs of depression.",
@@ -506,7 +507,7 @@ describe("AI-3 Step 4: Safety Architecture (SAFETY-01 to SAFETY-26)", () => {
     });
 
     const contextResult = await studentCtx.query(
-      api.emotyContext.getAuthoritativeEmotyContext,
+      internal.emotyContext.getAuthoritativeEmotyContext,
       { screen: "companion" }
     );
 
@@ -565,7 +566,7 @@ describe("AI-3 Step 4: Safety Architecture (SAFETY-01 to SAFETY-26)", () => {
     ).rejects.toThrow(/Unauthenticated/);
 
     await expect(
-      t.mutation(api.alerts.createSafetyAlertWithDeduplication, {
+      t.mutation(internal.alerts.createSafetyAlertWithDeduplication, {
         type: "suicideRisk",
       })
     ).rejects.toThrow(/Unauthenticated/);

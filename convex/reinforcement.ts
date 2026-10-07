@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { query } from "./_generated/server";
+import { query } from "./functions";
 
 export const generatePositiveMessage = query({
   args: { userId: v.optional(v.string()) },

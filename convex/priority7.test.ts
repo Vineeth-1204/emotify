@@ -3,6 +3,7 @@ import { convexTest } from "convex-test";
 import { expect, test, describe } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";
+import { assignAllPatientsToCounsellors } from "../test-utils/identity";
 import type { Id } from "./_generated/dataModel";
 import { getLocalDateString, isValidCheckinDateStr, getPreviousDateStr } from "../utils/date";
 
@@ -89,6 +90,9 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
         updated_at: Date.now(),
       });
     });
+
+    // Legacy fixtures: counsellors share every student (caseload assignments)
+    await assignAllPatientsToCounsellors(t);
 
     return {
       t,
@@ -2250,8 +2254,9 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
   // =========================================================================
 
   test("FOLLOWUP-PROV-01: New screening-generated follow-up stores correct attemptId", async () => {
-    const { t, studentAId } = await setupTestEnvironment();
+    const { t, studentAId, adminId } = await setupTestEnvironment();
     const studentSession = t.withIdentity({ subject: studentAId });
+    const staffSession = t.withIdentity({ subject: adminId });
 
     // Submit screening attempt
     const attempt = await studentSession.mutation(api.screening.submitScreeningAttempt, {
@@ -2263,7 +2268,7 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
     });
 
     // Schedule follow-up with attemptId and triageId
-    const followUpId = await studentSession.mutation(api.followUps.scheduleFollowUp, {
+    const followUpId = await staffSession.mutation(api.followUps.scheduleFollowUp, {
       userId: studentAId,
       level: attempt.triageLevel,
       attemptId: attempt.attemptId,
@@ -2275,12 +2280,19 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
       expect(followUp).not.toBeNull();
       expect(followUp?.attemptId).toBe(attempt.attemptId);
       expect(followUp?.sourceType).toBe("screening");
+
+      // The screening submission itself also schedules its review follow-up atomically
+      const auto = await ctx.db.get(attempt.followUpId);
+      expect(auto?.attemptId).toBe(attempt.attemptId);
+      expect(auto?.triageId).toBe(attempt.triageId);
+      expect(auto?.sourceType).toBe("screening");
     });
   });
 
   test("FOLLOWUP-PROV-02: New screening-generated follow-up stores correct triageId", async () => {
-    const { t, studentAId } = await setupTestEnvironment();
+    const { t, studentAId, adminId } = await setupTestEnvironment();
     const studentSession = t.withIdentity({ subject: studentAId });
+    const staffSession = t.withIdentity({ subject: adminId });
 
     const attempt = await studentSession.mutation(api.screening.submitScreeningAttempt, {
       responses: {
@@ -2290,7 +2302,7 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
       },
     });
 
-    const followUpId = await studentSession.mutation(api.followUps.scheduleFollowUp, {
+    const followUpId = await staffSession.mutation(api.followUps.scheduleFollowUp, {
       userId: studentAId,
       level: attempt.triageLevel,
       attemptId: attempt.attemptId,
@@ -2305,8 +2317,9 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
   });
 
   test("FOLLOWUP-PROV-03: attemptId and triageId point to the correct originating records", async () => {
-    const { t, studentAId } = await setupTestEnvironment();
+    const { t, studentAId, adminId } = await setupTestEnvironment();
     const studentSession = t.withIdentity({ subject: studentAId });
+    const staffSession = t.withIdentity({ subject: adminId });
 
     const attempt = await studentSession.mutation(api.screening.submitScreeningAttempt, {
       responses: {
@@ -2316,7 +2329,7 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
       },
     });
 
-    const followUpId = await studentSession.mutation(api.followUps.scheduleFollowUp, {
+    const followUpId = await staffSession.mutation(api.followUps.scheduleFollowUp, {
       userId: studentAId,
       level: attempt.triageLevel,
       attemptId: attempt.attemptId,
@@ -2339,8 +2352,9 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
   });
 
   test("FOLLOWUP-PROV-04: Historical followUps without provenance remain readable", async () => {
-    const { t, studentAId } = await setupTestEnvironment();
+    const { t, studentAId, adminId } = await setupTestEnvironment();
     const studentSession = t.withIdentity({ subject: studentAId });
+    const staffSession = t.withIdentity({ subject: adminId });
 
     let legacyFollowUpId: Id<"followUps">;
     await t.run(async (ctx) => {
@@ -2362,11 +2376,12 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
   });
 
   test("FOLLOWUP-PROV-05: Manual/independent follow-up does not receive fabricated provenance", async () => {
-    const { t, studentAId } = await setupTestEnvironment();
+    const { t, studentAId, adminId } = await setupTestEnvironment();
     const studentSession = t.withIdentity({ subject: studentAId });
+    const staffSession = t.withIdentity({ subject: adminId });
 
     // Independent scheduleFollowUp call without attemptId or triageId
-    const followUpId = await studentSession.mutation(api.followUps.scheduleFollowUp, {
+    const followUpId = await staffSession.mutation(api.followUps.scheduleFollowUp, {
       userId: studentAId,
       level: "moderate",
     });
@@ -2381,31 +2396,32 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
   });
 
   test("FOLLOWUP-PROV-06: Existing follow-up dueDate behavior remains unchanged", async () => {
-    const { t, studentAId } = await setupTestEnvironment();
+    const { t, studentAId, adminId } = await setupTestEnvironment();
     const studentSession = t.withIdentity({ subject: studentAId });
+    const staffSession = t.withIdentity({ subject: adminId });
 
     const before = Date.now();
 
     // Mild: 30 days
-    const mildId = await studentSession.mutation(api.followUps.scheduleFollowUp, {
+    const mildId = await staffSession.mutation(api.followUps.scheduleFollowUp, {
       userId: studentAId,
       level: "mild",
     });
 
     // Moderate: 7 days
-    const modId = await studentSession.mutation(api.followUps.scheduleFollowUp, {
+    const modId = await staffSession.mutation(api.followUps.scheduleFollowUp, {
       userId: studentAId,
       level: "moderate",
     });
 
     // Severe: 2 days
-    const sevId = await studentSession.mutation(api.followUps.scheduleFollowUp, {
+    const sevId = await staffSession.mutation(api.followUps.scheduleFollowUp, {
       userId: studentAId,
       level: "severe",
     });
 
     // Default: 14 days
-    const defId = await studentSession.mutation(api.followUps.scheduleFollowUp, {
+    const defId = await staffSession.mutation(api.followUps.scheduleFollowUp, {
       userId: studentAId,
       level: "unknown_level",
     });
@@ -2463,8 +2479,9 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
   });
 
   test("FOLLOWUP-PROV-08: No triage or alert behavior changes as a result of provenance persistence", async () => {
-    const { t, studentAId } = await setupTestEnvironment();
+    const { t, studentAId, adminId } = await setupTestEnvironment();
     const studentSession = t.withIdentity({ subject: studentAId });
+    const staffSession = t.withIdentity({ subject: adminId });
 
     // Submit a high-risk attempt (PHQ item 9 = 2)
     const attempt = await studentSession.mutation(api.screening.submitScreeningAttempt, {
@@ -2486,7 +2503,7 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
     });
 
     // Schedule follow-up with provenance
-    await studentSession.mutation(api.followUps.scheduleFollowUp, {
+    await staffSession.mutation(api.followUps.scheduleFollowUp, {
       userId: studentAId,
       level: attempt.triageLevel,
       attemptId: attempt.attemptId,

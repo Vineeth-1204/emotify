@@ -3,6 +3,7 @@ import { convexTest } from "convex-test";
 import { expect, test, describe } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";
+import { assignAllPatientsToCounsellors } from "../test-utils/identity";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -37,6 +38,9 @@ describe("Priority 11 Step 3: Core Metric Correctness, Labeling & Data Minimizat
         updated_at: Date.now(),
       });
     });
+
+    // Legacy fixtures: counsellors share every student (caseload assignments)
+    await assignAllPatientsToCounsellors(t);
 
     return { t, studentId, counselorId };
   }

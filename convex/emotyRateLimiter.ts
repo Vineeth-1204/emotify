@@ -14,7 +14,8 @@
  */
 
 import { v, ConvexError } from "convex/values";
-import { mutation, query, internalMutation } from "./_generated/server";
+import { internalMutation } from "./_generated/server";
+import { query } from "./functions";
 
 export const RATE_LIMIT_CONFIG = {
   BURST_MAX_REQUESTS: 10,
@@ -40,7 +41,7 @@ export interface RateLimitCheckResult {
  * Atomically checks and acquires rate limit token for the authenticated student.
  * If rejected, returns allowed: false with safe user-facing message and machine-readable reason.
  */
-export const checkAndAcquireRateLimit = mutation({
+export const checkAndAcquireRateLimit = internalMutation({
   args: {},
   handler: async (ctx): Promise<RateLimitCheckResult> => {
     const identity = await ctx.auth.getUserIdentity();
@@ -136,7 +137,7 @@ export const checkAndAcquireRateLimit = mutation({
 /**
  * Releases the in-flight concurrency lock once an AI request has completed or failed.
  */
-export const releaseRateLimit = mutation({
+export const releaseRateLimit = internalMutation({
   args: {},
   handler: async (ctx) => {
     const identity = await ctx.auth.getUserIdentity();

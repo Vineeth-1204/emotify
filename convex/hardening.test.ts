@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { expect, test, describe } from "vitest";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import schema from "./schema";
 import type { Id } from "./_generated/dataModel";
 
@@ -246,7 +246,7 @@ describe("Priority 5 Step 2: Clinical Architecture Hardening Suite", () => {
 
     const studentSession = t.withIdentity({ subject: studentAId });
     const msgId = "user-msg-001";
-    await studentSession.mutation(api.companion.createMessage, {
+    await studentSession.mutation(internal.companion.createMessage, {
       messageId: msgId,
       role: "user",
       content: "Feeling stressed about upcoming finals.",
@@ -270,7 +270,7 @@ describe("Priority 5 Step 2: Clinical Architecture Hardening Suite", () => {
 
     const studentSession = t.withIdentity({ subject: studentAId });
     const replyId = "asst-reply-001";
-    await studentSession.mutation(api.companion.createMessage, {
+    await studentSession.mutation(internal.companion.createMessage, {
       messageId: replyId,
       role: "assistant",
       content: "I hear you. Let's take a deep breath together.",
@@ -312,7 +312,7 @@ describe("Priority 5 Step 2: Clinical Architecture Hardening Suite", () => {
     const { t, studentAId, studentBId } = await setupTestEnvironment();
 
     const sessionA = t.withIdentity({ subject: studentAId });
-    await sessionA.mutation(api.companion.createMessage, {
+    await sessionA.mutation(internal.companion.createMessage, {
       messageId: "a-msg-1",
       role: "user",
       content: "Student A private thoughts",

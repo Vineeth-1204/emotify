@@ -27,6 +27,7 @@
 import { describe, test, expect } from "vitest";
 import { convexTest } from "convex-test";
 import schema from "./schema";
+import { testUserId } from "../test-utils/identity";
 import { api } from "./_generated/api";
 import {
   determineIntervention,
@@ -65,8 +66,9 @@ describe("Emotion Check-in Flow — Phase 2 Guided Clarification", () => {
 
   test("P2-02: Selecting strongest advances flow — record is created", async () => {
     const t = convexTest(schema, modules);
+    const uid_p2_s02 = await testUserId(t, "p2_s02");
     await t.run(async (ctx) => {
-      await ctx.db.insert("users", { clerkId: "p2_s02", role: "patient" });
+      await ctx.db.patch(uid_p2_s02 as any, { role: "patient" });
     });
     const s = t.withIdentity({ subject: "p2_s02" });
     const id = await s.mutation(api.emotionLogs.create, {
@@ -77,7 +79,7 @@ describe("Emotion Check-in Flow — Phase 2 Guided Clarification", () => {
       preIntensity: 6,
     });
     expect(id).toBeDefined();
-    const logs = await s.query(api.emotionLogs.getRecent, { userId: "p2_s02" });
+    const logs = await s.query(api.emotionLogs.getRecent, { userId: uid_p2_s02 });
     expect(logs[0].strongestEmotion).toBe("Worried");
   });
 
@@ -112,8 +114,9 @@ describe("Emotion Check-in Flow — Phase 2 Guided Clarification", () => {
 
   test("P2-07: Flow completes with empty body regions — no region required", async () => {
     const t = convexTest(schema, modules);
+    const uid_p2_s07 = await testUserId(t, "p2_s07");
     await t.run(async (ctx) => {
-      await ctx.db.insert("users", { clerkId: "p2_s07", role: "patient" });
+      await ctx.db.patch(uid_p2_s07 as any, { role: "patient" });
     });
     const s = t.withIdentity({ subject: "p2_s07" });
     await s.mutation(api.emotionLogs.create, {
@@ -123,7 +126,7 @@ describe("Emotion Check-in Flow — Phase 2 Guided Clarification", () => {
       bodyRegions: [],
       preIntensity: 5,
     });
-    const logs = await s.query(api.emotionLogs.getRecent, { userId: "p2_s07" });
+    const logs = await s.query(api.emotionLogs.getRecent, { userId: uid_p2_s07 });
     expect(logs[0].bodyRegions).toEqual([]);
   });
 
@@ -150,8 +153,9 @@ describe("Emotion Check-in Flow — Phase 2 Guided Clarification", () => {
 
   test("P2-11: Strongest emotion must be member of selected; mismatch rejected", async () => {
     const t = convexTest(schema, modules);
+    const uid_p2_s11 = await testUserId(t, "p2_s11");
     await t.run(async (ctx) => {
-      await ctx.db.insert("users", { clerkId: "p2_s11", role: "patient" });
+      await ctx.db.patch(uid_p2_s11 as any, { role: "patient" });
     });
     const s = t.withIdentity({ subject: "p2_s11" });
     await expect(
@@ -168,12 +172,13 @@ describe("Emotion Check-in Flow — Phase 2 Guided Clarification", () => {
 
   test("P2-12: Intensity 1-10 enforced; 0 and 11 rejected", async () => {
     const t = convexTest(schema, modules);
+    const uid_p2_s12 = await testUserId(t, "p2_s12");
     await t.run(async (ctx) => {
-      await ctx.db.insert("users", { clerkId: "p2_s12", role: "patient" });
+      await ctx.db.patch(uid_p2_s12 as any, { role: "patient" });
     });
     const s = t.withIdentity({ subject: "p2_s12" });
     await s.mutation(api.emotionLogs.create, { emotion: "Calm", bodyRegions: [], preIntensity: 5 });
-    const logs = await s.query(api.emotionLogs.getRecent, { userId: "p2_s12" });
+    const logs = await s.query(api.emotionLogs.getRecent, { userId: uid_p2_s12 });
     expect(logs[0].preIntensity).toBe(5);
     await expect(
       s.mutation(api.emotionLogs.create, { emotion: "Calm", bodyRegions: [], preIntensity: 0 })
@@ -216,9 +221,10 @@ describe("Emotion Check-in Flow — Phase 2 Guided Clarification", () => {
 
   test("P2-16: Student B cannot access Student A records", async () => {
     const t = convexTest(schema, modules);
+    const uid_p2_bob = await testUserId(t, "p2_bob");
     await t.run(async (ctx) => {
       await ctx.db.insert("users", { clerkId: "p2_alice", role: "patient" });
-      await ctx.db.insert("users", { clerkId: "p2_bob", role: "patient" });
+      await ctx.db.patch(uid_p2_bob as any, { role: "patient" });
       await ctx.db.insert("emotionLogs", {
         userId: "p2_alice",
         emotion: "Worried",
@@ -237,10 +243,11 @@ describe("Emotion Check-in Flow — Phase 2 Guided Clarification", () => {
 
   test("P2-17: Legacy records without Phase 2 fields are fully readable", async () => {
     const t = convexTest(schema, modules);
+    const uid_p2_legacy = await testUserId(t, "p2_legacy");
     await t.run(async (ctx) => {
-      await ctx.db.insert("users", { clerkId: "p2_legacy", role: "patient" });
+      await ctx.db.patch(uid_p2_legacy as any, { role: "patient" });
       await ctx.db.insert("emotionLogs", {
-        userId: "p2_legacy",
+        userId: uid_p2_legacy,
         emotion: "Tired",
         bodyRegions: ["Legs"],
         preIntensity: 4,
@@ -248,7 +255,7 @@ describe("Emotion Check-in Flow — Phase 2 Guided Clarification", () => {
       });
     });
     const s = t.withIdentity({ subject: "p2_legacy" });
-    const logs = await s.query(api.emotionLogs.getRecent, { userId: "p2_legacy" });
+    const logs = await s.query(api.emotionLogs.getRecent, { userId: uid_p2_legacy });
     expect(logs).toHaveLength(1);
     expect(logs[0].emotion).toBe("Tired");
     expect(logs[0].preIntensity).toBe(4);

@@ -1,8 +1,9 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { expect, test, describe } from "vitest";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import schema from "./schema";
+import { assignAllPatientsToCounsellors } from "../test-utils/identity";
 import type { Id } from "./_generated/dataModel";
 
 const modules = import.meta.glob("./**/*.ts");
@@ -83,6 +84,9 @@ describe("P14 Step 3: P1 Privacy, Authorization & Data Integrity Remediation Sui
     const authedB = t.withIdentity({ subject: studentBId });
     const authedCounselor = t.withIdentity({ subject: counselorId });
     const authedAdmin = t.withIdentity({ subject: adminId });
+
+    // Legacy fixtures: counsellors share every student (caseload assignments)
+    await assignAllPatientsToCounsellors(t);
 
     return {
       t,
@@ -280,7 +284,7 @@ describe("P14 Step 3: P1 Privacy, Authorization & Data Integrity Remediation Sui
     const { anon, studentAId } = await setupSecurityEnvironment();
 
     await expect(
-      anon.mutation(api.companion.logMessage, {
+      anon.mutation(internal.companion.logMessage, {
         userId: studentAId,
         role: "user",
         content: "Malicious anonymous injection",
@@ -291,7 +295,7 @@ describe("P14 Step 3: P1 Privacy, Authorization & Data Integrity Remediation Sui
   test("SEC-P1-15: Student can log own message", async () => {
     const { authedA, studentAId, t } = await setupSecurityEnvironment();
 
-    const logId = await authedA.mutation(api.companion.logMessage, {
+    const logId = await authedA.mutation(internal.companion.logMessage, {
       userId: studentAId,
       role: "user",
       content: "Hello Mitra, feeling calm today.",
@@ -309,7 +313,7 @@ describe("P14 Step 3: P1 Privacy, Authorization & Data Integrity Remediation Sui
     const { authedA, studentBId, t } = await setupSecurityEnvironment();
 
     await expect(
-      authedA.mutation(api.companion.logMessage, {
+      authedA.mutation(internal.companion.logMessage, {
         userId: studentBId,
         role: "user",
         content: "Spoofed message injected by Student A",
@@ -330,7 +334,7 @@ describe("P14 Step 3: P1 Privacy, Authorization & Data Integrity Remediation Sui
     const { authedCounselor, studentAId, t } = await setupSecurityEnvironment();
 
     await expect(
-      authedCounselor.mutation(api.companion.logMessage, {
+      authedCounselor.mutation(internal.companion.logMessage, {
         userId: studentAId,
         role: "user",
         content: "Counselor injecting message into student chat",
@@ -350,7 +354,7 @@ describe("P14 Step 3: P1 Privacy, Authorization & Data Integrity Remediation Sui
     const { authedAdmin, studentAId, t } = await setupSecurityEnvironment();
 
     await expect(
-      authedAdmin.mutation(api.companion.logMessage, {
+      authedAdmin.mutation(internal.companion.logMessage, {
         userId: studentAId,
         role: "user",
         content: "Admin injecting message into student chat",
@@ -374,7 +378,7 @@ describe("P14 Step 3: P1 Privacy, Authorization & Data Integrity Remediation Sui
     const { authedCounselor, authedA, studentAId } = await setupSecurityEnvironment();
 
     // Student A logs a personal conversation
-    await authedA.mutation(api.companion.logMessage, {
+    await authedA.mutation(internal.companion.logMessage, {
       userId: studentAId,
       role: "user",
       content: "Deeply personal journal entry about family distress",
@@ -394,7 +398,7 @@ describe("P14 Step 3: P1 Privacy, Authorization & Data Integrity Remediation Sui
   test("SEC-P1-20: Student cannot retrieve another student's AI transcript", async () => {
     const { authedA, authedB, studentAId } = await setupSecurityEnvironment();
 
-    await authedA.mutation(api.companion.logMessage, {
+    await authedA.mutation(internal.companion.logMessage, {
       userId: studentAId,
       role: "user",
       content: "Student A private thoughts",
@@ -413,7 +417,7 @@ describe("P14 Step 3: P1 Privacy, Authorization & Data Integrity Remediation Sui
   test("SEC-P1-21: Admin behavior follows the chosen existing access model", async () => {
     const { authedA, authedAdmin, studentAId } = await setupSecurityEnvironment();
 
-    await authedA.mutation(api.companion.logMessage, {
+    await authedA.mutation(internal.companion.logMessage, {
       userId: studentAId,
       role: "user",
       content: "Student conversation audited under admin oversight",
@@ -435,7 +439,7 @@ describe("P14 Step 3: P1 Privacy, Authorization & Data Integrity Remediation Sui
     const { authedA, authedCounselor, studentAId, t } = await setupSecurityEnvironment();
 
     // Log an AI companion conversation
-    await authedA.mutation(api.companion.logMessage, {
+    await authedA.mutation(internal.companion.logMessage, {
       userId: studentAId,
       role: "user",
       content: "I am having anxious thoughts about exams.",

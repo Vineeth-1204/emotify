@@ -30,6 +30,7 @@ import { BreathingPlayer } from "@/components/breathing/BreathingPlayer";
 import { BREATHING_PROTOCOLS } from "@/constants/BreathingProtocols";
 import { SensoryGroundingPlayer } from "@/components/grounding/SensoryGroundingPlayer";
 import { CounsellorBadgeIcon, CalmPointToken } from "@/components/svg/system";
+import { CRISIS_RESOURCES } from "@/common/crisisResources";
 import {
   SightSensoryIcon,
   TouchSensoryIcon,
@@ -531,12 +532,12 @@ export default function ReframeScreen() {
             
             <View style={styles.helplineRow}>
               <Ionicons name="call" size={20} color={Colors.severe} />
-              <Text style={styles.helplineVal}>Suicide & Crisis Lifeline: Call or Text 988</Text>
+              <Text style={styles.helplineVal}>{CRISIS_RESOURCES.helplineName}: {CRISIS_RESOURCES.helplineNumber} / {CRISIS_RESOURCES.helplineTollFree} (24/7, free)</Text>
             </View>
 
             <View style={styles.helplineRow}>
-              <Ionicons name="chatbubble-ellipses" size={20} color={Colors.severe} />
-              <Text style={styles.helplineVal}>Crisis Text Line: Text HOME to 741741</Text>
+              <Ionicons name="alert-circle" size={20} color={Colors.severe} />
+              <Text style={styles.helplineVal}>Immediate danger: call {CRISIS_RESOURCES.emergencyNumber}</Text>
             </View>
 
             <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 14 }}>

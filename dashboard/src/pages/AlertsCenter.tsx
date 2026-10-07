@@ -16,7 +16,8 @@ export default function AlertsCenter() {
   const [unblockTarget, setUnblockTarget] = useState<{ id: string; name: string } | null>(null);
   const [isSubmittingUnblock, setIsSubmittingUnblock] = useState(false);
 
-  const isAlertActive = (status: string) => status === 'active' || status === 'pending';
+  // Acknowledged alerts are still open (being handled) until resolved.
+  const isAlertActive = (status: string) => status === 'active' || status === 'pending' || status === 'acknowledged';
   const isAlertEscalated = (status: string) => status === 'escalated';
 
   const activeAlerts = alerts?.filter((a: any) => isAlertActive(a.status) || isAlertEscalated(a.status)) || [];

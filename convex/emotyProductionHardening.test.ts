@@ -1,8 +1,9 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { expect, test, describe } from "vitest";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import schema from "./schema";
+import { testUserId } from "../test-utils/identity";
 import { classifyServerSafety, getControlledCrisisResponse } from "./emotySafety";
 import { buildStructuredFallbackResponse } from "./emotyFallback";
 import { validateEmotyResponse, getSafeStructuredFallback } from "./emotyContract";
@@ -20,8 +21,9 @@ describe("AI-3 Step 10: Production Hardening, Rate Limiting & Telemetry (RATE, T
   test("RATE-01: Normal request allowed and acquires token", async () => {
     const t = convexTest(schema, modules);
     const student = t.withIdentity({ subject: "student_rate_1", role: "student" });
+    const uid_student_rate_1 = await testUserId(student, "student_rate_1");
 
-    const result = await student.mutation(api.emotyRateLimiter.checkAndAcquireRateLimit, {});
+    const result = await student.mutation(internal.emotyRateLimiter.checkAndAcquireRateLimit, {});
     expect(result.allowed).toBe(true);
 
     const status = await student.query(api.emotyRateLimiter.getRateLimitStatus, {});
@@ -30,7 +32,7 @@ describe("AI-3 Step 10: Production Hardening, Rate Limiting & Telemetry (RATE, T
     expect(status.inFlight).toBe(true);
 
     // Release in-flight
-    await student.mutation(api.emotyRateLimiter.releaseRateLimit, {});
+    await student.mutation(internal.emotyRateLimiter.releaseRateLimit, {});
     const postStatus = await student.query(api.emotyRateLimiter.getRateLimitStatus, {});
     expect(postStatus.inFlight).toBe(false);
   });
@@ -38,16 +40,17 @@ describe("AI-3 Step 10: Production Hardening, Rate Limiting & Telemetry (RATE, T
   test("RATE-02: Per-user burst rate limit triggers after 10 requests", async () => {
     const t = convexTest(schema, modules);
     const student = t.withIdentity({ subject: "student_rate_burst", role: "student" });
+    const uid_student_rate_burst = await testUserId(student, "student_rate_burst");
 
     // Send 10 allowed requests (releasing in-flight between them to test burst)
     for (let i = 0; i < RATE_LIMIT_CONFIG.BURST_MAX_REQUESTS; i++) {
-      const res = await student.mutation(api.emotyRateLimiter.checkAndAcquireRateLimit, {});
+      const res = await student.mutation(internal.emotyRateLimiter.checkAndAcquireRateLimit, {});
       expect(res.allowed).toBe(true);
-      await student.mutation(api.emotyRateLimiter.releaseRateLimit, {});
+      await student.mutation(internal.emotyRateLimiter.releaseRateLimit, {});
     }
 
     // 11th request in the same minute should be rejected by burst limiter
-    const burst11 = await student.mutation(api.emotyRateLimiter.checkAndAcquireRateLimit, {});
+    const burst11 = await student.mutation(internal.emotyRateLimiter.checkAndAcquireRateLimit, {});
     expect(burst11.allowed).toBe(false);
     expect(burst11.reason).toBe("RATE_LIMITED_BURST");
     expect(burst11.message).toContain("quickly");
@@ -56,11 +59,12 @@ describe("AI-3 Step 10: Production Hardening, Rate Limiting & Telemetry (RATE, T
   test("RATE-03: Daily limit triggers after 50 messages", async () => {
     const t = convexTest(schema, modules);
     const student = t.withIdentity({ subject: "student_rate_daily", role: "student" });
+    const uid_student_rate_daily = await testUserId(student, "student_rate_daily");
 
     // Simulate 50 requests by seeding the companionRateLimits table directly
     await t.run(async (ctx) => {
       await ctx.db.insert("companionRateLimits", {
-        userId: "student_rate_daily",
+        userId: uid_student_rate_daily,
         burstCount: 1,
         burstWindowStart: Date.now(),
         dailyCount: 50,
@@ -69,7 +73,7 @@ describe("AI-3 Step 10: Production Hardening, Rate Limiting & Telemetry (RATE, T
       });
     });
 
-    const res = await student.mutation(api.emotyRateLimiter.checkAndAcquireRateLimit, {});
+    const res = await student.mutation(internal.emotyRateLimiter.checkAndAcquireRateLimit, {});
     expect(res.allowed).toBe(false);
     expect(res.reason).toBe("RATE_LIMITED_DAILY");
     expect(res.message).toContain("daily limit");
@@ -78,11 +82,13 @@ describe("AI-3 Step 10: Production Hardening, Rate Limiting & Telemetry (RATE, T
   test("RATE-04: Client cannot spoof another user's identity", async () => {
     const t = convexTest(schema, modules);
     const studentA = t.withIdentity({ subject: "student_A", role: "student" });
+    const uid_student_A = await testUserId(studentA, "student_A");
     const studentB = t.withIdentity({ subject: "student_B", role: "student" });
+    const uid_student_B = await testUserId(studentB, "student_B");
 
     // studentA consumes a token
-    await studentA.mutation(api.emotyRateLimiter.checkAndAcquireRateLimit, {});
-    await studentA.mutation(api.emotyRateLimiter.releaseRateLimit, {});
+    await studentA.mutation(internal.emotyRateLimiter.checkAndAcquireRateLimit, {});
+    await studentA.mutation(internal.emotyRateLimiter.releaseRateLimit, {});
 
     // studentB rate limits are completely independent
     const statusB = await studentB.query(api.emotyRateLimiter.getRateLimitStatus, {});
@@ -93,34 +99,36 @@ describe("AI-3 Step 10: Production Hardening, Rate Limiting & Telemetry (RATE, T
   test("RATE-05: Concurrent requests cannot trivially bypass limits (in-flight protection)", async () => {
     const t = convexTest(schema, modules);
     const student = t.withIdentity({ subject: "student_concurrent", role: "student" });
+    const uid_student_concurrent = await testUserId(student, "student_concurrent");
 
     // Request 1 starts (in-flight is set to true)
-    const req1 = await student.mutation(api.emotyRateLimiter.checkAndAcquireRateLimit, {});
+    const req1 = await student.mutation(internal.emotyRateLimiter.checkAndAcquireRateLimit, {});
     expect(req1.allowed).toBe(true);
 
     // Request 2 arrives immediately while Request 1 is still in-flight
-    const req2 = await student.mutation(api.emotyRateLimiter.checkAndAcquireRateLimit, {});
+    const req2 = await student.mutation(internal.emotyRateLimiter.checkAndAcquireRateLimit, {});
     expect(req2.allowed).toBe(false);
     expect(req2.reason).toBe("CONCURRENT_REQUEST");
     expect(req2.message).toContain("already have a message being processed");
 
     // Request 1 finishes and releases lock
-    await student.mutation(api.emotyRateLimiter.releaseRateLimit, {});
+    await student.mutation(internal.emotyRateLimiter.releaseRateLimit, {});
 
     // Now Request 3 can proceed
-    const req3 = await student.mutation(api.emotyRateLimiter.checkAndAcquireRateLimit, {});
+    const req3 = await student.mutation(internal.emotyRateLimiter.checkAndAcquireRateLimit, {});
     expect(req3.allowed).toBe(true);
   });
 
   test("RATE-06: Rate-limit state is server authoritative and survives chat history clearing", async () => {
     const t = convexTest(schema, modules);
     const student = t.withIdentity({ subject: "student_clear_history", role: "student" });
+    const uid_student_clear_history = await testUserId(student, "student_clear_history");
 
     // Seed messages in aiCompanionLogs
     await t.run(async (ctx) => {
       await ctx.db.insert("aiCompanionLogs", {
         messageId: "m1",
-        userId: "student_clear_history",
+        userId: uid_student_clear_history,
         role: "user",
         content: "Hello Emoty",
         createdAt: Date.now(),
@@ -128,8 +136,8 @@ describe("AI-3 Step 10: Production Hardening, Rate Limiting & Telemetry (RATE, T
     });
 
     // Acquire rate limit token
-    await student.mutation(api.emotyRateLimiter.checkAndAcquireRateLimit, {});
-    await student.mutation(api.emotyRateLimiter.releaseRateLimit, {});
+    await student.mutation(internal.emotyRateLimiter.checkAndAcquireRateLimit, {});
+    await student.mutation(internal.emotyRateLimiter.releaseRateLimit, {});
 
     const statusBefore = await student.query(api.emotyRateLimiter.getRateLimitStatus, {});
     expect(statusBefore.dailyRemaining).toBe(RATE_LIMIT_CONFIG.DAILY_MAX_REQUESTS - 1);
@@ -141,7 +149,7 @@ describe("AI-3 Step 10: Production Hardening, Rate Limiting & Telemetry (RATE, T
     const logsAfter = await t.run(async (ctx) => {
       return await ctx.db
         .query("aiCompanionLogs")
-        .withIndex("by_userId", (q) => q.eq("userId", "student_clear_history"))
+        .withIndex("by_userId", (q) => q.eq("userId", uid_student_clear_history))
         .collect();
     });
     expect(logsAfter.length).toBe(0);
@@ -162,11 +170,12 @@ describe("AI-3 Step 10: Production Hardening, Rate Limiting & Telemetry (RATE, T
   test("RATE-08: CRISIS request still reaches authoritative safety handling even at rate limit", async () => {
     const t = convexTest(schema, modules);
     const student = t.withIdentity({ subject: "student_crisis_at_limit", role: "student" });
+    const uid_student_crisis_at_limit = await testUserId(student, "student_crisis_at_limit");
 
     // Seed user at daily message limit in companionRateLimits
     await t.run(async (ctx) => {
       await ctx.db.insert("companionRateLimits", {
-        userId: "student_crisis_at_limit",
+        userId: uid_student_crisis_at_limit,
         burstCount: 10,
         burstWindowStart: Date.now(),
         dailyCount: 50,
@@ -185,14 +194,15 @@ describe("AI-3 Step 10: Production Hardening, Rate Limiting & Telemetry (RATE, T
     // Assert that crisis response contract is returned with emergency hotlines
     expect(crisisContract.mode).toBe("emotional_support");
     expect(crisisContract.response).toContain("14416");
-    expect(crisisContract.response).toContain("988");
+    expect(crisisContract.response).toContain("112");
+    expect(crisisContract.response).not.toContain("988");
     expect(crisisContract.action.type).toBe("open_counsellor_request");
 
     // Assert that a high-priority safety alert was created for counselors despite user being at rate limit
     const alerts = await t.run(async (ctx) => {
       return await ctx.db
         .query("alerts")
-        .withIndex("by_userId", (q) => q.eq("userId", "student_crisis_at_limit"))
+        .withIndex("by_userId", (q) => q.eq("userId", uid_student_crisis_at_limit))
         .collect();
     });
     expect(alerts.length).toBe(1);
@@ -203,7 +213,7 @@ describe("AI-3 Step 10: Production Hardening, Rate Limiting & Telemetry (RATE, T
     const telemLogs = await t.run(async (ctx) => {
       return await ctx.db
         .query("aiTelemetryLogs")
-        .withIndex("by_userId", (q) => q.eq("userId", "student_crisis_at_limit"))
+        .withIndex("by_userId", (q) => q.eq("userId", uid_student_crisis_at_limit))
         .collect();
     });
     expect(telemLogs.length).toBe(1);
@@ -233,6 +243,7 @@ describe("AI-3 Step 10: Production Hardening, Rate Limiting & Telemetry (RATE, T
   test("RATE-10 & RATE-12: Missing API key uses structured fallback without error", async () => {
     const t = convexTest(schema, modules);
     const student = t.withIdentity({ subject: "student_no_key", role: "student" });
+    const uid_student_no_key = await testUserId(student, "student_no_key");
 
     // No API keys in DB or env
     const response = await student.action(api.companion.generateAIResponse, {
@@ -249,7 +260,7 @@ describe("AI-3 Step 10: Production Hardening, Rate Limiting & Telemetry (RATE, T
     const telem = await t.run(async (ctx) => {
       return await ctx.db
         .query("aiTelemetryLogs")
-        .withIndex("by_userId", (q) => q.eq("userId", "student_no_key"))
+        .withIndex("by_userId", (q) => q.eq("userId", uid_student_no_key))
         .collect();
     });
     expect(telem.length).toBe(1);
@@ -296,9 +307,10 @@ describe("AI-3 Step 10: Production Hardening, Rate Limiting & Telemetry (RATE, T
   test("TELEM-01 to TELEM-05: Telemetry records appropriate path, success flags and latencies", async () => {
     const t = convexTest(schema, modules);
     const student = t.withIdentity({ subject: "student_telem", role: "student" });
+    const uid_student_telem = await testUserId(student, "student_telem");
 
     // Record a sample telemetry entry
-    await student.mutation(api.emotyTelemetry.recordTelemetry, {
+    await student.mutation(internal.emotyTelemetry.recordTelemetry, {
       durationMs: 450,
       path: "gemini",
       mode: "emotional_support",
@@ -314,7 +326,7 @@ describe("AI-3 Step 10: Production Hardening, Rate Limiting & Telemetry (RATE, T
     const logs = await t.run(async (ctx) => {
       return await ctx.db
         .query("aiTelemetryLogs")
-        .withIndex("by_userId", (q) => q.eq("userId", "student_telem"))
+        .withIndex("by_userId", (q) => q.eq("userId", uid_student_telem))
         .collect();
     });
 
@@ -329,6 +341,7 @@ describe("AI-3 Step 10: Production Hardening, Rate Limiting & Telemetry (RATE, T
   test("TELEM-06 to TELEM-09 & Phase 18: Sensitive user, AI, and clinical data NEVER stored in telemetry", async () => {
     const t = convexTest(schema, modules);
     const student = t.withIdentity({ subject: "student_privacy_audit", role: "student" });
+    const uid_student_privacy_audit = await testUserId(student, "student_privacy_audit");
 
     // Simulate synthetic sensitive scenarios
     const syntheticSensitiveStatements = [
@@ -342,7 +355,7 @@ describe("AI-3 Step 10: Production Hardening, Rate Limiting & Telemetry (RATE, T
     // Record safe telemetry for these events
     for (const stmt of syntheticSensitiveStatements) {
       const isCrisis = stmt.includes("killing myself");
-      await student.mutation(api.emotyTelemetry.recordTelemetry, {
+      await student.mutation(internal.emotyTelemetry.recordTelemetry, {
         durationMs: 320,
         path: isCrisis ? "crisis" : "gemini",
         mode: isCrisis ? "out_of_scope" : "emotional_support",
@@ -374,10 +387,11 @@ describe("AI-3 Step 10: Production Hardening, Rate Limiting & Telemetry (RATE, T
   test("TELEM-10: Arbitrary telemetry fields cannot be injected by client", async () => {
     const t = convexTest(schema, modules);
     const student = t.withIdentity({ subject: "student_injection", role: "student" });
+    const uid_student_injection = await testUserId(student, "student_injection");
 
     // Passing arbitrary undocumented keys to recordTelemetry fails Convex validation
     await expect(
-      student.mutation(api.emotyTelemetry.recordTelemetry, {
+      student.mutation(internal.emotyTelemetry.recordTelemetry, {
         durationMs: 100,
         path: "gemini",
         mode: "casual",
@@ -402,7 +416,7 @@ describe("AI-3 Step 10: Production Hardening, Rate Limiting & Telemetry (RATE, T
 
     // Call mutation without any identity
     await expect(
-      t.mutation(api.emotyTelemetry.recordTelemetry, {
+      t.mutation(internal.emotyTelemetry.recordTelemetry, {
         durationMs: 100,
         path: "gemini",
         mode: "casual",
@@ -419,37 +433,38 @@ describe("AI-3 Step 10: Production Hardening, Rate Limiting & Telemetry (RATE, T
   test("SEC-02 & SEC-03: Rate limiter and telemetry strictly bound to authenticated subject", async () => {
     const t = convexTest(schema, modules);
     const student = t.withIdentity({ subject: "legitimate_user", role: "student" });
+    const uid_legitimate_user = await testUserId(student, "legitimate_user");
 
     // checkAndAcquireRateLimit accepts no userId parameter from client; uses ctx.auth
-    const res = await student.mutation(api.emotyRateLimiter.checkAndAcquireRateLimit, {});
+    const res = await student.mutation(internal.emotyRateLimiter.checkAndAcquireRateLimit, {});
     expect(res.allowed).toBe(true);
 
     const doc = await t.run(async (ctx) => {
       return await ctx.db
         .query("companionRateLimits")
-        .withIndex("by_userId", (q) => q.eq("userId", "legitimate_user"))
+        .withIndex("by_userId", (q) => q.eq("userId", uid_legitimate_user))
         .first();
     });
     expect(doc).toBeDefined();
-    expect(doc?.userId).toBe("legitimate_user");
+    expect(doc?.userId).toBe(uid_legitimate_user);
   });
 
   test("SEC-04: Non-admin cannot query developer telemetry metrics", async () => {
     const t = convexTest(schema, modules);
     const student = t.withIdentity({ subject: "student_user", role: "student" });
+    const uid_student_user = await testUserId(student, "student_user");
     const admin = t.withIdentity({ subject: "admin_user", role: "admin" });
+    const uid_admin_user = await testUserId(admin, "admin_user");
 
     // Seed admin and student in users table
     await t.run(async (ctx) => {
-      await ctx.db.insert("users", {
-        clerkId: "admin_user",
+      await ctx.db.patch(uid_admin_user as any, {
         email: "admin@emotify.com",
         full_name: "Admin User",
         role: "admin",
         createdAt: Date.now(),
       });
-      await ctx.db.insert("users", {
-        clerkId: "student_user",
+      await ctx.db.patch(uid_student_user as any, {
         email: "student@emotify.com",
         full_name: "Student User",
         role: "student",

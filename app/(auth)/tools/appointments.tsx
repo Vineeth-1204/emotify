@@ -569,6 +569,11 @@ export default function AppointmentsScreen() {
                     <Ionicons name="checkmark-circle" size={14} color="#15803d" />
                     <Text style={{ fontSize: 11, fontWeight: '600', color: '#15803d' }}>Completed</Text>
                   </View>
+                ) : fu.sourceType !== 'self_initiated' ? (
+                  // Clinical follow-ups are closed by the counsellor, not the student.
+                  <View style={{ backgroundColor: '#eef2ff', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 }}>
+                    <Text style={{ fontSize: 11, fontWeight: '600', color: colors.primary }}>Awaiting counsellor</Text>
+                  </View>
                 ) : (
                   <TouchableOpacity
                     onPress={() => handleStudentCompleteFollowUp(fu._id)}

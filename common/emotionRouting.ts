@@ -5,7 +5,7 @@
  * 
  * ABSOLUTE CLINICAL BOUNDARY:
  * - This is an emotion/wellness routing system, NOT a clinical diagnostic assessment.
- * - Does NOT use PHQ-9, GAD-7, PQ-16, WSAS, or ReQoL scores.
+ * - Does NOT use PHQ-9, GAD-7 or PQ-16 scores.
  * - Does NOT infer clinical severity or diagnostic categories from emotion names.
  * - Strictly maps non-clinical wellness states to canonical tool destinations:
  *     Breathing, JPMR, Sensory Grounding, CBT Reframe, MicroGoals.

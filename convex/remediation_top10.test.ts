@@ -748,3 +748,77 @@ describe("Top-10 #10: counsellor caseload scoping", () => {
     ).rejects.toThrow();
   });
 });
+
+describe("Retired instruments: WSAS and ReQoL-10 are not part of Emotify", () => {
+  test("legacy placeholder data is never returned and the one-off purge removes it", async () => {
+    vi.useFakeTimers();
+    try {
+      const t = convexTest(schema, modules);
+      let studentId = "";
+      await t.run(async (ctx) => {
+        studentId = await ctx.db.insert("users", { full_name: "Legacy", role: "patient", status: "active" });
+        for (let i = 0; i < 3; i++) {
+          await ctx.db.insert("screeningAttempts", {
+            userId: studentId,
+            status: "completed",
+            startedAt: i,
+            completedAt: i,
+            instrumentVersions: { phq9: "PHQ-9.v1", gad7: "GAD-7.v1", pq16: "PQ-16.v1", wsas: "WSAS.v1", reqol10: "ReQoL-10.v1" },
+            responses: { wsas: { "1": 8 } },
+            results: {
+              phq9: { administered: true, score: 0, maxScore: 27, severity: "x", level: "minimal", item9Score: 0, item9Flag: false },
+              gad7: { administered: true, score: 0, maxScore: 21, severity: "x", level: "minimal" },
+              pq16: { administered: true, score: 0, maxScore: 16, severity: "x", level: "low" },
+              wsas: { administered: false, score: 0, maxScore: 40, severity: "Not Administered", level: "minimal" },
+              reqol10: { administered: false, score: 0, maxScore: 40, severity: "Not Administered", level: "minimal" },
+            },
+            triageLevel: "mild",
+            suicideFlag: false,
+            psychosisFlag: false,
+          });
+        }
+        await ctx.db.insert("screenings", {
+          userId: "legacy-clerk",
+          phq9_total: 1, gad7_total: 1, pq16_total: 0, wsas_total: 10, reqol10_total: 20,
+          phq9_item9_flag: false, phq9_item9_score: 0, createdAt: 1,
+        });
+      });
+
+      const asStudent = t.withIdentity({ subject: studentId });
+      const history: any[] = await asStudent.query(api.screening.getScreeningHistory, {});
+      expect(history).toHaveLength(3);
+      for (const a of history) {
+        expect(Object.keys(a.results).sort()).toEqual(["gad7", "phq9", "pq16"]);
+        expect(a.responses.wsas).toBeUndefined();
+      }
+
+      const first = await t.mutation(internal.screening.purgeRetiredInstrumentData, {});
+      expect(first.cleaned).toBe(3);
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+      const stored = await t.run(async (ctx) => ({
+        attempts: await ctx.db.query("screeningAttempts").collect(),
+        screenings: await ctx.db.query("screenings").collect(),
+      }));
+      for (const a of stored.attempts) {
+        expect(a.instrumentVersions.wsas).toBeUndefined();
+        expect(a.instrumentVersions.reqol10).toBeUndefined();
+        expect(a.responses.wsas).toBeUndefined();
+        expect(a.results.wsas).toBeUndefined();
+        expect(a.results.reqol10).toBeUndefined();
+        expect(a.results.phq9.administered).toBe(true);
+      }
+      expect(stored.screenings[0].wsas_total).toBeUndefined();
+      expect(stored.screenings[0].reqol10_total).toBeUndefined();
+      expect(stored.screenings[0].phq9_total).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("the purge is internal-only", async () => {
+    const screening: any = await import("./screening");
+    expect(screening.purgeRetiredInstrumentData.isInternal).toBe(true);
+    expect(screening.purgeRetiredInstrumentData.isPublic).toBeFalsy();
+  });
+});

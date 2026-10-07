@@ -1,6 +1,8 @@
 import { v } from "convex/values";
+import { internalMutation } from "./_generated/server";
 import { mutation, query } from "./functions";
-import type { Id } from "./_generated/dataModel";
+import { internal } from "./_generated/api";
+import type { Doc, Id } from "./_generated/dataModel";
 import { checkRateLimit } from "./rateLimiter";
 import { assertCanAccessStudent } from "./authz";
 import { insertSafetyAlert } from "./alerts";
@@ -9,10 +11,80 @@ import {
   scorePHQ9Responses,
   scoreGAD7Responses,
   scorePQ16Responses,
-  scoreWSASResponses,
-  scoreReQoL10Responses,
   evaluateClinicalTriage,
 } from "./clinicalScoring";
+
+/**
+ * WSAS and ReQoL-10 are not part of Emotify. Earlier versions wrote placeholder
+ * entries for them into screening attempts; strip those from anything returned.
+ */
+function withoutRetiredInstruments<T extends Doc<"screeningAttempts">>(attempt: T): T {
+  const { wsas: _v1, reqol10: _v2, ...instrumentVersions } = attempt.instrumentVersions;
+  const { wsas: _r1, reqol10: _r2, ...responses } = attempt.responses;
+  const { wsas: _s1, reqol10: _s2, ...results } = attempt.results;
+  return { ...attempt, instrumentVersions, responses, results };
+}
+
+function withoutRetiredScreeningTotals<T extends Doc<"screenings">>(screening: T): T {
+  const { wsas_total: _w, reqol10_total: _r, ...rest } = screening;
+  return rest as T;
+}
+
+/**
+ * One-off maintenance: delete stored WSAS / ReQoL-10 placeholder data written by
+ * earlier versions. Run with `npx convex run screening:purgeRetiredInstrumentData '{}'`;
+ * it reschedules itself until both tables are clean. Afterwards the legacy schema
+ * fields can be removed.
+ */
+export const purgeRetiredInstrumentData = internalMutation({
+  args: {
+    table: v.optional(v.union(v.literal("screeningAttempts"), v.literal("screenings"))),
+    cursor: v.optional(v.union(v.string(), v.null())),
+  },
+  handler: async (ctx, args) => {
+    const table = args.table ?? "screeningAttempts";
+    let cleaned = 0;
+    let isDone: boolean;
+    let continueCursor: string;
+
+    if (table === "screeningAttempts") {
+      const page = await ctx.db.query("screeningAttempts").paginate({ cursor: args.cursor ?? null, numItems: 200 });
+      for (const attempt of page.page) {
+        const hasRetired =
+          attempt.instrumentVersions.wsas !== undefined ||
+          attempt.instrumentVersions.reqol10 !== undefined ||
+          attempt.responses.wsas !== undefined ||
+          attempt.responses.reqol10 !== undefined ||
+          attempt.results.wsas !== undefined ||
+          attempt.results.reqol10 !== undefined;
+        if (!hasRetired) continue;
+        const clean = withoutRetiredInstruments(attempt);
+        await ctx.db.patch(attempt._id, {
+          instrumentVersions: clean.instrumentVersions,
+          responses: clean.responses,
+          results: clean.results,
+        });
+        cleaned++;
+      }
+      ({ isDone, continueCursor } = page);
+    } else {
+      const page = await ctx.db.query("screenings").paginate({ cursor: args.cursor ?? null, numItems: 200 });
+      for (const screening of page.page) {
+        if (screening.wsas_total === undefined && screening.reqol10_total === undefined) continue;
+        await ctx.db.patch(screening._id, { wsas_total: undefined, reqol10_total: undefined });
+        cleaned++;
+      }
+      ({ isDone, continueCursor } = page);
+    }
+
+    if (!isDone) {
+      await ctx.scheduler.runAfter(0, internal.screening.purgeRetiredInstrumentData, { table, cursor: continueCursor });
+    } else if (table === "screeningAttempts") {
+      await ctx.scheduler.runAfter(0, internal.screening.purgeRetiredInstrumentData, { table: "screenings", cursor: null });
+    }
+    return { table, cleaned, done: isDone && table === "screenings" };
+  },
+});
 
 /**
  * Authoritative Server-Side Screening Attempt Submission.
@@ -29,8 +101,6 @@ export const submitScreeningAttempt = mutation({
       phq9: v.record(v.string(), v.number()),
       gad7: v.record(v.string(), v.number()),
       pq16: v.record(v.string(), v.number()),
-      wsas: v.optional(v.record(v.string(), v.number())),
-      reqol10: v.optional(v.record(v.string(), v.number())),
     }),
   },
   handler: async (ctx, args) => {
@@ -64,9 +134,6 @@ export const submitScreeningAttempt = mutation({
     if (!pq16Result.administered || pq16Result.error) {
       throw new Error(pq16Result.error || "PQ-16 screening must be administered with all 16 items answered.");
     }
-
-    const wsasResult = scoreWSASResponses(args.responses.wsas);
-    const reqol10Result = scoreReQoL10Responses(args.responses.reqol10);
 
     // 2. Authoritative Clinical Triage Evaluation
     const triage = evaluateClinicalTriage({
@@ -174,15 +241,11 @@ export const submitScreeningAttempt = mutation({
         phq9: "PHQ-9.v1",
         gad7: "GAD-7.v1",
         pq16: "PQ-16.v1",
-        wsas: "WSAS.v1",
-        reqol10: "ReQoL-10.v1",
       },
       responses: {
         phq9: args.responses.phq9,
         gad7: args.responses.gad7,
         pq16: args.responses.pq16,
-        wsas: args.responses.wsas,
-        reqol10: args.responses.reqol10,
       },
       results: {
         phq9: {
@@ -207,20 +270,6 @@ export const submitScreeningAttempt = mutation({
           maxScore: pq16Result.maxScore,
           severity: pq16Result.severity,
           level: pq16Result.level,
-        },
-        wsas: {
-          administered: wsasResult.administered,
-          score: wsasResult.score,
-          maxScore: wsasResult.maxScore,
-          severity: wsasResult.severity,
-          level: wsasResult.level,
-        },
-        reqol10: {
-          administered: reqol10Result.administered,
-          score: reqol10Result.score,
-          maxScore: reqol10Result.maxScore,
-          severity: reqol10Result.severity,
-          level: reqol10Result.level,
         },
       },
       triageLevel: triage.level,
@@ -281,8 +330,6 @@ export const submitScreeningAttempt = mutation({
         phq9: phq9Result,
         gad7: gad7Result,
         pq16: pq16Result,
-        wsas: wsasResult,
-        reqol10: reqol10Result,
       },
     };
   },
@@ -304,7 +351,7 @@ export const getLatestAttempt = query({
       .filter((q) => q.eq(q.field("status"), "completed"))
       .first();
 
-    return attempt ?? null;
+    return attempt ? withoutRetiredInstruments(attempt) : null;
   },
 });
 
@@ -323,7 +370,7 @@ export const getLatestRawAttempt = query({
       .order("desc")
       .take(1);
 
-    return attempts[0] ?? null;
+    return attempts[0] ? withoutRetiredInstruments(attempts[0]) : null;
   },
 });
 
@@ -345,11 +392,12 @@ export const getScreeningHistory = query({
 
     const effectiveLimit = Math.min(Math.max(args.limit ?? 20, 1), 20);
 
-    return await ctx.db
+    const attempts = await ctx.db
       .query("screeningAttempts")
       .withIndex("by_userId", (q) => q.eq("userId", targetUserId))
       .order("desc")
       .take(effectiveLimit);
+    return attempts.map(withoutRetiredInstruments);
   },
 });
 
@@ -362,11 +410,12 @@ export const getAllAttempts = query({
     if (!targetUserId) return [];
     await assertCanAccessStudent(ctx, targetUserId);
 
-    return await ctx.db
+    const attempts = await ctx.db
       .query("screeningAttempts")
       .withIndex("by_userId", (q) => q.eq("userId", targetUserId))
       .order("desc")
       .take(20);
+    return attempts.map(withoutRetiredInstruments);
   },
 });
 
@@ -378,7 +427,7 @@ export const getAttemptById = query({
     const attempt = await ctx.db.get(args.attemptId);
     if (!attempt) return null;
     await assertCanAccessStudent(ctx, attempt.userId);
-    return attempt;
+    return withoutRetiredInstruments(attempt);
   },
 });
 
@@ -421,8 +470,6 @@ export const getLatest = query({
           phq9_total: attempt.results?.phq9?.score ?? 0,
           gad7_total: attempt.results?.gad7?.score ?? 0,
           pq16_total: attempt.results?.pq16?.score ?? 0,
-          wsas_total: attempt.results?.wsas?.administered ? attempt.results.wsas.score : undefined,
-          reqol10_total: attempt.results?.reqol10?.administered ? attempt.results.reqol10.score : undefined,
           phq9_item9_flag: attempt.results?.phq9?.item9Flag ?? false,
           phq9_item9_score: attempt.results?.phq9?.item9Score ?? 0,
           createdAt: attempt.completedAt || attempt.startedAt,
@@ -440,7 +487,7 @@ export const getLatest = query({
         .order("desc")
         .take(1);
 
-      if (screenings.length > 0) return screenings[0];
+      if (screenings.length > 0) return withoutRetiredScreeningTotals(screenings[0]);
     }
 
     return null;
@@ -497,8 +544,6 @@ export const getAll = query({
           phq9_total: a.results?.phq9?.score ?? 0,
           gad7_total: a.results?.gad7?.score ?? 0,
           pq16_total: a.results?.pq16?.score ?? 0,
-          wsas_total: a.results?.wsas?.administered ? a.results.wsas.score : undefined,
-          reqol10_total: a.results?.reqol10?.administered ? a.results.reqol10.score : undefined,
           phq9_item9_flag: a.results?.phq9?.item9Flag ?? false,
           phq9_item9_score: a.results?.phq9?.item9Score ?? 0,
           createdAt: a.completedAt || a.startedAt,
@@ -526,7 +571,7 @@ export const getAll = query({
       return true;
     });
 
-    return deduplicated.sort((a, b) => b.createdAt - a.createdAt);
+    return deduplicated.sort((a, b) => b.createdAt - a.createdAt).map(withoutRetiredScreeningTotals);
   },
 });
 
@@ -550,7 +595,7 @@ export const getAttemptWithTriage = query({
         .first();
     }
 
-    return { attempt, triage };
+    return { attempt: withoutRetiredInstruments(attempt), triage };
   },
 });
 

@@ -37,7 +37,7 @@ http.route({
   }),
 });
 
-// JWKS Public Keys (uses hardcoded static public key)
+// JWKS: public half of the JWT_PRIVATE_JWK signing key (500 if the key is not configured)
 http.route({
   path: "/.well-known/jwks.json",
   method: "GET",

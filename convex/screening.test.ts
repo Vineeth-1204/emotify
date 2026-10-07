@@ -8,10 +8,9 @@ import {
   scorePHQ9Responses,
   scoreGAD7Responses,
   scorePQ16Responses,
-  scoreWSASResponses,
-  scoreReQoL10Responses,
   evaluateClinicalTriage,
 } from "./clinicalScoring";
+import * as clinicalScoring from "./clinicalScoring";
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -305,20 +304,35 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
     expect(attempt.results.phq9.item9Score).toBe(2);
   });
 
-  // TEST 11: Missing WSAS content is not presented as a completed questionnaire
-  test("11. Missing WSAS content is not presented as a completed questionnaire", () => {
-    const emptyResult = scoreWSASResponses(undefined);
-    expect(emptyResult.administered).toBe(false);
-    expect(emptyResult.score).toBe(0);
-    expect(emptyResult.severity).toBe("Not Administered (Pending Approved Content)");
+  // TEST 11: WSAS and ReQoL-10 are not part of Emotify and have no scoring path
+  test("11. WSAS and ReQoL-10 have no server-side scoring functions", () => {
+    const exported = Object.keys(clinicalScoring).join(" ").toLowerCase();
+    expect(exported).not.toMatch(/wsas|reqol/);
   });
 
-  // TEST 12: Missing ReQoL content is not presented as a completed questionnaire
-  test("12. Missing ReQoL-10 content is not presented as a completed questionnaire", () => {
-    const emptyResult = scoreReQoL10Responses(undefined);
-    expect(emptyResult.administered).toBe(false);
-    expect(emptyResult.score).toBe(0);
-    expect(emptyResult.severity).toBe("Not Administered (Pending Approved Content)");
+  // TEST 12: Submissions carrying WSAS / ReQoL-10 responses are rejected outright
+  test("12. Screening submission rejects WSAS and ReQoL-10 responses", async () => {
+    const t = convexTest(schema, modules).withIdentity({ subject: "student_retired_instruments" });
+    const uid = await testUserId(t, "student_retired_instruments");
+    const base = {
+      phq9: makePHQ9Responses([0, 0, 0, 0, 0, 0, 0, 0, 0]),
+      gad7: makeGAD7Responses([0, 0, 0, 0, 0, 0, 0]),
+      pq16: makePQ16Responses(0),
+    };
+    const wsas = { wsas_q1: 8, wsas_q2: 8, wsas_q3: 8, wsas_q4: 8, wsas_q5: 8 };
+    await expect(
+      t.mutation(api.screening.submitScreeningAttempt, { userId: uid, responses: { ...base, wsas } as any })
+    ).rejects.toThrow();
+    await expect(
+      t.mutation(api.screening.submitScreeningAttempt, { userId: uid, responses: { ...base, reqol10: { reqol10_q1: 4 } } as any })
+    ).rejects.toThrow();
+
+    const ok: any = await t.mutation(api.screening.submitScreeningAttempt, { userId: uid, responses: base });
+    expect(Object.keys(ok.results).sort()).toEqual(["gad7", "phq9", "pq16"]);
+    const stored = await t.run(async (ctx) => ctx.db.get(ok.attemptId));
+    expect(Object.keys((stored as any).instrumentVersions).sort()).toEqual(["gad7", "phq9", "pq16"]);
+    expect(Object.keys((stored as any).results).sort()).toEqual(["gad7", "phq9", "pq16"]);
+    expect(Object.keys((stored as any).responses).sort()).toEqual(["gad7", "phq9", "pq16"]);
   });
 
   // TEST 13: Existing legacy screening records remain readable

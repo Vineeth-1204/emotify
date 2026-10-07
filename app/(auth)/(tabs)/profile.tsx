@@ -233,9 +233,9 @@ export default function ProfileScreen() {
     try {
       const csvRows = [];
       csvRows.push("Screening Data");
-      csvRows.push("UserID,PHQ9,GAD7,PQ16,WSAS,ReQoL10,Item9,Date");
+      csvRows.push("UserID,PHQ9,GAD7,PQ16,Item9,Date");
       exportScreenings.forEach((s: any) => {
-        csvRows.push(`${userId},${s.phq9_total},${s.gad7_total},${s.pq16_total},${s.wsas_total},${s.reqol10_total},${s.phq9_item9_score},${new Date(s.createdAt).toISOString()}`);
+        csvRows.push(`${userId},${s.phq9_total},${s.gad7_total},${s.pq16_total},${s.phq9_item9_score},${new Date(s.createdAt).toISOString()}`);
       });
       csvRows.push("");
 

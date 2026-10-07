@@ -396,18 +396,6 @@ export const ClinicalTimelineView: React.FC<ClinicalTimelineViewProps> = ({
                                   <strong>{event.metadata.pq16Score} / 16</strong>
                                 </div>
                               )}
-                              {event.metadata.wsasTotal !== undefined && (
-                                <div>
-                                  <span style={{ color: "var(--text-secondary)", display: "block" }}>WSAS Total</span>
-                                  <strong>{event.metadata.wsasTotal} / 40</strong>
-                                </div>
-                              )}
-                              {event.metadata.reqolTotal !== undefined && (
-                                <div>
-                                  <span style={{ color: "var(--text-secondary)", display: "block" }}>ReQoL-10 Total</span>
-                                  <strong>{event.metadata.reqolTotal} / 40</strong>
-                                </div>
-                              )}
                               {event.metadata.item9Flag !== undefined && (
                                 <div>
                                   <span style={{ color: "var(--text-secondary)", display: "block" }}>Item 9 Flag</span>

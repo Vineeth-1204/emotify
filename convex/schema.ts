@@ -101,6 +101,8 @@ export default defineSchema({
     phq9_total: v.number(),
     gad7_total: v.number(),
     pq16_total: v.number(),
+    // RETIRED (WSAS / ReQoL-10 are not part of Emotify): never written; kept optional only so
+    // documents from earlier versions validate until screening:purgeRetiredInstrumentData has run.
     wsas_total: v.optional(v.number()),
     reqol10_total: v.optional(v.number()),
     phq9_item9_flag: v.boolean(),
@@ -119,6 +121,7 @@ export default defineSchema({
       phq9: v.string(),
       gad7: v.string(),
       pq16: v.string(),
+      // RETIRED: see screenings.wsas_total.
       wsas: v.optional(v.string()),
       reqol10: v.optional(v.string()),
     }),
@@ -126,6 +129,7 @@ export default defineSchema({
       phq9: v.optional(v.record(v.string(), v.number())),
       gad7: v.optional(v.record(v.string(), v.number())),
       pq16: v.optional(v.record(v.string(), v.number())),
+      // RETIRED: see screenings.wsas_total.
       wsas: v.optional(v.record(v.string(), v.number())),
       reqol10: v.optional(v.record(v.string(), v.number())),
     }),
@@ -153,6 +157,7 @@ export default defineSchema({
         severity: v.string(),
         level: v.string(),
       }),
+      // RETIRED: see screenings.wsas_total.
       wsas: v.optional(
         v.object({
           administered: v.boolean(),

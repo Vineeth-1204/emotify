@@ -32,13 +32,6 @@ export function interpretPQ16(total: number): SeverityResult {
   return { severity: "Low / Normal", level: "mild" };
 }
 
-/** Interpret WSAS total score (0-40) */
-export function interpretWSAS(total: number): SeverityResult {
-  if (total <= 9) return { severity: "Subclinical / Minimal Impairment", level: "mild" };
-  if (total <= 20) return { severity: "Significant Functional Impairment", level: "moderate" };
-  return { severity: "Severe Functional Impairment", level: "severe" };
-}
-
 /** Calculate PHQ-9 total and item 9 flag */
 export function scorePHQ9(answers: number[]): { total: number; item9Score: number; item9Flag: boolean; severity: string } {
   const total = answers.reduce((sum, val) => sum + val, 0);

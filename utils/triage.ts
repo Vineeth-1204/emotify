@@ -4,8 +4,6 @@ export interface TriageInput {
   phq9_total: number;
   gad7_total: number;
   pq16_total: number;
-  wsas_total?: number;
-  reqol10_total?: number;
   phq9_item9_score: number;
 }
 

@@ -1173,7 +1173,7 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
     expect((screenings[0] as any).status).toBe("completed");
   });
 
-  test("INSIGHT-3A-08: existing WSAS/ReQoL/Item9 fields are preserved when already stored", async () => {
+  test("INSIGHT-3A-08: legacy WSAS/ReQoL placeholders are never exposed; PHQ-9 Item 9 is preserved", async () => {
     const { t, studentAId } = await setupTestEnvironment();
     const studentASession = t.withIdentity({ subject: studentAId });
 
@@ -1208,9 +1208,14 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
     expect(s.phq9_total).toBe(14);
     expect(s.gad7_total).toBe(11);
     expect(s.pq16_total).toBe(3);
-    expect(s.wsas_total).toBe(22);
-    expect(s.reqol10_total).toBe(28);
+    expect((s as any).wsas_total).toBeUndefined();
+    expect((s as any).reqol10_total).toBeUndefined();
     expect(s.phq9_item9_score).toBe(2);
+
+    const raw: any = await studentASession.query(api.screening.getLatestAttempt, { userId: studentAId });
+    expect(Object.keys(raw.results).sort()).toEqual(["gad7", "phq9", "pq16"]);
+    expect(Object.keys(raw.instrumentVersions).sort()).toEqual(["gad7", "phq9", "pq16"]);
+
     expect(s.phq9_item9_flag).toBe(true);
   });
 

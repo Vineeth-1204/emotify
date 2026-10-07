@@ -85,7 +85,7 @@ export const PQ16_INSTRUCTION = 'Please indicate whether you have experienced an
 // ─── Screening order & Instruments Definition ───
 export const SCREENING_ORDER = ['phq9', 'gad7', 'pq16'] as const;
 export type ScreeningType = typeof SCREENING_ORDER[number];
-export type ScreeningInstrumentId = 'phq9' | 'gad7' | 'pq16' | 'wsas' | 'reqol10';
+export type ScreeningInstrumentId = 'phq9' | 'gad7' | 'pq16';
 
 export interface QuestionnaireDefinition {
   id: ScreeningInstrumentId;
@@ -94,7 +94,7 @@ export interface QuestionnaireDefinition {
   description: string;
   instruction: string;
   version: string;
-  status: 'active' | 'pending_approved_content';
+  status: 'active';
   questionCount: number;
   minScore: number;
   maxScore: number;
@@ -144,34 +144,6 @@ export const INSTRUMENT_DEFINITIONS: Record<ScreeningInstrumentId, Questionnaire
     maxScore: 16,
     questions: PQ16_QUESTIONS,
     options: PQ16_OPTIONS,
-  },
-  wsas: {
-    id: 'wsas',
-    title: 'Work and Social Adjustment Scale (WSAS)',
-    shortTitle: 'Daily Functioning Check',
-    description: 'Measures impairment in ability to function day-to-day (pending validated content).',
-    instruction: 'PENDING_APPROVED_CONTENT: Validated questionnaire text required before administration.',
-    version: 'WSAS.v1',
-    status: 'pending_approved_content',
-    questionCount: 5,
-    minScore: 0,
-    maxScore: 40,
-    questions: [], // CRITICAL SAFETY RULE: Never fabricate clinical questions
-    options: [],
-  },
-  reqol10: {
-    id: 'reqol10',
-    title: 'Recovering Quality of Life (ReQoL-10)',
-    shortTitle: 'Quality of Life Check',
-    description: 'Measures quality of life for individuals with mental health difficulties (pending validated content).',
-    instruction: 'PENDING_APPROVED_CONTENT: Validated questionnaire text required before administration.',
-    version: 'ReQoL-10.v1',
-    status: 'pending_approved_content',
-    questionCount: 10,
-    minScore: 0,
-    maxScore: 40,
-    questions: [], // CRITICAL SAFETY RULE: Never fabricate clinical questions
-    options: [],
   },
 };
 
@@ -386,7 +358,7 @@ export const MICRO_GOALS = [
   { id: 'gratitude', label: 'Name one thing you\'re grateful for', points: 8, category: 'mindfulness' },
 ];
 
-// Small goals for severe/high WSAS users
+// Small goals for students at a severe triage level
 export const SMALL_GOALS = [
   { id: 'sit', label: 'Sit up in bed', points: 5, category: 'movement' },
   { id: 'face', label: 'Wash your face', points: 5, category: 'health' },

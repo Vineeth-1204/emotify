@@ -16,6 +16,7 @@
 import { describe, test, expect } from "vitest";
 import { convexTest } from "convex-test";
 import schema from "./schema";
+import { testUserId, assignAllPatientsToCounsellors } from "../test-utils/identity";
 import { api } from "./_generated/api";
 import {
   SENSORY_54321_PROTOCOL,
@@ -141,6 +142,7 @@ describe("Priority 9 Step 5B: Sensory Grounding Architecture & Persistence", () 
     });
 
     const studentSession = t.withIdentity({ subject: "student_ground_01" });
+    const uid_student_ground_01 = await testUserId(studentSession, "student_ground_01");
 
     const logId = await studentSession.mutation(api.grounding.logSession, {
       protocolId: "sensory_54321",
@@ -157,7 +159,7 @@ describe("Priority 9 Step 5B: Sensory Grounding Architecture & Persistence", () 
     expect(logId).toBeDefined();
 
     // Verify record in database
-    const logs = await studentSession.query(api.grounding.getUserLogs, { userId: "student_ground_01" });
+    const logs = await studentSession.query(api.grounding.getUserLogs, { userId: uid_student_ground_01 });
     expect(logs.length).toBe(1);
     expect(logs[0].status).toBe("completed");
     expect(logs[0].stepsCompleted).toBe(5);
@@ -176,6 +178,7 @@ describe("Priority 9 Step 5B: Sensory Grounding Architecture & Persistence", () 
     });
 
     const studentSession = t.withIdentity({ subject: "student_ground_02" });
+    const uid_student_ground_02 = await testUserId(studentSession, "student_ground_02");
 
     await studentSession.mutation(api.grounding.logSession, {
       protocolId: "sensory_54321",
@@ -189,7 +192,7 @@ describe("Priority 9 Step 5B: Sensory Grounding Architecture & Persistence", () 
       status: "partial",
     });
 
-    const logs = await studentSession.query(api.grounding.getUserLogs, { userId: "student_ground_02" });
+    const logs = await studentSession.query(api.grounding.getUserLogs, { userId: uid_student_ground_02 });
     expect(logs.length).toBe(1);
     expect(logs[0].status).toBe("partial");
     expect(logs[0].stepsCompleted).toBe(3);
@@ -203,6 +206,7 @@ describe("Priority 9 Step 5B: Sensory Grounding Architecture & Persistence", () 
     });
 
     const studentSession = t.withIdentity({ subject: "student_ground_03" });
+    const uid_student_ground_03 = await testUserId(studentSession, "student_ground_03");
 
     await studentSession.mutation(api.grounding.logSession, {
       protocolId: "sensory_54321",
@@ -216,7 +220,7 @@ describe("Priority 9 Step 5B: Sensory Grounding Architecture & Persistence", () 
       status: "abandoned",
     });
 
-    const logs = await studentSession.query(api.grounding.getUserLogs, { userId: "student_ground_03" });
+    const logs = await studentSession.query(api.grounding.getUserLogs, { userId: uid_student_ground_03 });
     expect(logs.length).toBe(1);
     expect(logs[0].status).toBe("abandoned");
     expect(logs[0].status).not.toBe("completed");
@@ -230,6 +234,7 @@ describe("Priority 9 Step 5B: Sensory Grounding Architecture & Persistence", () 
     });
 
     const studentSession = t.withIdentity({ subject: "student_ground_04" });
+    const uid_student_ground_04 = await testUserId(studentSession, "student_ground_04");
 
     // Invalid step count (> 5) should fail
     await expect(
@@ -253,9 +258,10 @@ describe("Priority 9 Step 5B: Sensory Grounding Architecture & Persistence", () 
     });
 
     const studentSession = t.withIdentity({ subject: "student_ground_05" });
+    const uid_student_ground_05 = await testUserId(studentSession, "student_ground_05");
 
     // Initial check: null
-    const initial = await studentSession.query(api.grounding.getRecentSession, { userId: "student_ground_05" });
+    const initial = await studentSession.query(api.grounding.getRecentSession, { userId: uid_student_ground_05 });
     expect(initial).toBeNull();
 
     // Log a session
@@ -269,7 +275,7 @@ describe("Priority 9 Step 5B: Sensory Grounding Architecture & Persistence", () 
       status: "completed",
     });
 
-    const latest = await studentSession.query(api.grounding.getRecentSession, { userId: "student_ground_05" });
+    const latest = await studentSession.query(api.grounding.getRecentSession, { userId: uid_student_ground_05 });
     expect(latest).not.toBeNull();
     expect(latest?.status).toBe("completed");
     expect(latest?.stepsCompleted).toBe(5);
@@ -328,7 +334,9 @@ describe("Priority 9 Step 5B: Sensory Grounding Architecture & Persistence", () 
     });
 
     const ctxA = t.withIdentity({ subject: "student_alice" });
+    const uid_student_alice = await testUserId(ctxA, "student_alice");
     const ctxB = t.withIdentity({ subject: "student_bob" });
+    const uid_student_bob = await testUserId(ctxB, "student_bob");
 
     // Student A logs grounding
     await ctxA.mutation(api.grounding.logSession, {
@@ -343,7 +351,7 @@ describe("Priority 9 Step 5B: Sensory Grounding Architecture & Persistence", () 
 
     // Student B tries to query Student A's logs -> rejected
     await expect(
-      ctxB.query(api.grounding.getUserLogs, { userId: "student_alice" })
+      ctxB.query(api.grounding.getUserLogs, { userId: uid_student_alice })
     ).rejects.toThrow("Unauthorized");
   });
 
@@ -355,6 +363,7 @@ describe("Priority 9 Step 5B: Sensory Grounding Architecture & Persistence", () 
     });
 
     const studentCtx = t.withIdentity({ subject: "student_prov" });
+    const uid_student_prov = await testUserId(studentCtx, "student_prov");
 
     await studentCtx.mutation(api.grounding.logSession, {
       protocolId: "sensory_54321",
@@ -366,7 +375,7 @@ describe("Priority 9 Step 5B: Sensory Grounding Architecture & Persistence", () 
       status: "completed",
     });
 
-    const logs = await studentCtx.query(api.grounding.getUserLogs, { userId: "student_prov" });
+    const logs = await studentCtx.query(api.grounding.getUserLogs, { userId: uid_student_prov });
     expect(logs[0].sourceType).toBe("self_initiated");
     expect(logs[0].attemptId).toBeUndefined();
     expect(logs[0].triageId).toBeUndefined();
@@ -384,6 +393,7 @@ describe("Priority 9 Step 5B: Sensory Grounding Architecture & Persistence", () 
     });
 
     const studentCtx = t.withIdentity({ subject: "student_cbt_safety" });
+    const uid_student_cbt_safety = await testUserId(studentCtx, "student_cbt_safety");
 
     // Start CBT session
     const cbtRes = await studentCtx.mutation(api.cbt.startSession, { forceNew: true });
@@ -417,6 +427,7 @@ describe("Priority 9 Step 5B: Sensory Grounding Architecture & Persistence", () 
     });
 
     const studentCtx = t.withIdentity({ subject: "student_em" });
+    const uid_student_em = await testUserId(studentCtx, "student_em");
 
     await studentCtx.mutation(api.grounding.logSession, {
       protocolId: "sensory_54321",
@@ -428,7 +439,7 @@ describe("Priority 9 Step 5B: Sensory Grounding Architecture & Persistence", () 
       status: "completed",
     });
 
-    const logs = await studentCtx.query(api.grounding.getUserLogs, { userId: "student_em" });
+    const logs = await studentCtx.query(api.grounding.getUserLogs, { userId: uid_student_em });
     expect(logs[0].sourceType).toBe("emotion_map");
   });
 
@@ -440,6 +451,7 @@ describe("Priority 9 Step 5B: Sensory Grounding Architecture & Persistence", () 
     });
 
     const studentCtx = t.withIdentity({ subject: "student_crisis" });
+    const uid_student_crisis = await testUserId(studentCtx, "student_crisis");
 
     await studentCtx.mutation(api.grounding.logSession, {
       protocolId: "sensory_54321",
@@ -451,7 +463,7 @@ describe("Priority 9 Step 5B: Sensory Grounding Architecture & Persistence", () 
       status: "completed",
     });
 
-    const logs = await studentCtx.query(api.grounding.getUserLogs, { userId: "student_crisis" });
+    const logs = await studentCtx.query(api.grounding.getUserLogs, { userId: uid_student_crisis });
     expect(logs[0].sourceType).toBe("crisis_blocker");
   });
 
@@ -467,6 +479,7 @@ describe("Priority 9 Step 5B: Sensory Grounding Architecture & Persistence", () 
     });
 
     const studentCtx = t.withIdentity({ subject: "student_privacy" });
+    const uid_student_privacy = await testUserId(studentCtx, "student_privacy");
 
     // Attempting to inject freeText or sensory observation must be rejected by validator
     await expect(
@@ -509,7 +522,9 @@ describe("Priority 9 Step 5B: Sensory Grounding Architecture & Persistence", () 
       });
     });
 
+    await assignAllPatientsToCounsellors(t);
     const counselorCtx = t.withIdentity({ subject: "counselor_user_1" });
+    const uid_counselor_user_1 = await testUserId(counselorCtx, "counselor_user_1");
 
     // Counselor queries student CBT & somatic analytics
     const analytics = await counselorCtx.query(api.dashboard.getPatientCbtAnalytics, {
@@ -534,6 +549,7 @@ describe("Priority 9 Step 5B: Sensory Grounding Architecture & Persistence", () 
     });
 
     const studentCtx = t.withIdentity({ subject: "student_stability" });
+    const uid_student_stability = await testUserId(studentCtx, "student_stability");
 
     // Breathing log works
     const bId = await studentCtx.mutation(api.breathing.logSession, {
@@ -561,8 +577,8 @@ describe("Priority 9 Step 5B: Sensory Grounding Architecture & Persistence", () 
     expect(gId).toBeDefined();
 
     // Verify both exist independently
-    const bLogs = await studentCtx.query(api.breathing.getUserLogs, { userId: "student_stability" });
-    const gLogs = await studentCtx.query(api.grounding.getUserLogs, { userId: "student_stability" });
+    const bLogs = await studentCtx.query(api.breathing.getUserLogs, { userId: uid_student_stability });
+    const gLogs = await studentCtx.query(api.grounding.getUserLogs, { userId: uid_student_stability });
 
     expect(bLogs.length).toBe(1);
     expect(gLogs.length).toBe(1);

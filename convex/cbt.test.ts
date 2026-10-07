@@ -3,6 +3,7 @@ import { convexTest } from "convex-test";
 import { expect, test, describe, beforeEach } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";
+import { testUserId } from "../test-utils/identity";
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -14,6 +15,7 @@ describe("CBT Therapy Module State Machine", () => {
       email: "patient@emotify.com",
       name: "John Doe",
     });
+    const uid_user_test_patient_123 = await testUserId(t, "user_test_patient_123");
 
     // 2. Start a fresh session
     const initRes = await t.mutation(api.cbt.startSession, { forceNew: true });
@@ -155,7 +157,7 @@ describe("CBT Therapy Module State Machine", () => {
     expect(finalSession!.goalCompletion).toBe(true);
 
     // 14. Verify micro goals were indeed inserted for patient
-    const patientGoals = await t.query(api.microGoals.getTodayGoals, { userId: "user_test_patient_123" });
+    const patientGoals = await t.query(api.microGoals.getTodayGoals, { userId: uid_user_test_patient_123 });
     expect(patientGoals).toHaveLength(2);
     expect(patientGoals[0].goalTitle).toBe(goals[0].title);
     expect(patientGoals[0].cbtSessionId).toBe(sessionId);
@@ -169,6 +171,7 @@ describe("CBT Therapy Module State Machine", () => {
       email: "patient@emotify.com",
       name: "Jane Doe",
     });
+    const uid_patient_distressed_xyz = await testUserId(t, "patient_distressed_xyz");
 
     const initRes = await t.mutation(api.cbt.startSession, { forceNew: true });
     const sessionId = initRes.session!._id;
@@ -188,7 +191,7 @@ describe("CBT Therapy Module State Machine", () => {
 
     // Verify counselor alert was created
     const alerts = await t.query(api.dashboard.getAlerts);
-    expect(alerts.some(a => a.userId === "patient_distressed_xyz" && a.type === "suicideRisk")).toBe(true);
+    expect(alerts.some(a => a.userId === uid_patient_distressed_xyz && a.type === "suicideRisk")).toBe(true);
 
     // Verify crisis goal overrides are recommended instead of normal behavioral activation
     const safetyGoals = await t.action(api.cbt.recommendGoalAction, { sessionId });

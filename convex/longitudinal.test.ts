@@ -1,8 +1,9 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { expect, test, describe } from "vitest";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import schema from "./schema";
+import { assignAllPatientsToCounsellors } from "../test-utils/identity";
 import type { Id } from "./_generated/dataModel";
 
 const modules = import.meta.glob("./**/*.ts");
@@ -88,6 +89,9 @@ describe("Priority 5 Step 3: Longitudinal Readiness & Screening Migration Suite"
         updated_at: Date.now(),
       });
     });
+
+    // Legacy fixtures: counsellors share every student (caseload assignments)
+    await assignAllPatientsToCounsellors(t);
 
     return { t, adminId, studentAId, studentBId, counselorId };
   }
@@ -345,7 +349,7 @@ describe("Priority 5 Step 3: Longitudinal Readiness & Screening Migration Suite"
     const sessionCounselor = t.withIdentity({ subject: counselorId });
 
     // Student A sends a private message to Mitra
-    await sessionA.mutation(api.companion.createMessage, {
+    await sessionA.mutation(internal.companion.createMessage, {
       messageId: "msg_priv_123",
       role: "user",
       content: "I felt overwhelmed during exams yesterday.",

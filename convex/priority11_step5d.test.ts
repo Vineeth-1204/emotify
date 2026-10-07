@@ -3,6 +3,7 @@ import { convexTest } from "convex-test";
 import { expect, test, describe } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";
+import { assignAllPatientsToCounsellors } from "../test-utils/identity";
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -60,6 +61,9 @@ describe("Priority 11 Step 5D: Counselor Roster & History Pagination", () => {
     const authedCounselor = t.withIdentity({ subject: counselorId });
     const authedAdmin = t.withIdentity({ subject: adminId });
 
+    // Legacy fixtures: counsellors share every student (caseload assignments)
+    await assignAllPatientsToCounsellors(t);
+
     return {
       t,
       studentAId,
@@ -78,7 +82,7 @@ describe("Priority 11 Step 5D: Counselor Roster & History Pagination", () => {
   // ==========================================
 
   test("P11-5D-ROSTER-01: First roster page returns default bounded number (25)", async () => {
-    const { t, authedCounselor } = await setupTestEnvironment();
+    const { t, authedAdmin } = await setupTestEnvironment();
 
     // Insert 35 patients
     await t.run(async (ctx) => {
@@ -94,13 +98,13 @@ describe("Priority 11 Step 5D: Counselor Roster & History Pagination", () => {
       }
     });
 
-    const res = await authedCounselor.query(api.users.listPatients, { paginate: true });
+    const res = await authedAdmin.query(api.users.listPatients, { paginate: true });
     expect(res.patients).toHaveLength(25);
     expect(res.nextCursor).not.toBeNull();
   });
 
   test("P11-5D-ROSTER-02: Explicit limit works", async () => {
-    const { t, authedCounselor } = await setupTestEnvironment();
+    const { t, authedAdmin } = await setupTestEnvironment();
 
     await t.run(async (ctx) => {
       for (let i = 1; i <= 20; i++) {
@@ -114,13 +118,13 @@ describe("Priority 11 Step 5D: Counselor Roster & History Pagination", () => {
       }
     });
 
-    const res = await authedCounselor.query(api.users.listPatients, { limit: 10, paginate: true });
+    const res = await authedAdmin.query(api.users.listPatients, { limit: 10, paginate: true });
     expect(res.patients).toHaveLength(10);
     expect(res.nextCursor).not.toBeNull();
   });
 
   test("P11-5D-ROSTER-03: Maximum limit is enforced (capped at 50)", async () => {
-    const { t, authedCounselor } = await setupTestEnvironment();
+    const { t, authedAdmin } = await setupTestEnvironment();
 
     await t.run(async (ctx) => {
       for (let i = 1; i <= 65; i++) {
@@ -134,13 +138,13 @@ describe("Priority 11 Step 5D: Counselor Roster & History Pagination", () => {
       }
     });
 
-    const res = await authedCounselor.query(api.users.listPatients, { limit: 100, paginate: true });
+    const res = await authedAdmin.query(api.users.listPatients, { limit: 100, paginate: true });
     expect(res.patients).toHaveLength(50);
     expect(res.nextCursor).not.toBeNull();
   });
 
   test("P11-5D-ROSTER-04: Second page contains no first-page duplicates", async () => {
-    const { t, authedCounselor } = await setupTestEnvironment();
+    const { t, authedAdmin } = await setupTestEnvironment();
 
     await t.run(async (ctx) => {
       for (let i = 1; i <= 30; i++) {
@@ -154,11 +158,11 @@ describe("Priority 11 Step 5D: Counselor Roster & History Pagination", () => {
       }
     });
 
-    const page1 = await authedCounselor.query(api.users.listPatients, { limit: 15, paginate: true });
+    const page1 = await authedAdmin.query(api.users.listPatients, { limit: 15, paginate: true });
     expect(page1.patients).toHaveLength(15);
     expect(page1.nextCursor).not.toBeNull();
 
-    const page2 = await authedCounselor.query(api.users.listPatients, {
+    const page2 = await authedAdmin.query(api.users.listPatients, {
       cursor: page1.nextCursor!,
       limit: 15,
       paginate: true,
@@ -171,7 +175,7 @@ describe("Priority 11 Step 5D: Counselor Roster & History Pagination", () => {
   });
 
   test("P11-5D-ROSTER-05: Same-timestamp students paginate deterministically", async () => {
-    const { t, authedCounselor } = await setupTestEnvironment();
+    const { t, authedAdmin } = await setupTestEnvironment();
 
     const exactSameTimestamp = 1715000000000;
     await t.run(async (ctx) => {
@@ -186,11 +190,11 @@ describe("Priority 11 Step 5D: Counselor Roster & History Pagination", () => {
       }
     });
 
-    const page1 = await authedCounselor.query(api.users.listPatients, { limit: 10, paginate: true });
+    const page1 = await authedAdmin.query(api.users.listPatients, { limit: 10, paginate: true });
     expect(page1.patients).toHaveLength(10);
     expect(page1.nextCursor).not.toBeNull();
 
-    const page2 = await authedCounselor.query(api.users.listPatients, {
+    const page2 = await authedAdmin.query(api.users.listPatients, {
       cursor: page1.nextCursor!,
       limit: 10,
       paginate: true,

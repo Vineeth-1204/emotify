@@ -3,6 +3,7 @@ import { convexTest } from "convex-test";
 import { expect, test, describe } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";
+import { assignAllPatientsToCounsellors } from "../test-utils/identity";
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -57,6 +58,9 @@ describe("Priority 4 Step 5B: Dashboard Clinical Timeline Integration Suite (DAS
         updated_at: 1700000000000,
       });
     });
+
+    // Legacy fixtures: counsellors share every student (caseload assignments)
+    await assignAllPatientsToCounsellors(t);
 
     return { t, studentId, counselorId, strangerId };
   }

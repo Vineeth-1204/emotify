@@ -4,6 +4,7 @@ import { expect, test, describe } from "vitest";
 import { api } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import schema from "./schema";
+import { assignAllPatientsToCounsellors } from "../test-utils/identity";
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -84,6 +85,9 @@ describe("P12 Step 4: Appointment Lifecycle & Provenance Integration", () => {
       subject: adminId,
       issuer: "https://auth.emotify.com",
     });
+
+    // Legacy fixtures: counsellors share every student (caseload assignments)
+    await assignAllPatientsToCounsellors(t);
 
     return {
       t,

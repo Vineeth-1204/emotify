@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { query } from "./_generated/server";
+import { internalQuery } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import { getAuthenticatedUser } from "./authz";
 import { sanitizePlainText } from "./sanitizer";
@@ -337,7 +337,7 @@ export function formatEmotyContextPrompt(
  * Never accesses another student's data.
  * Completely excludes raw clinical screenings, scores, counselor notes, and admin data.
  */
-export const getAuthoritativeEmotyContext = query({
+export const getAuthoritativeEmotyContext = internalQuery({
   args: {
     screen: v.optional(v.string()),
     clientContext: v.optional(v.any()),

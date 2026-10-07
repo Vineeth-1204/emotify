@@ -12,6 +12,7 @@ import Notifications from './pages/Notifications';
 import Analytics from './pages/Analytics';
 import SystemSettingsPage from './pages/Settings';
 import TrashBin from './pages/TrashBin';
+import CounsellorRequests from './pages/CounsellorRequests';
 
 
 import Login from './pages/Login';
@@ -44,6 +45,14 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+function AdminRoute({ children }: { children: React.ReactNode }) {
+  const { isAdmin } = useDashboardAuth();
+  if (!isAdmin) {
+    return <Navigate to="/" replace />;
+  }
+  return <>{children}</>;
+}
+
 function App() {
   return (
     <BrowserRouter>
@@ -62,7 +71,8 @@ function App() {
                   <Route path="sessions" element={<Sessions />} />
 
                   <Route path="screenings" element={<ScreeningCentre />} />
-                  <Route path="ai-monitoring" element={<AiMonitoring />} />
+                  <Route path="requests" element={<CounsellorRequests />} />
+                  <Route path="ai-monitoring" element={<AdminRoute><AiMonitoring /></AdminRoute>} />
                   <Route path="notifications" element={<Notifications />} />
                 </Route>
               </Routes>

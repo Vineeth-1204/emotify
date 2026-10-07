@@ -3,6 +3,7 @@ import { convexTest } from "convex-test";
 import { expect, test, describe } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";
+import { testUserId } from "../test-utils/identity";
 import {
   validateEmotyResponse,
   getSafeStructuredFallback,
@@ -230,11 +231,11 @@ describe("AI-3 Step 1: Emoty Provider Correction & Structured Contract Foundatio
       email: "student_contract@emotify.com",
       name: "Contract Student",
     });
+    const uid_clerk_student_contract_test = await testUserId(studentA, "clerk_student_contract_test");
 
     // Seed student user
     await t.run(async (ctx) => {
-      await ctx.db.insert("users", {
-        clerkId: "clerk_student_contract_test",
+      await ctx.db.patch(uid_clerk_student_contract_test as any, {
         full_name: "Contract Student",
         email: "student_contract@emotify.com",
         role: "student",
@@ -265,7 +266,7 @@ describe("AI-3 Step 1: Emoty Provider Correction & Structured Contract Foundatio
     await t.run(async (ctx) => {
       const logs = await ctx.db
         .query("aiCompanionLogs")
-        .withIndex("by_userId_and_createdAt", (q) => q.eq("userId", "clerk_student_contract_test"))
+        .withIndex("by_userId_and_createdAt", (q) => q.eq("userId", uid_clerk_student_contract_test))
         .collect();
 
       expect(logs).toHaveLength(2); // 1 user + 1 assistant
@@ -285,10 +286,10 @@ describe("AI-3 Step 1: Emoty Provider Correction & Structured Contract Foundatio
       email: "rate_limit@emotify.com",
       name: "Rate Student",
     });
+    const uid_clerk_rate_limit_student = await testUserId(student, "clerk_rate_limit_student");
 
     await t.run(async (ctx) => {
-      await ctx.db.insert("users", {
-        clerkId: "clerk_rate_limit_student",
+      await ctx.db.patch(uid_clerk_rate_limit_student as any, {
         full_name: "Rate Student",
         email: "rate_limit@emotify.com",
         role: "student",
@@ -297,7 +298,7 @@ describe("AI-3 Step 1: Emoty Provider Correction & Structured Contract Foundatio
 
       // Seed companionRateLimits at daily limit (50 messages)
       await ctx.db.insert("companionRateLimits", {
-        userId: "clerk_rate_limit_student",
+        userId: uid_clerk_rate_limit_student,
         burstCount: 1,
         burstWindowStart: Date.now(),
         dailyCount: 50,

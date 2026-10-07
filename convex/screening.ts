@@ -1,8 +1,10 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { mutation, query } from "./functions";
 import type { Id } from "./_generated/dataModel";
 import { checkRateLimit } from "./rateLimiter";
 import { assertCanAccessStudent } from "./authz";
+import { insertSafetyAlert } from "./alerts";
+import { followUpIntervalMs } from "./followUps";
 import {
   scorePHQ9Responses,
   scoreGAD7Responses,
@@ -232,14 +234,34 @@ export const submitScreeningAttempt = mutation({
 
     // 8. Insert Alert if triggered by clinical flags (with explicit provenance links)
     if (requiresAlert) {
-      await ctx.db.insert("alerts", {
+      await insertSafetyAlert(ctx, {
         userId,
         type: alertType || "general",
-        status: "pending",
-        createdAt: now,
+        source: "screening",
+        sourceId: String(attemptId),
         attemptId,
         triageId,
       });
+    }
+
+    // 9. Schedule the screening-review follow-up atomically with the attempt,
+    //    using the authoritative triage level (never a client-supplied level).
+    const followUpId = await ctx.db.insert("followUps", {
+      userId,
+      type: "screening_review",
+      dueDate: now + followUpIntervalMs(triage.level),
+      completed: false,
+      status: "pending",
+      sourceType: "screening",
+      attemptId,
+      triageId,
+      createdAt: now,
+    });
+
+    // 10. Mark the student's screening as complete in the same transaction.
+    const screenedUserId = ctx.db.normalizeId("users", userId);
+    if (screenedUserId) {
+      await ctx.db.patch(screenedUserId, { screeningComplete: true, updated_at: now });
     }
 
     // 8. Legacy mirror write to screenings discontinued:
@@ -251,6 +273,7 @@ export const submitScreeningAttempt = mutation({
       attemptType,
       screeningId: undefined,
       triageId,
+      followUpId,
       triageLevel: triage.level,
       suicideFlag: triage.suicideFlag,
       psychosisFlag: triage.psychosisFlag,
@@ -262,65 +285,6 @@ export const submitScreeningAttempt = mutation({
         reqol10: reqol10Result,
       },
     };
-  },
-});
-
-/** Legacy submit screening mutation for backwards compatibility */
-export const submitScreening = mutation({
-  args: {
-    userId: v.optional(v.string()),
-    phq9_total: v.number(),
-    gad7_total: v.number(),
-    pq16_total: v.number(),
-    wsas_total: v.optional(v.number()),
-    reqol10_total: v.optional(v.number()),
-    phq9_item9_flag: v.boolean(),
-    phq9_item9_score: v.number(),
-  },
-  handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity || !identity.subject) {
-      throw new Error("Unauthenticated: Must be logged in to submit screening.");
-    }
-    const authSubject = identity.subject;
-
-    // Enforce ownership: Student can only submit for their own identity unless authorized staff
-    if (args.userId && args.userId !== authSubject) {
-      await assertCanAccessStudent(ctx, args.userId);
-    }
-    const userId = (args.userId && args.userId !== authSubject) ? args.userId : authSubject;
-
-    await checkRateLimit(ctx, userId, "journal_write", 5, 60000);
-
-    // Validation: Enforce strict score bounds to prevent arbitrary score forgery
-    // PHQ-9 (9 items * 3 = 27), GAD-7 (7 items * 3 = 21), PQ-16 (16 items * 1 = 16), Item 9 (0-3)
-    if (
-      args.phq9_total < 0 || args.phq9_total > 27 ||
-      args.gad7_total < 0 || args.gad7_total > 21 ||
-      args.pq16_total < 0 || args.pq16_total > 16 ||
-      args.phq9_item9_score < 0 || args.phq9_item9_score > 3
-    ) {
-      throw new Error("Invalid score range: PHQ-9 must be 0-27, GAD-7 0-21, PQ-16 0-16, and PHQ-9 Item 9 0-3.");
-    }
-
-    if (args.phq9_item9_flag && args.phq9_item9_score === 0) {
-      throw new Error("Invalid item 9 score: flag is true but score is 0.");
-    }
-    if (!args.phq9_item9_flag && args.phq9_item9_score > 0) {
-      throw new Error("Invalid item 9 flag: score is positive but flag is false.");
-    }
-
-    return await ctx.db.insert("screenings", {
-      userId,
-      phq9_total: args.phq9_total,
-      gad7_total: args.gad7_total,
-      pq16_total: args.pq16_total,
-      wsas_total: args.wsas_total,
-      reqol10_total: args.reqol10_total,
-      phq9_item9_flag: args.phq9_item9_flag,
-      phq9_item9_score: args.phq9_item9_score,
-      createdAt: Date.now(),
-    });
   },
 });
 

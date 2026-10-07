@@ -1,8 +1,9 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { expect, test, describe } from "vitest";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import schema from "./schema";
+import { assignAllPatientsToCounsellors } from "../test-utils/identity";
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -58,6 +59,9 @@ describe("Priority 4 Step 4: Clinical Event Provenance (PROV-01 to PROV-07)", ()
         updated_at: Date.now(),
       });
     });
+
+    // Legacy fixtures: counsellors share every student (caseload assignments)
+    await assignAllPatientsToCounsellors(t);
 
     return { t, studentAId, studentBId, counselorId };
   }
@@ -411,7 +415,7 @@ describe("Priority 4 Step 4: Clinical Event Provenance (PROV-01 to PROV-07)", ()
     const authedA = t.withIdentity({ subject: studentAId });
 
     // Independent alert created via alerts.createAlert
-    const alertId = await authedA.mutation(api.alerts.createAlert, {
+    const alertId = await authedA.mutation(internal.alerts.createAlert, {
       type: "manual_sos",
     });
 

@@ -1,7 +1,7 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { mutation, query } from "./functions";
 import { checkRateLimit } from "./rateLimiter";
-import { requireCounselorOrAdmin, getAuthenticatedUser, assertCanAccessStudent } from "./authz";
+import { requireCounselorOrAdmin, getAuthenticatedUser, assertCanAccessStudent, getStaffRecipientsForStudent } from "./authz";
 import { sanitizePlainText } from "./sanitizer";
 
 export const create = mutation({
@@ -31,6 +31,9 @@ export const create = mutation({
     }
 
     const effectiveUserId = (isStaff && args.user_id) ? args.user_id : canonicalUserId;
+    if (isStaff && args.user_id) {
+      await assertCanAccessStudent(ctx, args.user_id);
+    }
 
     await checkRateLimit(ctx, effectiveUserId, "journal_write", 5, 60000);
 
@@ -89,18 +92,8 @@ export const create = mutation({
       updatedAt: Date.now(),
     });
 
-    // Notify staff (counselors and admins)
-    const staffMembers = await ctx.db
-      .query("users")
-      .withIndex("by_role", (q) => q.eq("role", "counsellor"))
-      .collect();
-
-    const adminMembers = await ctx.db
-      .query("users")
-      .withIndex("by_role", (q) => q.eq("role", "admin"))
-      .collect();
-
-    const allStaff = [...staffMembers, ...adminMembers];
+    // Notify admins and the student's assigned counsellor (all counsellors if unassigned)
+    const allStaff = await getStaffRecipientsForStudent(ctx, effectiveUserId);
     const studentName = caller?.full_name || "A student";
 
     for (const staff of allStaff) {
@@ -132,6 +125,9 @@ export const updateStatus = mutation({
     const request = await ctx.db.get(args.requestId);
     if (!request) {
       throw new Error("Counsellor request not found");
+    }
+    if (request.user_id) {
+      await assertCanAccessStudent(ctx, request.user_id);
     }
 
     const previousStatus = request.status;
@@ -275,7 +271,9 @@ export const getRequestById = query({
     const caller = await getAuthenticatedUser(ctx);
     const isStaff = caller && (caller.role === "admin" || caller.role === "counsellor");
 
-    if (!isStaff) {
+    if (isStaff) {
+      await assertCanAccessStudent(ctx, request.user_id);
+    } else {
       const isOwner =
         request.user_id === identity.subject ||
         (caller && request.user_id === String(caller._id)) ||

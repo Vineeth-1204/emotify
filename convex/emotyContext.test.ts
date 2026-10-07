@@ -1,8 +1,9 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { expect, test, describe } from "vitest";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import schema from "./schema";
+import { testUserId } from "../test-utils/identity";
 import {
   normalizeScreen,
   normalizeAgeCohort,
@@ -188,16 +189,16 @@ describe("AI-3 Step 2: Context Manager Foundation", () => {
       subject: "clerk_student_minimal",
       issuer: "https://clerk.emotify.com",
     });
+    const uid_clerk_student_minimal = await testUserId(student, "clerk_student_minimal");
 
     await t.run(async (ctx) => {
-      await ctx.db.insert("users", {
-        clerkId: "clerk_student_minimal",
+      await ctx.db.patch(uid_clerk_student_minimal as any, {
         role: "student",
         createdAt: Date.now(),
       });
     });
 
-    const context = await student.query(api.emotyContext.getAuthoritativeEmotyContext, {
+    const context = await student.query(internal.emotyContext.getAuthoritativeEmotyContext, {
       screen: "home",
     });
 
@@ -219,10 +220,10 @@ describe("AI-3 Step 2: Context Manager Foundation", () => {
       subject: "clerk_student_alias",
       issuer: "https://clerk.emotify.com",
     });
+    const uid_clerk_student_alias = await testUserId(studentWithAlias, "clerk_student_alias");
 
     await t.run(async (ctx) => {
-      await ctx.db.insert("users", {
-        clerkId: "clerk_student_alias",
+      await ctx.db.patch(uid_clerk_student_alias as any, {
         full_name: "Alexander Hamilton",
         alias: "Alex",
         age: 20,
@@ -230,7 +231,7 @@ describe("AI-3 Step 2: Context Manager Foundation", () => {
       });
     });
 
-    const context = await studentWithAlias.query(api.emotyContext.getAuthoritativeEmotyContext, {
+    const context = await studentWithAlias.query(internal.emotyContext.getAuthoritativeEmotyContext, {
       screen: "companion",
     });
 
@@ -245,18 +246,18 @@ describe("AI-3 Step 2: Context Manager Foundation", () => {
       subject: "clerk_student_goal_test",
       issuer: "https://clerk.emotify.com",
     });
+    const uid_clerk_student_goal_test = await testUserId(student, "clerk_student_goal_test");
 
     const todayStr = new Date().toISOString().split("T")[0];
 
     await t.run(async (ctx) => {
-      await ctx.db.insert("users", {
-        clerkId: "clerk_student_goal_test",
+      await ctx.db.patch(uid_clerk_student_goal_test as any, {
         full_name: "Goal Student",
         createdAt: Date.now(),
       });
 
       await ctx.db.insert("microGoals", {
-        userId: "clerk_student_goal_test",
+        userId: uid_clerk_student_goal_test,
         goalId: "g1",
         goalTitle: "Drink 2L Water",
         goalDescription: "Stay hydrated",
@@ -270,7 +271,7 @@ describe("AI-3 Step 2: Context Manager Foundation", () => {
       });
     });
 
-    const context = await student.query(api.emotyContext.getAuthoritativeEmotyContext, {
+    const context = await student.query(internal.emotyContext.getAuthoritativeEmotyContext, {
       screen: "companion",
     });
 
@@ -286,25 +287,25 @@ describe("AI-3 Step 2: Context Manager Foundation", () => {
       subject: "clerk_student_emotion_test",
       issuer: "https://clerk.emotify.com",
     });
+    const uid_clerk_student_emotion_test = await testUserId(student, "clerk_student_emotion_test");
 
     const todayStr = new Date().toISOString().split("T")[0];
 
     await t.run(async (ctx) => {
-      await ctx.db.insert("users", {
-        clerkId: "clerk_student_emotion_test",
+      await ctx.db.patch(uid_clerk_student_emotion_test as any, {
         full_name: "Emotion Student",
         createdAt: Date.now(),
       });
 
       await ctx.db.insert("dailyCheckins", {
-        userId: "clerk_student_emotion_test",
+        userId: uid_clerk_student_emotion_test,
         dateStr: todayStr,
         mood: "hopeful",
         createdAt: Date.now(),
       });
     });
 
-    const context = await student.query(api.emotyContext.getAuthoritativeEmotyContext, {
+    const context = await student.query(internal.emotyContext.getAuthoritativeEmotyContext, {
       screen: "companion",
     });
 
@@ -318,15 +319,15 @@ describe("AI-3 Step 2: Context Manager Foundation", () => {
       subject: "clerk_student_intervention_test",
       issuer: "https://clerk.emotify.com",
     });
+    const uid_clerk_student_intervention_test = await testUserId(student, "clerk_student_intervention_test");
 
     await t.run(async (ctx) => {
-      await ctx.db.insert("users", {
-        clerkId: "clerk_student_intervention_test",
+      await ctx.db.patch(uid_clerk_student_intervention_test as any, {
         createdAt: Date.now(),
       });
 
       await ctx.db.insert("breathingLogs", {
-        userId: "clerk_student_intervention_test",
+        userId: uid_clerk_student_intervention_test,
         protocolId: "box_4444",
         protocolName: "Box Breathing 4-4-4-4",
         sourceType: "self_initiated",
@@ -341,7 +342,7 @@ describe("AI-3 Step 2: Context Manager Foundation", () => {
 
       // Older JPMR log
       await ctx.db.insert("jpmrLogs", {
-        userId: "clerk_student_intervention_test",
+        userId: uid_clerk_student_intervention_test,
         preIntensity: 7,
         postIntensity: 4,
         completed: true,
@@ -349,7 +350,7 @@ describe("AI-3 Step 2: Context Manager Foundation", () => {
       });
     });
 
-    const context = await student.query(api.emotyContext.getAuthoritativeEmotyContext, {
+    const context = await student.query(internal.emotyContext.getAuthoritativeEmotyContext, {
       screen: "companion",
     });
 
@@ -365,16 +366,16 @@ describe("AI-3 Step 2: Context Manager Foundation", () => {
       subject: "clerk_student_clinical_leak_test",
       issuer: "https://clerk.emotify.com",
     });
+    const uid_clerk_student_clinical_leak_test = await testUserId(student, "clerk_student_clinical_leak_test");
 
     await t.run(async (ctx) => {
-      await ctx.db.insert("users", {
-        clerkId: "clerk_student_clinical_leak_test",
+      await ctx.db.patch(uid_clerk_student_clinical_leak_test as any, {
         createdAt: Date.now(),
       });
 
       // Insert high-risk screening attempt
       await ctx.db.insert("screeningAttempts", {
-        userId: "clerk_student_clinical_leak_test",
+        userId: uid_clerk_student_clinical_leak_test,
         status: "completed",
         startedAt: Date.now() - 10000,
         completedAt: Date.now(),
@@ -393,7 +394,7 @@ describe("AI-3 Step 2: Context Manager Foundation", () => {
       });
     });
 
-    const context = await student.query(api.emotyContext.getAuthoritativeEmotyContext, {
+    const context = await student.query(internal.emotyContext.getAuthoritativeEmotyContext, {
       screen: "companion",
     });
 
@@ -414,15 +415,15 @@ describe("AI-3 Step 2: Context Manager Foundation", () => {
       subject: "clerk_student_counselor_privacy_test",
       issuer: "https://clerk.emotify.com",
     });
+    const uid_clerk_student_counselor_privacy_test = await testUserId(student, "clerk_student_counselor_privacy_test");
 
     await t.run(async (ctx) => {
-      await ctx.db.insert("users", {
-        clerkId: "clerk_student_counselor_privacy_test",
+      await ctx.db.patch(uid_clerk_student_counselor_privacy_test as any, {
         createdAt: Date.now(),
       });
 
       await ctx.db.insert("clinicalTimelines", {
-        userId: "clerk_student_counselor_privacy_test",
+        userId: uid_clerk_student_counselor_privacy_test,
         eventType: "appointment",
         title: "Confidential Clinical Review",
         description: "Confidential private notes between counselor and student",
@@ -430,14 +431,14 @@ describe("AI-3 Step 2: Context Manager Foundation", () => {
       });
 
       await ctx.db.insert("counsellorRequests", {
-        user_id: "clerk_student_counselor_privacy_test",
+        user_id: uid_clerk_student_counselor_privacy_test,
         situation_text: "Private crisis disclosure",
         status: "pending",
         timestamp: Date.now(),
       });
     });
 
-    const context = await student.query(api.emotyContext.getAuthoritativeEmotyContext, {
+    const context = await student.query(internal.emotyContext.getAuthoritativeEmotyContext, {
       screen: "companion",
     });
 
@@ -454,11 +455,11 @@ describe("AI-3 Step 2: Context Manager Foundation", () => {
       subject: "student_A_id",
       issuer: "https://clerk.emotify.com",
     });
+    const uid_student_A_id = await testUserId(studentA, "student_A_id");
 
     await t.run(async (ctx) => {
       // Student A
-      await ctx.db.insert("users", {
-        clerkId: "student_A_id",
+      await ctx.db.patch(uid_student_A_id as any, {
         full_name: "Alice Smith",
         createdAt: Date.now(),
       });
@@ -486,7 +487,7 @@ describe("AI-3 Step 2: Context Manager Foundation", () => {
     });
 
     // Student A queries context with malicious clientContext attempting to access student B
-    const context = await studentA.query(api.emotyContext.getAuthoritativeEmotyContext, {
+    const context = await studentA.query(internal.emotyContext.getAuthoritativeEmotyContext, {
       screen: "companion",
       clientContext: {
         userId: "student_B_id",
@@ -508,10 +509,10 @@ describe("AI-3 Step 2: Context Manager Foundation", () => {
       subject: "clerk_student_full_e2e",
       issuer: "https://clerk.emotify.com",
     });
+    const uid_clerk_student_full_e2e = await testUserId(student, "clerk_student_full_e2e");
 
     await t.run(async (ctx) => {
-      await ctx.db.insert("users", {
-        clerkId: "clerk_student_full_e2e",
+      await ctx.db.patch(uid_clerk_student_full_e2e as any, {
         full_name: "E2E Student",
         age: 21,
         createdAt: Date.now(),

@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { query, mutation } from "./_generated/server";
+import { query, mutation } from "./functions";
 import type { Doc, Id } from "./_generated/dataModel";
 import { sanitizePlainText } from "./sanitizer";
 

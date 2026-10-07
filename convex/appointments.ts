@@ -1,8 +1,8 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { mutation, query } from "./functions";
 import { paginationOptsValidator } from "convex/server";
 import type { Id } from "./_generated/dataModel";
-import { assertCanAccessStudent, getAuthenticatedUser } from "./authz";
+import { assertCanAccessStudent, getAuthenticatedUser, getStaffScope, scopeIncludes, getStaffRecipientsForStudent } from "./authz";
 import { sanitizePlainText } from "./sanitizer";
 
 const TERMINAL_STATUSES = new Set(["completed", "cancelled", "rejected"]);
@@ -10,21 +10,15 @@ const ALLOWED_TARGET_STATUSES = new Set(["accepted", "rejected", "completed", "c
 
 async function notifyStaff(
   ctx: any,
+  studentKey: string,
   type: string,
   title: string,
   message: string
 ) {
-  const counsellors = await ctx.db
-    .query("users")
-    .withIndex("by_role", (q: any) => q.eq("role", "counsellor"))
-    .collect();
-  const admins = await ctx.db
-    .query("users")
-    .withIndex("by_role", (q: any) => q.eq("role", "admin"))
-    .collect();
-  const allStaff = [...counsellors, ...admins];
+  // Admins plus the student's assigned counsellor (all counsellors if unassigned)
+  const recipients = await getStaffRecipientsForStudent(ctx, studentKey);
   const now = Date.now();
-  for (const staff of allStaff) {
+  for (const staff of recipients) {
     await ctx.db.insert("notifications", {
       recipientId: String(staff._id),
       type,
@@ -98,6 +92,7 @@ export const createAppointment = mutation({
     if (caller.role !== "admin" && caller.role !== "counsellor") {
       throw new Error("Unauthorized: Admin access required.");
     }
+    await assertCanAccessStudent(ctx, String(args.userId));
 
     if (args.startTime >= args.endTime) {
       throw new Error("Invalid time range: Start time must be before end time.");
@@ -171,8 +166,8 @@ export const createAppointment = mutation({
 export const listAllAppointments = query({
   args: {},
   handler: async (ctx) => {
-    const caller = await getAuthenticatedUser(ctx);
-    if (!caller || (caller.role !== "admin" && caller.role !== "counsellor")) return [];
+    const scope = await getStaffScope(ctx);
+    if (!scope) return [];
 
     // Limit query to last 7 days of appointments up to future ones, and take max 100
     const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
@@ -183,6 +178,7 @@ export const listAllAppointments = query({
     const results = [];
 
     for (const appt of appointments) {
+      if (!scopeIncludes(scope, String(appt.userId))) continue;
       const patient = await ctx.db.get(appt.userId);
       results.push({
         ...appt,
@@ -250,6 +246,10 @@ export const cancelAppointment = mutation({
       throw new Error("Unauthorized: Cannot cancel another user's appointment.");
     }
 
+    // Counsellors may only act on students in their caseload
+
+    if (isStaff) await assertCanAccessStudent(ctx, String(appt.userId));
+
     await ctx.db.patch(args.appointmentId, {
       status: "cancelled",
     });
@@ -265,6 +265,7 @@ export const cancelAppointment = mutation({
     } else {
       await notifyStaff(
         ctx,
+        String(appt.userId),
         "appointment_cancelled",
         "Appointment Cancelled by Student",
         `${caller.full_name || "A student"} has cancelled their appointment.`
@@ -365,12 +366,13 @@ export const tempGetAppointments = query({
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const caller = await getAuthenticatedUser(ctx);
-    if (!caller || (caller.role !== "admin" && caller.role !== "counsellor")) {
+    const scope = await getStaffScope(ctx);
+    if (!scope) {
       throw new Error("Unauthorized: Staff access required.");
     }
     const maxLimit = Math.min(Math.max(args.limit ?? 50, 1), 200);
-    return await ctx.db.query("appointments").order("desc").take(maxLimit);
+    const rows = await ctx.db.query("appointments").order("desc").take(maxLimit);
+    return rows.filter((a) => scopeIncludes(scope, String(a.userId)));
   }
 });
 
@@ -398,6 +400,9 @@ export const createAppointmentRequest = mutation({
 
     if (args.createdBy === "admin" && !isStaff) {
       throw new Error("Unauthorized: Admin access required.");
+    }
+    if (args.createdBy === "admin") {
+      await assertCanAccessStudent(ctx, String(args.userId));
     }
 
     if (args.createdBy === "user") {
@@ -447,6 +452,7 @@ export const createAppointmentRequest = mutation({
     } else {
       await notifyStaff(
         ctx,
+        String(args.userId),
         "appointment_request",
         "New Appointment Request",
         `${caller.full_name || "A student"} requested an appointment on ${args.date} at ${args.time}.`
@@ -492,6 +498,8 @@ export const updateAppointmentStatus = mutation({
     if (!isCallerStaff && !isStudentOwner) {
       throw new Error("Unauthorized: Cannot access or modify another user's appointment.");
     }
+    // Counsellors may only act on students in their caseload
+    if (isCallerStaff) await assertCanAccessStudent(ctx, String(appt.userId));
 
     // State transition rules:
     if (args.status === "accepted") {
@@ -592,6 +600,7 @@ export const updateAppointmentStatus = mutation({
       } else {
         await notifyStaff(
           ctx,
+          String(appt.userId),
           "appointment_accepted",
           "Appointment Confirmed by Student",
           `${caller.full_name || "Student"} confirmed the appointment on ${appt.date || "scheduled date"} at ${appt.time || "scheduled time"}.`
@@ -609,6 +618,7 @@ export const updateAppointmentStatus = mutation({
       } else {
         await notifyStaff(
           ctx,
+          String(appt.userId),
           "appointment_rejected",
           "Appointment Declined by Student",
           `${caller.full_name || "Student"} declined the appointment. Reason: ${args.rejectionReason}`
@@ -634,6 +644,7 @@ export const updateAppointmentStatus = mutation({
       } else {
         await notifyStaff(
           ctx,
+          String(appt.userId),
           "appointment_cancelled",
           "Appointment Cancelled by Student",
           `${caller.full_name || "A student"} has cancelled their appointment.`
@@ -671,6 +682,10 @@ export const requestReschedule = mutation({
       throw new Error("Unauthorized: Cannot reschedule another user's appointment.");
     }
 
+    // Counsellors may only act on students in their caseload
+
+    if (isStaff) await assertCanAccessStudent(ctx, String(appt.userId));
+
     if (appt.status !== "pending" && appt.status !== "accepted" && appt.status !== "scheduled" && appt.status !== "waiting") {
       throw new Error(`Invalid transition: Cannot reschedule appointment in status ${appt.status}.`);
     }
@@ -693,6 +708,7 @@ export const requestReschedule = mutation({
       } else {
         await notifyStaff(
           ctx,
+          String(appt.userId),
           "appointment_rejected",
           "Reschedule Request Auto-Rejected",
           "A reschedule request was auto-rejected because it was not on the same day."
@@ -722,6 +738,7 @@ export const requestReschedule = mutation({
     } else {
       await notifyStaff(
         ctx,
+        String(appt.userId),
         "appointment_rescheduled",
         "Reschedule Requested by Student",
         `${caller.full_name || "A student"} requested to reschedule to ${args.newDate} at ${args.newTime}.`
@@ -759,6 +776,10 @@ export const completeAppointment = mutation({
     if (!isStaff && !isStudentOwner) {
       throw new Error("Unauthorized: Cannot complete another user's appointment.");
     }
+
+    // Counsellors may only act on students in their caseload
+
+    if (isStaff) await assertCanAccessStudent(ctx, String(appt.userId));
 
     if (appt.status !== "accepted" && appt.status !== "scheduled" && appt.status !== "waiting") {
       throw new Error(`Invalid transition: Cannot complete appointment in status ${appt.status}.`);
@@ -824,6 +845,10 @@ export const getAppointmentByCounsellorRequestId = query({
       throw new Error("Unauthorized to view this appointment.");
     }
 
+    // Counsellors may only act on students in their caseload
+
+    if (isStaff) await assertCanAccessStudent(ctx, String(appt.userId));
+
     return appt;
   },
 });
@@ -831,8 +856,8 @@ export const getAppointmentByCounsellorRequestId = query({
 export const listAllTwoWayAppointments = query({
   args: {},
   handler: async (ctx) => {
-    const caller = await getAuthenticatedUser(ctx);
-    if (!caller || (caller.role !== "admin" && caller.role !== "counsellor")) return [];
+    const scope = await getStaffScope(ctx);
+    if (!scope) return [];
 
     const appointments = await ctx.db
       .query("appointments")
@@ -840,7 +865,7 @@ export const listAllTwoWayAppointments = query({
       .take(200);
 
     return appointments
-      .filter(a => a.date && a.time)
+      .filter(a => a.date && a.time && scopeIncludes(scope, String(a.userId)))
       .sort((a, b) => b.createdAt - a.createdAt);
   },
 });
@@ -848,14 +873,14 @@ export const listAllTwoWayAppointments = query({
 export const listAllTwoWayAppointmentsPaginated = query({
   args: { paginationOpts: paginationOptsValidator },
   handler: async (ctx, args) => {
-    const caller = await getAuthenticatedUser(ctx);
-    if (!caller || (caller.role !== "admin" && caller.role !== "counsellor")) return { page: [], isDone: true, continueCursor: "" };
+    const scope = await getStaffScope(ctx);
+    if (!scope) return { page: [], isDone: true, continueCursor: "" };
 
     const results = await ctx.db.query("appointments")
       .order("desc")
       .paginate(args.paginationOpts);
 
-    const normalizedPage = results.page.map((a) => {
+    const normalizedPage = results.page.filter((a) => scopeIncludes(scope, String(a.userId))).map((a) => {
       let date = a.date;
       let time = a.time;
       if (!date || !time) {

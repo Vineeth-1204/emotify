@@ -19,6 +19,7 @@ import { useLanguage } from "@/context/LanguageContext";
 import { useVoice } from "@/context/VoiceContext";
 import { VoiceSettingsModal } from "@/components/voice/VoiceSettingsModal";
 import { EmotyPreferencesSection } from "@/components/profile/EmotyPreferencesSection";
+import { CRISIS_RESOURCES, HELPLINE_DIAL_URL, EMERGENCY_DIAL_URL } from "@/common/crisisResources";
 
 const { width } = Dimensions.get('window');
 
@@ -187,16 +188,22 @@ export default function ProfileScreen() {
       "If you are experiencing a mental health crisis or emergency, please call a support helpline immediately.",
       [
         {
-          text: "Call 988 (National Helpline)",
-          onPress: () => Linking.openURL("tel:988").catch((err) => console.log("Linking error:", err)),
+          text: `Call ${CRISIS_RESOURCES.helplineName} (${CRISIS_RESOURCES.helplineNumber})`,
+          onPress: () => Linking.openURL(HELPLINE_DIAL_URL).catch((err) => console.log("Linking error:", err)),
         },
         {
-          text: "Call Campus Security",
-          onPress: () => {
-            const num = dbUser?.emergencyContactPhone || "911";
-            Linking.openURL(`tel:${num}`).catch((err) => console.log("Linking error:", err));
-          },
+          text: `Emergency Services (${CRISIS_RESOURCES.emergencyNumber})`,
+          onPress: () => Linking.openURL(EMERGENCY_DIAL_URL).catch((err) => console.log("Linking error:", err)),
         },
+        ...(dbUser?.emergencyContactPhone
+          ? [
+              {
+                text: `Call ${dbUser.emergencyContactName || "Emergency Contact"}`,
+                onPress: () =>
+                  Linking.openURL(`tel:${dbUser.emergencyContactPhone}`).catch((err) => console.log("Linking error:", err)),
+              },
+            ]
+          : []),
         {
           text: "Cancel",
           style: "cancel",

@@ -149,6 +149,9 @@ Emotify-Clerk/
    - Generated audio files are stored in the application's isolated sandboxed cache directory (`FileSystem.cacheDirectory + "emotify_tts/"`).
 4. **Input Validation**:
    - Text inputs sent to TTS are length-capped and sanitized against injections.
+5. **Authentication Tokens**:
+   - Login tokens are RS256 JWTs signed with a private key held only in the Convex environment variable `JWT_PRIVATE_JWK`. No signing key is stored in the repository.
+   - Every token carries a session id (`sid`). Each public Convex function (built via `convex/functions.ts`) only accepts a token whose session still exists and whose user is active, so logout, deactivation, deletion or a newer sign-in revoke it immediately.
 
 ---
 
@@ -188,13 +191,31 @@ npx convex env set ELEVENLABS_API_KEY your_elevenlabs_api_key
 ```
 *(Or add it via Convex Dashboard > Settings > Environment Variables).*
 
-### 4. Start Convex Dev Backend
+### 4. Configure the Authentication Signing Key in Convex
+
+Generate a private signing key and store it only in Convex (never commit it):
+```bash
+node scripts/generate-jwt-key.mjs > /tmp/emotify-jwt.json
+npx convex env set JWT_PRIVATE_JWK "$(cat /tmp/emotify-jwt.json)"
+rm /tmp/emotify-jwt.json
+```
+Use a separate key per deployment (dev / prod). Setting a new key invalidates every existing login, so all students and staff must sign in again.
+
+**One-time cleanup for existing deployments** (after deploying this version): remove legacy plaintext temporary passwords and redact old deleted-student snapshots:
+```bash
+npx convex run users:clearLegacyTempPasswords '{}'
+npx convex run users:redactLegacyTrashEntries '{}'
+```
+
+**Counsellor caseloads:** counsellors can sign in to the staff dashboard and see only the students assigned to them. Create counsellor accounts from *Students → Add User*, then assign each student from the student's detail page. Safety alerts for an unassigned student go to every counsellor and admin.
+
+### 5. Start Convex Dev Backend
 
 ```bash
 npx convex dev
 ```
 
-### 5. Run the Application
+### 6. Run the Application
 
 Start the Expo Metro bundler:
 ```bash

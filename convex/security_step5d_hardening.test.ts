@@ -3,6 +3,7 @@ import { convexTest } from "convex-test";
 import { expect, test, describe } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";
+import { assignAllPatientsToCounsellors } from "../test-utils/identity";
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -59,6 +60,9 @@ describe("P11 Step 5D: Targeted Security & Scalability Hardening", () => {
     const authedB = t.withIdentity({ subject: studentBId });
     const authedCounselor = t.withIdentity({ subject: counselorId });
     const authedAdmin = t.withIdentity({ subject: adminId });
+
+    // Legacy fixtures: counsellors share every student (caseload assignments)
+    await assignAllPatientsToCounsellors(t);
 
     return { t, studentAId, studentBId, counselorId, adminId, authedA, authedB, authedCounselor, authedAdmin };
   }
@@ -180,7 +184,7 @@ describe("P11 Step 5D: Targeted Security & Scalability Hardening", () => {
   // ==========================================
   describe("Student Search Scalability (>100 records)", () => {
     test("SEARCH-01: Finds target student located beyond the first 100 records", async () => {
-      const { t, authedCounselor } = await setupEnvironment();
+      const { t, authedAdmin } = await setupEnvironment();
 
       // Seed 130 patients so that older patients are well beyond the top 100
       await t.run(async (ctx) => {
@@ -200,7 +204,7 @@ describe("P11 Step 5D: Targeted Security & Scalability Hardening", () => {
       });
 
       // 1. Search by full name
-      const searchByName: any = await authedCounselor.query(api.users.listPatients, {
+      const searchByName: any = await authedAdmin.query(api.users.listPatients, {
         search: "Deep Ocean",
         paginate: true,
       });
@@ -208,7 +212,7 @@ describe("P11 Step 5D: Targeted Security & Scalability Hardening", () => {
       expect(searchByName.patients[0].full_name).toBe("Deep Ocean Student");
 
       // 2. Search by student/patient ID
-      const searchById: any = await authedCounselor.query(api.users.listPatients, {
+      const searchById: any = await authedAdmin.query(api.users.listPatients, {
         search: "P-DEEP-999",
         paginate: true,
       });
@@ -216,7 +220,7 @@ describe("P11 Step 5D: Targeted Security & Scalability Hardening", () => {
       expect(searchById.patients[0].patientId).toBe("P-DEEP-999");
 
       // 3. Search by mobile number
-      const searchByPhone: any = await authedCounselor.query(api.users.listPatients, {
+      const searchByPhone: any = await authedAdmin.query(api.users.listPatients, {
         search: "9988776655",
         paginate: true,
       });
@@ -224,14 +228,14 @@ describe("P11 Step 5D: Targeted Security & Scalability Hardening", () => {
       expect(searchByPhone.patients[0].mobile_number).toBe("9988776655");
 
       // 4. No-result search
-      const noResults: any = await authedCounselor.query(api.users.listPatients, {
+      const noResults: any = await authedAdmin.query(api.users.listPatients, {
         search: "NonexistentStudentXYZ",
         paginate: true,
       });
       expect(noResults.patients.length).toBe(0);
 
       // 5. Unfiltered normal cursor pagination works cleanly
-      const page1: any = await authedCounselor.query(api.users.listPatients, {
+      const page1: any = await authedAdmin.query(api.users.listPatients, {
         limit: 20,
         paginate: true,
       });
@@ -239,7 +243,7 @@ describe("P11 Step 5D: Targeted Security & Scalability Hardening", () => {
       expect(page1.nextCursor).not.toBeNull();
 
       // Page 2
-      const page2: any = await authedCounselor.query(api.users.listPatients, {
+      const page2: any = await authedAdmin.query(api.users.listPatients, {
         cursor: page1.nextCursor,
         limit: 20,
         paginate: true,
@@ -253,7 +257,7 @@ describe("P11 Step 5D: Targeted Security & Scalability Hardening", () => {
     });
 
     test("SEARCH-02: searchPatientSelector also finds students beyond first 100", async () => {
-      const { t, authedCounselor } = await setupEnvironment();
+      const { t, authedAdmin } = await setupEnvironment();
 
       await t.run(async (ctx) => {
         const baseTime = 1700100000000;
@@ -271,7 +275,7 @@ describe("P11 Step 5D: Targeted Security & Scalability Hardening", () => {
         }
       });
 
-      const results = await authedCounselor.query(api.users.searchPatientSelector, {
+      const results = await authedAdmin.query(api.users.searchPatientSelector, {
         search: "Selector Target",
         limit: 10,
       });
@@ -319,10 +323,10 @@ describe("P11 Step 5D: Targeted Security & Scalability Hardening", () => {
       expect(staffAlerts[1].patientName).toBe("Student Alpha");
     });
 
-    test("ALERTS-02: Bounded retrieval handles large alert volume without error", async () => {
+    test("ALERTS-02: Every open alert is returned (no truncation) while closed history stays bounded", async () => {
       const { t, studentAId, authedCounselor } = await setupEnvironment();
 
-      // Insert 180 alerts (greater than the 150 bound)
+      // 180 open alerts (more than the old 150 cap) and 150 resolved ones
       await t.run(async (ctx) => {
         for (let i = 1; i <= 180; i++) {
           await ctx.db.insert("alerts", {
@@ -332,12 +336,20 @@ describe("P11 Step 5D: Targeted Security & Scalability Hardening", () => {
             createdAt: 1700000100000 + i * 1000,
           });
         }
+        for (let i = 1; i <= 150; i++) {
+          await ctx.db.insert("alerts", {
+            userId: studentAId,
+            type: "deterioration",
+            status: "resolved",
+            createdAt: 1600000100000 + i * 1000,
+          });
+        }
       });
 
       const staffAlerts = await authedCounselor.query(api.dashboard.getAlerts, {});
-      // Bounded take(150) prevents unbounded memory runaway
-      expect(staffAlerts.length).toBeLessThanOrEqual(150);
-      expect(staffAlerts.length).toBeGreaterThan(0);
+      // Open alerts are never hidden; resolved history is capped at 100
+      expect(staffAlerts.filter((a: any) => a.status === "active")).toHaveLength(180);
+      expect(staffAlerts.filter((a: any) => a.status === "resolved").length).toBeLessThanOrEqual(100);
       // Must be descending by createdAt
       for (let i = 0; i < staffAlerts.length - 1; i++) {
         expect(staffAlerts[i].createdAt).toBeGreaterThanOrEqual(staffAlerts[i + 1].createdAt);

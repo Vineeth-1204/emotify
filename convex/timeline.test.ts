@@ -1,8 +1,9 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { expect, test, describe } from "vitest";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import schema from "./schema";
+import { assignAllPatientsToCounsellors } from "../test-utils/identity";
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -71,6 +72,9 @@ describe("Priority 4 Step 5A: Clinical Timeline Backend Suite (TIMELINE-01 to TI
         updated_at: Date.now(),
       });
     });
+
+    // Legacy fixtures: counsellors share every student (caseload assignments)
+    await assignAllPatientsToCounsellors(t);
 
     return { t, studentAId, studentBId, counselorId, adminId };
   }
@@ -260,7 +264,7 @@ describe("Priority 4 Step 5A: Clinical Timeline Backend Suite (TIMELINE-01 to TI
     const { t, studentAId } = await setupTimelineEnvironment();
     const authedA = t.withIdentity({ subject: studentAId });
 
-    const alertId = await authedA.mutation(api.alerts.createAlert, {
+    const alertId = await authedA.mutation(internal.alerts.createAlert, {
       type: "manual_sos",
     });
 

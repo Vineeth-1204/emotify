@@ -13,6 +13,7 @@ import {
   BarChart, Bar, Cell
 } from "recharts";
 import { ClinicalTimelineView } from "../components/ClinicalTimelineView";
+import CaseloadAssignment from "../components/CaseloadAssignment";
 
 /* ─── Avatar helper (same as PatientsList) ────────────────────── */
 function Avatar({ name, size = 44 }: { name: string; size?: number }) {
@@ -444,6 +445,8 @@ export default function PatientDetail() {
             )}
           </div>
         </div>
+
+        {patient._id && <CaseloadAssignment studentId={patient._id} />}
 
         {/* Stats Strip */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, background: "#f8fafc", padding: "12px 16px", borderRadius: 12, border: "1px solid var(--border-color)" }}>

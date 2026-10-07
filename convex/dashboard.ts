@@ -1,4 +1,4 @@
-import { query, mutation } from "./_generated/server";
+import { query, mutation } from "./functions";
 import { Id } from "./_generated/dataModel";
 import { v } from "convex/values";
 import {
@@ -6,6 +6,9 @@ import {
   requireAdmin,
   requireCounselorOrAdmin,
   assertCanAccessStudent,
+  getStaffScope,
+  scopeIncludes,
+  type StaffScope,
 } from "./authz";
 import { sanitizePlainText } from "./sanitizer";
 
@@ -26,16 +29,29 @@ async function getPatientName(ctx: any, userId: string): Promise<string> {
   return user ? (user.full_name || user.alias || "Unknown Patient") : "Unknown Patient";
 }
 
+/** Patients visible to the caller: every patient for admins, the caseload for counsellors. */
+async function getScopedPatients(ctx: any, scope: StaffScope): Promise<any[]> {
+  if (scope.studentIds === null) {
+    return await ctx.db
+      .query("users")
+      .withIndex("by_role", (q: any) => q.eq("role", "patient"))
+      .collect();
+  }
+  const patients = [];
+  for (const id of scope.studentIds) {
+    const p = await ctx.db.get(id as Id<"users">);
+    if (p) patients.push(p);
+  }
+  return patients;
+}
+
 export const getDashboardOverview = query({
   args: {},
   handler: async (ctx) => {
-    const caller = await getAuthenticatedUser(ctx);
-    if (!caller || (caller.role !== "admin" && caller.role !== "counsellor")) return null;
+    const scope = await getStaffScope(ctx);
+    if (!scope) return null;
 
-    const patients = await ctx.db
-      .query("users")
-      .withIndex("by_role", (q) => q.eq("role", "patient"))
-      .collect();
+    const patients = await getScopedPatients(ctx, scope);
 
     // Map all valid patient identifiers to canonical patient document ID (_id)
     const patientIdMap = new Map<string, string>();
@@ -85,7 +101,9 @@ export const getDashboardOverview = query({
       .withIndex("by_status", (q) => q.eq("status", "active"))
       .collect();
 
-    const totalActiveAlerts = [...pendingAlerts, ...escalatedAlerts, ...activeAlerts];
+    const totalActiveAlerts = [...pendingAlerts, ...escalatedAlerts, ...activeAlerts].filter((a) =>
+      scopeIncludes(scope, a.userId)
+    );
 
     const latestTriagesList = Object.values(latestTriageByPatient);
     const severeCases = latestTriagesList.filter(
@@ -241,8 +259,23 @@ export const getAlerts = query({
         }));
     }
 
-    // Staff path: Institution-wide clinical alerts (Bounded retrieval to prevent full-table scans)
-    const dbAlerts = await ctx.db.query("alerts").order("desc").take(150);
+    // Staff path: EVERY open alert (never truncated) plus a bounded window of recently closed ones.
+    const OPEN_ALERT_STATUSES = ["pending", "escalated", "active", "acknowledged"];
+    const openAlerts: any[] = [];
+    for (const status of OPEN_ALERT_STATUSES) {
+      openAlerts.push(
+        ...(await ctx.db.query("alerts").withIndex("by_status", (q) => q.eq("status", status)).collect())
+      );
+    }
+    const recentClosed = await ctx.db
+      .query("alerts")
+      .withIndex("by_status", (q) => q.eq("status", "resolved"))
+      .order("desc")
+      .take(100);
+    const staffScope = (await getStaffScope(ctx))!;
+    const dbAlerts = [...openAlerts, ...recentClosed]
+      .filter((a) => scopeIncludes(staffScope, a.userId))
+      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 
     // Patient lookup cache to avoid full-table scans of users
     const patientCache = new Map<string, any>();
@@ -271,7 +304,7 @@ export const getAlerts = query({
     const recentTriages = await ctx.db.query("triages").order("desc").take(100);
     const latestTriageByPatient: Record<string, any> = {};
     for (const t of recentTriages) {
-      if (t.userId) {
+      if (t.userId && scopeIncludes(staffScope, t.userId)) {
         const patient = await resolvePatient(t.userId.toString());
         if (patient) {
           const canonicalId = patient._id.toString();
@@ -400,10 +433,13 @@ export const getActivityFeed = query({
         }
       }
     } else {
-      // Staff: Institutional feed
-      alerts = await ctx.db.query("alerts").order("desc").take(15);
-      emotionLogs = await ctx.db.query("emotionLogs").order("desc").take(15);
-      microGoals = await ctx.db.query("microGoals").order("desc").take(15);
+      // Staff: institutional feed (admins) or caseload feed (counsellors)
+      const feedScope = (await getStaffScope(ctx))!;
+      const inScope = (row: any) => scopeIncludes(feedScope, row.userId);
+      const window = feedScope.studentKeys === null ? 15 : 200;
+      alerts = (await ctx.db.query("alerts").order("desc").take(window)).filter(inScope).slice(0, 15);
+      emotionLogs = (await ctx.db.query("emotionLogs").order("desc").take(window)).filter(inScope).slice(0, 15);
+      microGoals = (await ctx.db.query("microGoals").order("desc").take(window)).filter(inScope).slice(0, 15);
     }
 
     const feed = [];
@@ -462,6 +498,7 @@ export const updateAlertStatus = mutation({
 
     const alert = await ctx.db.get(args.alertId);
     if (!alert) throw new Error("Alert not found");
+    await assertCanAccessStudent(ctx, alert.userId);
 
     // EMOT-PERF-02: Idempotent status update - avoid redundant write
     if (alert.status === args.status) {
@@ -806,8 +843,8 @@ export const listAllCbtSessions = query({
     paginate: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    const caller = await getAuthenticatedUser(ctx);
-    if (!caller || (caller.role !== "admin" && caller.role !== "counsellor")) {
+    const scope = await getStaffScope(ctx);
+    if (!scope) {
       return ((args.cursor !== undefined || args.paginate === true)
         ? { sessions: [], nextCursor: null }
         : []) as any as PaginatedCbtResult;
@@ -821,13 +858,36 @@ export const listAllCbtSessions = query({
     }
 
     const fetchBatchSize = Math.max(effectiveLimit * 3, 60);
-    const sessions = await ctx.db
-      .query("cbtSessions")
-      .withIndex("by_timestamp", (q) =>
-        cursorObj ? q.lte("timestamp", cursorObj.timestamp) : q
-      )
-      .order("desc")
-      .take(fetchBatchSize);
+    let sessions: any[];
+    if (scope.studentKeys === null) {
+      sessions = await ctx.db
+        .query("cbtSessions")
+        .withIndex("by_timestamp", (q) =>
+          cursorObj ? q.lte("timestamp", cursorObj.timestamp) : q
+        )
+        .order("desc")
+        .take(fetchBatchSize);
+    } else {
+      // Counsellor: only sessions of students in the caseload
+      sessions = [];
+      for (const key of scope.studentKeys) {
+        sessions.push(
+          ...(await ctx.db
+            .query("cbtSessions")
+            .withIndex("by_userId_and_timestamp", (q) =>
+              cursorObj ? q.eq("userId", key).lte("timestamp", cursorObj.timestamp) : q.eq("userId", key)
+            )
+            .order("desc")
+            .take(fetchBatchSize))
+        );
+      }
+    }
+    sessions.sort((a, b) => {
+      const tA = a.timestamp ?? a._creationTime;
+      const tB = b.timestamp ?? b._creationTime;
+      if (tB !== tA) return tB - tA;
+      return String(b._id).localeCompare(String(a._id));
+    });
 
     // Compound deterministic ordering: timestamp DESC, _id DESC
     const eligible = [];
@@ -880,8 +940,8 @@ export const getCounsellorRequests = query({
     paginate: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    const caller = await getAuthenticatedUser(ctx);
-    if (!caller || (caller.role !== "admin" && caller.role !== "counsellor")) {
+    const scope = await getStaffScope(ctx);
+    if (!scope) {
       return ((args.cursor !== undefined || args.paginate === true)
         ? { requests: [], nextCursor: null }
         : []) as any as PaginatedRequestsResult;
@@ -895,13 +955,32 @@ export const getCounsellorRequests = query({
     }
 
     const fetchBatchSize = Math.max(effectiveLimit * 3, 75);
-    const requests = await ctx.db
-      .query("counsellorRequests")
-      .withIndex("by_timestamp", (q) =>
-        cursorObj ? q.lte("timestamp", cursorObj.timestamp) : q
-      )
-      .order("desc")
-      .take(fetchBatchSize);
+    let requests: any[];
+    if (scope.studentKeys === null) {
+      requests = await ctx.db
+        .query("counsellorRequests")
+        .withIndex("by_timestamp", (q) =>
+          cursorObj ? q.lte("timestamp", cursorObj.timestamp) : q
+        )
+        .order("desc")
+        .take(fetchBatchSize);
+    } else {
+      // Counsellor: only requests from students in the caseload
+      requests = [];
+      for (const key of scope.studentKeys) {
+        const rows = await ctx.db
+          .query("counsellorRequests")
+          .withIndex("by_user_id", (q) => q.eq("user_id", key))
+          .collect();
+        requests.push(...rows.filter((r) => !cursorObj || (r.timestamp ?? r._creationTime) <= cursorObj.timestamp));
+      }
+      requests.sort((a, b) => {
+        const tA = a.timestamp ?? a._creationTime;
+        const tB = b.timestamp ?? b._creationTime;
+        if (tB !== tA) return tB - tA;
+        return String(b._id).localeCompare(String(a._id));
+      });
+    }
 
     // Compound deterministic ordering: timestamp DESC, _id DESC
     const eligible = [];
@@ -1107,6 +1186,7 @@ export const addTimelineEvent = mutation({
   },
   handler: async (ctx, args) => {
     const staff = await requireCounselorOrAdmin(ctx);
+    await assertCanAccessStudent(ctx, args.userId);
 
     return await ctx.db.insert("clinicalTimelines", {
       userId: args.userId,
@@ -1124,10 +1204,12 @@ export const addTimelineEvent = mutation({
 export const getAiMonitoringLogs = query({
   args: {},
   handler: async (ctx) => {
-    const caller = await getAuthenticatedUser(ctx);
-    if (!caller || (caller.role !== "admin" && caller.role !== "counsellor")) return [];
+    const scope = await getStaffScope(ctx);
+    if (!scope) return [];
 
-    const logs = await ctx.db.query("aiMonitoringLogs").order("desc").take(100);
+    const logs = (await ctx.db.query("aiMonitoringLogs").order("desc").take(scope.studentKeys === null ? 100 : 500))
+      .filter((log) => scopeIncludes(scope, log.userId))
+      .slice(0, 100);
     const results = [];
     for (const log of logs) {
       const patientName = await getPatientName(ctx, log.userId);
@@ -1231,13 +1313,10 @@ export const markNotificationRead = mutation({
 export const getEnterpriseAnalytics = query({
   args: {},
   handler: async (ctx) => {
-    const caller = await getAuthenticatedUser(ctx);
-    if (!caller || (caller.role !== "admin" && caller.role !== "counsellor")) return null;
+    const scope = await getStaffScope(ctx);
+    if (!scope) return null;
 
-    const patients = await ctx.db
-      .query("users")
-      .withIndex("by_role", (q) => q.eq("role", "patient"))
-      .collect();
+    const patients = await getScopedPatients(ctx, scope);
 
     const patientIdMap = new Map<string, string>();
     for (const p of patients) {
@@ -1325,8 +1404,12 @@ export const getEnterpriseAnalytics = query({
     const avgPhq = count > 0 ? (totalPhq / count).toFixed(1) : "0";
     const avgGad = count > 0 ? (totalGad / count).toFixed(1) : "0";
 
-    const sessions = await ctx.db.query("cbtSessions").order("desc").take(500);
-    const emotionLogs = await ctx.db.query("emotionLogs").order("desc").take(500);
+    const sessions = (await ctx.db.query("cbtSessions").order("desc").take(500)).filter((x) =>
+      scopeIncludes(scope, x.userId)
+    );
+    const emotionLogs = (await ctx.db.query("emotionLogs").order("desc").take(500)).filter((x) =>
+      scopeIncludes(scope, x.userId)
+    );
 
     return {
       totalPatients: patients.length,
@@ -1363,21 +1446,9 @@ export const restoreTrashItem = mutation({
     const item = await ctx.db.get(args.trashId);
     if (!item) return;
 
-    if (item.itemType === "patient" && item.deletedData) {
-      try {
-        const parsed = JSON.parse(item.deletedData);
-        if (parsed.user) {
-          const { _id, _creationTime, ...userData } = parsed.user;
-          // Re-insert user back into DB
-          await ctx.db.insert("users", {
-            ...userData,
-            status: "active",
-            updated_at: Date.now(),
-          });
-        }
-      } catch (e) {
-        console.error("Failed to restore user data from trash:", e);
-      }
+    if (item.itemType === "patient") {
+      // Student deletions purge all clinical data and credentials; they cannot be undone.
+      throw new Error("Deleted student accounts are permanently erased and cannot be restored.");
     }
 
     await ctx.db.delete(args.trashId);

@@ -21,6 +21,7 @@ import * as SecureStore from "expo-secure-store";
 import { useAvatar } from "@/context/AvatarContext";
 import { useLanguage } from "@/context/LanguageContext";
 import { EmotyAvatar } from "@/components/avatar/EmotyAvatar";
+import { HELPLINE_DIAL_URL } from "@/common/crisisResources";
 import { resolveAvatarPresentationState } from "@/common/avatarPresentation";
 import { CalmPointToken, PlantProgress } from "@/components/svg/system";
 import { HappyEmotionIcon, CalmEmotionIcon, SadEmotionIcon, WorriedEmotionIcon } from "@/components/svg/emotions";
@@ -668,7 +669,7 @@ export default function DashboardScreen() {
             <View style={styles.safetyActionsRow}>
               <TouchableOpacity
                 style={styles.safetyActionBtnPrimary}
-                onPress={() => Linking.openURL("tel:988")}
+                onPress={() => Linking.openURL(HELPLINE_DIAL_URL)}
                 accessibilityRole="button"
                 accessibilityLabel={t("home.helplineCallAction")}
                 activeOpacity={0.85}

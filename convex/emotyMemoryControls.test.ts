@@ -1,8 +1,9 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { expect, test, describe } from "vitest";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import schema from "./schema";
+import { testUserId } from "../test-utils/identity";
 import {
   USER_FACING_PREFERENCE_CATEGORIES,
   getBoundedUserMemoriesForContext,
@@ -21,8 +22,9 @@ describe("AI-3 Step 8: User Memory & Preference Controls (PREF-01 to PREF-16)", 
 
   test("PREF-01: Authenticated user can retrieve own preferences", async () => {
     const t = convexTest(schema, modules);
-    const userId = "student_pref_01";
+    let userId = "student_pref_01";
     const asStudent = t.withIdentity({ subject: userId });
+    userId = await testUserId(asStudent, "student_pref_01");
 
     await asStudent.mutation(api.emotyMemory.recordUserPreference, {
       category: "communication_preference",
@@ -46,8 +48,9 @@ describe("AI-3 Step 8: User Memory & Preference Controls (PREF-01 to PREF-16)", 
 
   test("PREF-02: User sees only active preferences", async () => {
     const t = convexTest(schema, modules);
-    const userId = "student_pref_02";
+    let userId = "student_pref_02";
     const asStudent = t.withIdentity({ subject: userId });
+    userId = await testUserId(asStudent, "student_pref_02");
 
     const id1 = await asStudent.mutation(api.emotyMemory.recordUserPreference, {
       category: "communication_preference",
@@ -74,8 +77,9 @@ describe("AI-3 Step 8: User Memory & Preference Controls (PREF-01 to PREF-16)", 
 
   test("PREF-03: User can deactivate one preference", async () => {
     const t = convexTest(schema, modules);
-    const userId = "student_pref_03";
+    let userId = "student_pref_03";
     const asStudent = t.withIdentity({ subject: userId });
+    userId = await testUserId(asStudent, "student_pref_03");
 
     const memId = await asStudent.mutation(api.emotyMemory.recordUserPreference, {
       category: "goal_preference",
@@ -98,8 +102,9 @@ describe("AI-3 Step 8: User Memory & Preference Controls (PREF-01 to PREF-16)", 
 
   test("PREF-04: Deactivated preference disappears from active context", async () => {
     const t = convexTest(schema, modules);
-    const userId = "student_pref_04";
+    let userId = "student_pref_04";
     const asStudent = t.withIdentity({ subject: userId });
+    userId = await testUserId(asStudent, "student_pref_04");
 
     const memId = await asStudent.mutation(api.emotyMemory.recordUserPreference, {
       category: "support_preference",
@@ -131,8 +136,9 @@ describe("AI-3 Step 8: User Memory & Preference Controls (PREF-01 to PREF-16)", 
 
   test("PREF-05: User can clear all Emoty preferences", async () => {
     const t = convexTest(schema, modules);
-    const userId = "student_pref_05";
+    let userId = "student_pref_05";
     const asStudent = t.withIdentity({ subject: userId });
+    userId = await testUserId(asStudent, "student_pref_05");
 
     await asStudent.mutation(api.emotyMemory.recordUserPreference, {
       category: "communication_preference",
@@ -162,8 +168,9 @@ describe("AI-3 Step 8: User Memory & Preference Controls (PREF-01 to PREF-16)", 
 
   test("PREF-06: Clear-all does not affect clinical tables (triages & alerts)", async () => {
     const t = convexTest(schema, modules);
-    const userId = "student_pref_06";
+    let userId = "student_pref_06";
     const asStudent = t.withIdentity({ subject: userId });
+    userId = await testUserId(asStudent, "student_pref_06");
 
     // Seed clinical records
     const triageId = await t.run(async (ctx) => {
@@ -211,8 +218,9 @@ describe("AI-3 Step 8: User Memory & Preference Controls (PREF-01 to PREF-16)", 
 
   test("PREF-07: Clear-all does not affect screening data", async () => {
     const t = convexTest(schema, modules);
-    const userId = "student_pref_07";
+    let userId = "student_pref_07";
     const asStudent = t.withIdentity({ subject: userId });
+    userId = await testUserId(asStudent, "student_pref_07");
 
     // Seed screening attempt in screenings table
     const screeningId = await t.run(async (ctx) => {
@@ -245,8 +253,9 @@ describe("AI-3 Step 8: User Memory & Preference Controls (PREF-01 to PREF-16)", 
 
   test("PREF-08: Clear-all does not affect counselor data", async () => {
     const t = convexTest(schema, modules);
-    const userId = "student_pref_08";
+    let userId = "student_pref_08";
     const asStudent = t.withIdentity({ subject: userId });
+    userId = await testUserId(asStudent, "student_pref_08");
 
     // Seed counselor request
     const counselorRequestId = await t.run(async (ctx) => {
@@ -280,11 +289,13 @@ describe("AI-3 Step 8: User Memory & Preference Controls (PREF-01 to PREF-16)", 
 
   test("PREF-09: Cross-user preference access is rejected", async () => {
     const t = convexTest(schema, modules);
-    const userA = "student_pref_09_A";
-    const userB = "student_pref_09_B";
+    let userA = "student_pref_09_A";
+    let userB = "student_pref_09_B";
 
     const asUserA = t.withIdentity({ subject: userA });
+    userA = await testUserId(asUserA, "student_pref_09_A");
     const asUserB = t.withIdentity({ subject: userB });
+    userB = await testUserId(asUserB, "student_pref_09_B");
 
     const memIdA = await asUserA.mutation(api.emotyMemory.recordUserPreference, {
       category: "communication_preference",
@@ -334,8 +345,9 @@ describe("AI-3 Step 8: User Memory & Preference Controls (PREF-01 to PREF-16)", 
 
   test("PREF-11: Only frozen memory categories are exposed", async () => {
     const t = convexTest(schema, modules);
-    const userId = "student_pref_11";
+    let userId = "student_pref_11";
     const asStudent = t.withIdentity({ subject: userId });
+    userId = await testUserId(asStudent, "student_pref_11");
 
     // Verify allowed categories allowlist
     expect(USER_FACING_PREFERENCE_CATEGORIES).toEqual([
@@ -377,8 +389,9 @@ describe("AI-3 Step 8: User Memory & Preference Controls (PREF-01 to PREF-16)", 
 
   test("PREF-12: Arbitrary category/key cannot be created from UI", async () => {
     const t = convexTest(schema, modules);
-    const userId = "student_pref_12";
+    let userId = "student_pref_12";
     const asStudent = t.withIdentity({ subject: userId });
+    userId = await testUserId(asStudent, "student_pref_12");
 
     // Arbitrary category rejected
     await expect(
@@ -410,8 +423,9 @@ describe("AI-3 Step 8: User Memory & Preference Controls (PREF-01 to PREF-16)", 
 
   test("PREF-13: Updating a preference uses the existing deduplication behavior", async () => {
     const t = convexTest(schema, modules);
-    const userId = "student_pref_13";
+    let userId = "student_pref_13";
     const asStudent = t.withIdentity({ subject: userId });
+    userId = await testUserId(asStudent, "student_pref_13");
 
     // Initial preference
     await asStudent.mutation(api.emotyMemory.recordUserPreference, {
@@ -443,8 +457,9 @@ describe("AI-3 Step 8: User Memory & Preference Controls (PREF-01 to PREF-16)", 
 
   test("PREF-14: Removed preference is no longer injected into Context Manager", async () => {
     const t = convexTest(schema, modules);
-    const userId = "student_pref_14";
+    let userId = "student_pref_14";
     const asStudent = t.withIdentity({ subject: userId });
+    userId = await testUserId(asStudent, "student_pref_14");
 
     const memId = await asStudent.mutation(api.emotyMemory.recordUserPreference, {
       category: "communication_preference",
@@ -453,7 +468,7 @@ describe("AI-3 Step 8: User Memory & Preference Controls (PREF-01 to PREF-16)", 
     });
 
     // Check prompt format before removal
-    const ctxBefore = await asStudent.query(api.emotyContext.getAuthoritativeEmotyContext, {});
+    const ctxBefore = await asStudent.query(internal.emotyContext.getAuthoritativeEmotyContext, {});
     const promptBefore = formatEmotyContextPrompt(ctxBefore, "Hello", "Base instructions");
     expect(promptBefore.prompt).toContain("response_length): concise");
     expect(ctxBefore.memory?.preferences.some((p) => p.key === "response_length" && p.value === "concise")).toBe(true);
@@ -462,7 +477,7 @@ describe("AI-3 Step 8: User Memory & Preference Controls (PREF-01 to PREF-16)", 
     await asStudent.mutation(api.emotyMemory.deleteUserMemory, { memoryId: memId });
 
     // Check prompt format after removal
-    const ctxAfter = await asStudent.query(api.emotyContext.getAuthoritativeEmotyContext, {});
+    const ctxAfter = await asStudent.query(internal.emotyContext.getAuthoritativeEmotyContext, {});
     const promptAfter = formatEmotyContextPrompt(ctxAfter, "Hello", "Base instructions");
     expect(promptAfter.prompt).not.toContain("response_length): concise");
     expect(ctxAfter.memory?.preferences?.some((p) => p.key === "response_length") || false).toBe(false);

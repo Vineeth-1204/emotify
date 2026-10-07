@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { query } from "./_generated/server";
+import { query } from "./functions";
 import type { Id } from "./_generated/dataModel";
 import { assertCanAccessStudent } from "./authz";
 
@@ -746,6 +746,29 @@ export const getStudentClinicalTimeline = query({
           alertStatus: a.status,
         },
       });
+
+      // 4a-ii. Student closed the emergency safety screen while this alert was open
+      if (a.studentDismissedAt) {
+        events.push({
+          id: `alerts_${a._id}_dismissed`,
+          studentId: canonicalUserId,
+          category: "safety",
+          eventType: "emergency_screen_dismissed",
+          occurredAt: a.studentDismissedAt,
+          sourceTable: "alerts",
+          sourceId: String(a._id),
+          title: "Student Closed Emergency Screen",
+          summary: `Student dismissed the safety screen ${a.studentDismissCount ?? 1} time(s) while this alert was open.`,
+          severity: isCritical ? "critical" : "severe",
+          status: a.status,
+          provenance: {
+            alertId: String(a._id),
+            triageId: a.triageId ? String(a.triageId) : undefined,
+            attemptId: a.attemptId ? String(a.attemptId) : undefined,
+          },
+          metadata: { dismissCount: a.studentDismissCount ?? 1 },
+        });
+      }
 
       // 4b. Alert acknowledged event (only if acknowledgedAt actually exists)
       if (a.acknowledgedAt) {

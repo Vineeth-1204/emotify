@@ -1,7 +1,8 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { mutation, query } from "./functions";
 import { checkRateLimit } from "./rateLimiter";
-import { assertCanAccessStudent, getAuthenticatedUser } from "./authz";
+import { assertCanAccessStudent, getAuthenticatedUser, getStaffScope, getStaffRecipientsForStudent } from "./authz";
+import type { Doc } from "./_generated/dataModel";
 import { sanitizePlainText } from "./sanitizer";
 
 export const create = mutation({
@@ -32,6 +33,7 @@ export const create = mutation({
       if (!isStaff) {
         throw new Error("Unauthorized: Cannot create follow-up for another user.");
       }
+      await assertCanAccessStudent(ctx, args.userId);
       targetUserId = args.userId;
     } else {
       targetUserId = caller ? String(caller._id) : identity.subject;
@@ -101,7 +103,8 @@ export const create = mutation({
       dueDate: args.dueDate,
       completed: false,
       status: "pending",
-      sourceType: args.sourceType || (args.appointmentId ? "appointment" : "counselor"),
+      // Students can only create self-initiated follow-ups; clinical ones are staff-created.
+      sourceType: isStaff ? args.sourceType || (args.appointmentId ? "appointment" : "counselor") : "self_initiated",
       attemptId: args.attemptId,
       triageId: args.triageId,
       appointmentId: args.appointmentId,
@@ -245,6 +248,10 @@ export const getFollowUpById = query({
     if (!isStaff && !isOwner) {
       throw new Error("Unauthorized: Cannot view another student's follow-up.");
     }
+    if (isStaff) {
+      // Counsellors may only act on students in their caseload
+      await assertCanAccessStudent(ctx, followUp.userId);
+    }
 
     if (!isStaff) {
       const { notes, completedBy, ...safe } = followUp;
@@ -260,15 +267,24 @@ export const listAllFollowUps = query({
     statusFilter: v.optional(v.string()), // "all" | "pending" | "completed"
   },
   handler: async (ctx, args) => {
-    const caller = await getAuthenticatedUser(ctx);
-    if (!caller || (caller.role !== "admin" && caller.role !== "counsellor")) {
+    const scope = await getStaffScope(ctx);
+    if (!scope) {
       return [];
     }
 
-    const followUps = await ctx.db
-      .query("followUps")
-      .order("desc")
-      .take(100);
+    let followUps: Doc<"followUps">[];
+    if (scope.studentKeys === null) {
+      followUps = await ctx.db.query("followUps").order("desc").take(100);
+    } else {
+      // Counsellor: follow-ups of students in the caseload
+      followUps = [];
+      for (const key of scope.studentKeys) {
+        followUps.push(
+          ...(await ctx.db.query("followUps").withIndex("by_userId", (q) => q.eq("userId", key)).collect())
+        );
+      }
+      followUps.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+    }
 
     const results = [];
     for (const f of followUps) {
@@ -322,6 +338,7 @@ export const update = mutation({
 
     const followUp = await ctx.db.get(args.id);
     if (!followUp) throw new Error("Follow-up not found");
+    await assertCanAccessStudent(ctx, followUp.userId);
 
     if (followUp.completed) {
       throw new Error("Cannot update a completed follow-up.");
@@ -365,6 +382,15 @@ export const markComplete = mutation({
     if (!isStaff && !isOwner) {
       throw new Error("Unauthorized: Cannot complete follow-up for another user.");
     }
+    if (isStaff) {
+      // Counsellors may only act on students in their caseload
+      await assertCanAccessStudent(ctx, followUp.userId);
+    }
+
+    // Clinical follow-ups (screening, triage, counsellor, appointment) can only be closed by staff.
+    if (!isStaff && followUp.sourceType !== "self_initiated") {
+      throw new Error("Unauthorized: Clinical follow-ups can only be completed by a counsellor.");
+    }
 
     const now = Date.now();
     await ctx.db.patch(args.id, {
@@ -387,15 +413,7 @@ export const markComplete = mutation({
         createdAt: now,
       });
     } else {
-      const counsellors = await ctx.db
-        .query("users")
-        .withIndex("by_role", (q) => q.eq("role", "counsellor"))
-        .collect();
-      const admins = await ctx.db
-        .query("users")
-        .withIndex("by_role", (q) => q.eq("role", "admin"))
-        .collect();
-      const staff = [...counsellors, ...admins];
+      const staff = await getStaffRecipientsForStudent(ctx, followUp.userId);
       for (const s of staff) {
         await ctx.db.insert("notifications", {
           recipientId: String(s._id),
@@ -432,6 +450,10 @@ export const getFollowUpsByAppointmentId = query({
     if (!isStaff && !isOwner) {
       throw new Error("Unauthorized to view follow-ups for this appointment.");
     }
+    if (isStaff) {
+      // Counsellors may only act on students in their caseload
+      await assertCanAccessStudent(ctx, String(appt.userId));
+    }
 
     const followUps = await ctx.db
       .query("followUps")
@@ -446,7 +468,28 @@ export const getFollowUpsByAppointmentId = query({
   },
 });
 
-/** Schedule follow-up based on triage level with causal provenance */
+/** Days until a screening review is due, by triage level. */
+export function followUpIntervalMs(level: string): number {
+  const DAY = 24 * 60 * 60 * 1000;
+  switch (level) {
+    case "mild":
+      return 30 * DAY;
+    case "moderate":
+      return 7 * DAY;
+    case "severe":
+    case "suicide_flag":
+    case "psychosis_flag":
+      return 2 * DAY;
+    default:
+      return 14 * DAY;
+  }
+}
+
+/**
+ * Staff: schedule a screening-review follow-up with causal provenance.
+ * (Follow-ups after a student's own screening are created inside
+ * screening.submitScreeningAttempt, atomically with the attempt.)
+ */
 export const scheduleFollowUp = mutation({
   args: {
     userId: v.optional(v.string()),
@@ -460,10 +503,15 @@ export const scheduleFollowUp = mutation({
     if (!identity) throw new Error("Unauthenticated: Login required.");
     const authSubject = identity.subject;
 
-    if (args.userId && args.userId !== authSubject) {
-      await assertCanAccessStudent(ctx, args.userId);
+    const caller = await getAuthenticatedUser(ctx);
+    if (!caller || (caller.role !== "admin" && caller.role !== "counsellor")) {
+      throw new Error("Unauthorized: Staff access required to schedule clinical follow-ups.");
     }
-    const targetUserId = args.userId && args.userId !== authSubject ? args.userId : authSubject;
+    if (!args.userId) {
+      throw new Error("A target student is required.");
+    }
+    await assertCanAccessStudent(ctx, args.userId);
+    const targetUserId = args.userId;
 
     await checkRateLimit(ctx, targetUserId, "journal_write", 5, 60000);
 
@@ -503,23 +551,13 @@ export const scheduleFollowUp = mutation({
       }
     }
 
-    let intervalMs = 0;
-
-    switch (args.level) {
-      case "mild":
-        intervalMs = 30 * 24 * 60 * 60 * 1000;
-        break;
-      case "moderate":
-        intervalMs = 7 * 24 * 60 * 60 * 1000;
-        break;
-      case "severe":
-      case "suicide_flag":
-      case "psychosis_flag":
-        intervalMs = 2 * 24 * 60 * 60 * 1000;
-        break;
-      default:
-        intervalMs = 14 * 24 * 60 * 60 * 1000;
+    // When a triage is referenced, its stored level is authoritative (never the client's).
+    let level = args.level;
+    if (args.triageId) {
+      const triage = await ctx.db.get(args.triageId);
+      if (triage) level = triage.level;
     }
+    const intervalMs = followUpIntervalMs(level);
 
     const dueDate = Date.now() + intervalMs;
 

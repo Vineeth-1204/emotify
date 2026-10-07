@@ -2,6 +2,7 @@
 import { describe, test, expect } from "vitest";
 import { convexTest } from "convex-test";
 import schema from "./schema";
+import { testUserId } from "../test-utils/identity";
 import { api, internal } from "./_generated/api";
 import {
   buildStructuredFallbackResponse,
@@ -219,6 +220,7 @@ describe("Emoty AI Companion: Gemini Integration & Contextual Fallback Verificat
       subject: "student_test_no_key",
       role: "student",
     });
+    const uid_student_test_no_key = await testUserId(authedCtx, "student_test_no_key");
 
     const res = await authedCtx.action(api.companion.generateAIResponse, {
       userMessageId: "msg_nokey_user",
@@ -235,7 +237,7 @@ describe("Emoty AI Companion: Gemini Integration & Contextual Fallback Verificat
     const telemetry = await t.run(async (ctx) => {
       return await ctx.db
         .query("aiTelemetryLogs")
-        .withIndex("by_userId", (q) => q.eq("userId", "student_test_no_key"))
+        .withIndex("by_userId", (q) => q.eq("userId", uid_student_test_no_key))
         .first();
     });
 
@@ -247,11 +249,12 @@ describe("Emoty AI Companion: Gemini Integration & Contextual Fallback Verificat
 
   test("REQ-K & REQ-L: Crisis message bypasses rate limit (Safety Gate > Rate Limit)", async () => {
     const t = convexTest(schema, modules);
+    const uid_student_crisis_priority = await testUserId(t, "student_crisis_priority");
 
     // Exhaust daily rate limit (50 requests)
     await t.run(async (ctx) => {
       await ctx.db.insert("companionRateLimits", {
-        userId: "student_crisis_priority",
+        userId: uid_student_crisis_priority,
         burstWindowStart: Date.now(),
         burstCount: 10,
         dailyWindowStart: Date.now(),
@@ -275,14 +278,15 @@ describe("Emoty AI Companion: Gemini Integration & Contextual Fallback Verificat
 
     expect(res.mode).toBe("emotional_support");
     expect(res.response).toContain("14416");
-    expect(res.response).toContain("988");
+    expect(res.response).toContain("112");
+    expect(res.response).not.toContain("988");
     expect(res.action.type).toBe("open_counsellor_request");
 
     // Telemetry shows path: crisis
     const telemetry = await t.run(async (ctx) => {
       return await ctx.db
         .query("aiTelemetryLogs")
-        .withIndex("by_userId", (q) => q.eq("userId", "student_crisis_priority"))
+        .withIndex("by_userId", (q) => q.eq("userId", uid_student_crisis_priority))
         .first();
     });
 
@@ -293,7 +297,7 @@ describe("Emoty AI Companion: Gemini Integration & Contextual Fallback Verificat
     const alert = await t.run(async (ctx) => {
       return await ctx.db
         .query("alerts")
-        .withIndex("by_userId", (q) => q.eq("userId", "student_crisis_priority"))
+        .withIndex("by_userId", (q) => q.eq("userId", uid_student_crisis_priority))
         .first();
     });
     expect(alert).not.toBeNull();
@@ -302,11 +306,12 @@ describe("Emoty AI Companion: Gemini Integration & Contextual Fallback Verificat
 
   test("REQ-M: Concurrency lock prevents parallel simultaneous generation", async () => {
     const t = convexTest(schema, modules);
+    const uid_student_concurrency_test = await testUserId(t, "student_concurrency_test");
 
     // Simulate active in-flight request
     await t.run(async (ctx) => {
       await ctx.db.insert("companionRateLimits", {
-        userId: "student_concurrency_test",
+        userId: uid_student_concurrency_test,
         burstWindowStart: Date.now(),
         burstCount: 1,
         dailyWindowStart: Date.now(),
@@ -337,18 +342,19 @@ describe("Emoty AI Companion: Gemini Integration & Contextual Fallback Verificat
       subject: "student_clear_chat_persistence",
       role: "student",
     });
+    const uid_student_clear_chat_persistence = await testUserId(authedCtx, "student_clear_chat_persistence");
 
     // Seed messages and rate limit
     await t.run(async (ctx) => {
       await ctx.db.insert("aiCompanionLogs", {
-        userId: "student_clear_chat_persistence",
+        userId: uid_student_clear_chat_persistence,
         messageId: "m1",
         role: "user",
         content: "Hello",
         createdAt: Date.now(),
       });
       await ctx.db.insert("companionRateLimits", {
-        userId: "student_clear_chat_persistence",
+        userId: uid_student_clear_chat_persistence,
         burstWindowStart: Date.now(),
         burstCount: 5,
         dailyWindowStart: Date.now(),
@@ -364,7 +370,7 @@ describe("Emoty AI Companion: Gemini Integration & Contextual Fallback Verificat
     const logs = await t.run(async (ctx) => {
       return await ctx.db
         .query("aiCompanionLogs")
-        .withIndex("by_userId", (q) => q.eq("userId", "student_clear_chat_persistence"))
+        .withIndex("by_userId", (q) => q.eq("userId", uid_student_clear_chat_persistence))
         .collect();
     });
     expect(logs.length).toBe(0);
@@ -373,7 +379,7 @@ describe("Emoty AI Companion: Gemini Integration & Contextual Fallback Verificat
     const rateLimit = await t.run(async (ctx) => {
       return await ctx.db
         .query("companionRateLimits")
-        .withIndex("by_userId", (q) => q.eq("userId", "student_clear_chat_persistence"))
+        .withIndex("by_userId", (q) => q.eq("userId", uid_student_clear_chat_persistence))
         .first();
     });
     expect(rateLimit?.dailyCount).toBe(25);
@@ -400,6 +406,7 @@ describe("Emoty AI Companion: Gemini Integration & Contextual Fallback Verificat
       subject: "student_telem_privacy_check",
       role: "student",
     });
+    const uid_student_telem_privacy_check = await testUserId(authedCtx, "student_telem_privacy_check");
 
     // Sensitive message mentioning PHQ-9 and medication
     await authedCtx.action(api.companion.generateAIResponse, {
@@ -411,7 +418,7 @@ describe("Emoty AI Companion: Gemini Integration & Contextual Fallback Verificat
     const telemetry = await t.run(async (ctx) => {
       return await ctx.db
         .query("aiTelemetryLogs")
-        .withIndex("by_userId", (q) => q.eq("userId", "student_telem_privacy_check"))
+        .withIndex("by_userId", (q) => q.eq("userId", uid_student_telem_privacy_check))
         .first();
     });
 
@@ -436,7 +443,7 @@ describe("Emoty AI Companion: Gemini Integration & Contextual Fallback Verificat
 
     // Anonymous call to recordTelemetry
     await expect(
-      t.mutation(api.emotyTelemetry.recordTelemetry, {
+      t.mutation(internal.emotyTelemetry.recordTelemetry, {
         durationMs: 100,
         path: "gemini",
         mode: "casual",

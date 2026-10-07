@@ -1,118 +1,6 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
-import { checkRateLimit } from "./rateLimiter";
+import { mutation, query } from "./functions";
 import { assertCanAccessStudent, requireCounselorOrAdmin } from "./authz";
-
-/** Run triage logic and save result, checking for escalation/improvement */
-export const processTriage = mutation({
-  args: {
-    userId: v.optional(v.string()),
-    phq9_total: v.number(),
-    gad7_total: v.number(),
-    pq16_total: v.number(),
-    wsas_total: v.optional(v.number()),
-    reqol10_total: v.optional(v.number()),
-    phq9_item9_score: v.number(),
-    attemptId: v.optional(v.id("screeningAttempts")),
-  },
-  handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Unauthenticated");
-    const userId = identity.subject;
-
-    await checkRateLimit(ctx, userId, "journal_write", 5, 60000);
-
-    // Validation
-    const { phq9_total, gad7_total, pq16_total, phq9_item9_score } = args;
-    if (phq9_total < 0 || gad7_total < 0 || pq16_total < 0 || phq9_item9_score < 0) {
-      throw new Error("Scores cannot be negative.");
-    }
-
-    let level: string = "mild";
-    let suicideFlag = false;
-    let psychosisFlag = false;
-    let requiresAlert = false;
-    let alertType: string | undefined = undefined;
-
-    // Logic from utils/triage.ts
-    if (phq9_item9_score > 0) {
-      level = "suicide_flag";
-      suicideFlag = true;
-      requiresAlert = true;
-      alertType = "suicide";
-    } else if (pq16_total >= 6) {
-      level = "psychosis_flag";
-      psychosisFlag = true;
-      requiresAlert = true;
-      alertType = "psychosis";
-    } else if (phq9_total >= 15 || gad7_total >= 15) {
-      level = "severe";
-      requiresAlert = true;
-      alertType = "severe";
-    } else if (
-      (phq9_total >= 10 && phq9_total <= 14) ||
-      (gad7_total >= 10 && gad7_total <= 14)
-    ) {
-      level = "moderate";
-    } else {
-      level = "mild";
-    }
-
-    // Monitoring: check for escalation relative to previous screening (PHQ-9 or GAD-7)
-    const attempts = await ctx.db
-      .query("screeningAttempts")
-      .withIndex("by_userId", (q) => q.eq("userId", userId))
-      .order("desc")
-      .take(2);
-
-    const completed = attempts.filter((a) => a.status === "completed");
-    if (completed.length > 1) {
-      const last = completed[1];
-      const prevPhq = last.results?.phq9?.score ?? 0;
-      const prevGad = last.results?.gad7?.score ?? 0;
-      if (phq9_total > prevPhq + 5 || gad7_total > prevGad + 5) {
-        requiresAlert = true;
-        alertType = "escalation";
-      }
-    } else {
-      const previousScreening = await ctx.db
-        .query("screenings")
-        .withIndex("by_userId", (q) => q.eq("userId", userId))
-        .order("desc")
-        .take(2);
-
-      if (previousScreening.length > 1) {
-        const last = previousScreening[1];
-        if (phq9_total > last.phq9_total + 5 || gad7_total > last.gad7_total + 5) {
-          requiresAlert = true;
-          alertType = "escalation";
-        }
-      }
-    }
-
-    const triageId = await ctx.db.insert("triages", {
-      userId,
-      level,
-      suicideFlag,
-      psychosisFlag,
-      attemptId: args.attemptId,
-      createdAt: Date.now(),
-    });
-
-    if (requiresAlert) {
-      await ctx.db.insert("alerts", {
-        userId,
-        type: alertType || "general",
-        status: "pending",
-        createdAt: Date.now(),
-        attemptId: args.attemptId,
-        triageId,
-      });
-    }
-
-    return { level, triageId };
-  },
-});
 
 /** Get latest triage for a specific user (used by admin or given userId) */
 export const getLatestByUserId = query({
@@ -156,6 +44,7 @@ export const triggerScreeningTest = mutation({
   handler: async (ctx, args) => {
     // Only Counselor or Admin can perform administrative clinical triggers
     await requireCounselorOrAdmin(ctx);
+    await assertCanAccessStudent(ctx, args.userId);
 
     const triageId = await ctx.db.insert("triages", {
       userId: args.userId,
@@ -178,6 +67,7 @@ export const unblockPatient = mutation({
   handler: async (ctx, args) => {
     // Only Counselor or Admin can perform clinical triage overrides & alert resolution
     const caller = await requireCounselorOrAdmin(ctx);
+    await assertCanAccessStudent(ctx, args.userId);
 
     let newLevel = "mild";
     if (args.action === "switch_moderate") {

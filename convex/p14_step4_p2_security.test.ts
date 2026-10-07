@@ -3,6 +3,7 @@ import { convexTest } from "convex-test";
 import { expect, test, describe } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";
+import { assignAllPatientsToCounsellors } from "../test-utils/identity";
 import type { Id } from "./_generated/dataModel";
 import { sanitizePlainText } from "./sanitizer";
 
@@ -89,6 +90,9 @@ describe("P14 Step 4: P2 Security & Performance Hardening Suite", () => {
     const authedStudentB = t.withIdentity({ subject: "clerk_student_beta" });
     const authedCounselor = t.withIdentity({ subject: "clerk_counselor_1" });
     const authedAdmin = t.withIdentity({ subject: "clerk_admin_1" });
+
+    // Legacy fixtures: counsellors share every student (caseload assignments)
+    await assignAllPatientsToCounsellors(t);
 
     return {
       t,

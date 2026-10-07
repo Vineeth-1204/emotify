@@ -4,6 +4,7 @@ import { expect, test, describe } from "vitest";
 import { api } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import schema from "./schema";
+import { assignAllPatientsToCounsellors } from "../test-utils/identity";
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -64,6 +65,9 @@ describe("P12 Step 2: Security & Authorization Defect Remediation", () => {
         updated_at: Date.now(),
       });
     });
+
+    // Legacy fixtures: counsellors share every student (caseload assignments)
+    await assignAllPatientsToCounsellors(t);
 
     return {
       t,
@@ -237,6 +241,7 @@ describe("P12 Step 2: Security & Authorization Defect Remediation", () => {
       let followUpId!: Id<"followUps">;
       await t.run(async (ctx) => {
         followUpId = await ctx.db.insert("followUps", {
+          sourceType: "self_initiated", // students may only close their own self-initiated follow-ups
           userId: studentAId,
           type: "breathing_exercise",
           dueDate: Date.now() + 86400000,

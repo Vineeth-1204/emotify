@@ -1,5 +1,7 @@
 import { v } from "convex/values";
-import { action } from "./_generated/server";
+import { type ActionCtx } from "./_generated/server";
+import { action } from "./functions";
+import { internal } from "./_generated/api";
 
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
   if (typeof Buffer !== "undefined") {
@@ -174,6 +176,21 @@ async function performElevenLabsTTS(rawText: string, voiceId: string): Promise<T
   }
 }
 
+const TTS_WINDOW_MS = 10 * 60 * 1000;
+
+/** Requires a logged-in caller and consumes a per-user TTS rate-limit token. */
+async function authorizeTtsRequest(ctx: ActionCtx, action: string, maxRequests: number) {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity || !identity.subject) {
+    throw new Error("Unauthenticated: Login required for voice playback.");
+  }
+  await ctx.runMutation(internal.rateLimiter.consumeForCaller, {
+    action,
+    maxRequests,
+    windowMs: TTS_WINDOW_MS,
+  });
+}
+
 /**
  * Generate Speech using ElevenLabs Text-to-Speech API.
  * The ElevenLabs secret API key resides strictly on the server and is NEVER exposed to clients.
@@ -184,6 +201,7 @@ export const generateSpeech = action({
     voiceId: v.string(),
   },
   handler: async (ctx, args): Promise<TTSActionResult> => {
+    await authorizeTtsRequest(ctx, "tts_generate", 30);
     return await performElevenLabsTTS(args.text, args.voiceId);
   },
 });
@@ -197,6 +215,7 @@ export const getVoicePreview = action({
     sampleText: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<TTSActionResult> => {
+    await authorizeTtsRequest(ctx, "tts_preview", 10);
     const text =
       args.sampleText ||
       "Hello! Take a gentle breath. I am right here to support you.";

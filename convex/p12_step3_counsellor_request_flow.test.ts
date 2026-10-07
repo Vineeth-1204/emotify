@@ -1,9 +1,10 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { expect, test, describe } from "vitest";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import schema from "./schema";
+import { assignAllPatientsToCounsellors } from "../test-utils/identity";
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -64,6 +65,9 @@ describe("P12 Step 3: Counselor Request Flow Alignment", () => {
         updated_at: Date.now(),
       });
     });
+
+    // Legacy fixtures: counsellors share every student (caseload assignments)
+    await assignAllPatientsToCounsellors(t);
 
     return {
       t,
@@ -307,7 +311,7 @@ describe("P12 Step 3: Counselor Request Flow Alignment", () => {
       situation_text: "Crisis intervention requested",
     });
 
-    const alertId = await authedStudent.mutation(api.alerts.createAlert, {
+    const alertId = await authedStudent.mutation(internal.alerts.createAlert, {
       userId: String(studentAId),
       type: "counselor_request",
     });

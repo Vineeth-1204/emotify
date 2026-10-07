@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { expect, test, describe } from "vitest";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import schema from "./schema";
 import {
   ALLOWED_MEMORY_CATEGORIES,
@@ -370,7 +370,7 @@ describe("AI-3 Step 7: Memory & Personalization Architecture (MEMORY-01 to MEMOR
     });
 
     // Query context
-    const context: EmotyContext = await asStudent.query(api.emotyContext.getAuthoritativeEmotyContext, {
+    const context: EmotyContext = await asStudent.query(internal.emotyContext.getAuthoritativeEmotyContext, {
       screen: "companion",
     });
 
@@ -419,7 +419,7 @@ describe("AI-3 Step 7: Memory & Personalization Architecture (MEMORY-01 to MEMOR
       value: "concise",
     });
 
-    const context: EmotyContext = await asStudent.query(api.emotyContext.getAuthoritativeEmotyContext, {
+    const context: EmotyContext = await asStudent.query(internal.emotyContext.getAuthoritativeEmotyContext, {
       screen: "companion",
       safetyState: "normal",
     });

@@ -1,19 +1,93 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
-import { assertCanAccessStudent, requireCounselorOrAdmin } from "./authz";
+import { internalMutation } from "./_generated/server";
+import { mutation, query } from "./functions";
+import { assertCanAccessStudent, requireCounselorOrAdmin, getStaffRecipientsForStudent } from "./authz";
+import type { Id } from "./_generated/dataModel";
+import { checkRateLimit } from "./rateLimiter";
+import { logAuditEvent } from "./audit";
 
-/** Create a new alert */
-export const createAlert = mutation({
+const CRITICAL_ALERT_TYPES = new Set(["suicide", "suicideRisk", "psychosis", "psychosisRisk"]);
+
+const ALERT_TITLES: Record<string, string> = {
+  suicide: "Suicide risk flagged in screening",
+  suicideRisk: "Suicide risk disclosed",
+  psychosis: "Psychosis risk flagged in screening",
+  severe: "Severe screening result",
+  escalation: "Rapid score escalation",
+};
+
+/**
+ * Single writer for safety alerts: inserts the alert with its source link and
+ * immediately notifies every counsellor and admin. Never call ctx.db.insert("alerts")
+ * directly.
+ */
+export async function insertSafetyAlert(
+  ctx: { db: any },
+  params: {
+    userId: string;
+    type: string;
+    source: "screening" | "companion" | "cbt" | "system";
+    sourceId?: string;
+    attemptId?: Id<"screeningAttempts">;
+    triageId?: Id<"triages">;
+  }
+): Promise<Id<"alerts">> {
+  const now = Date.now();
+  const alertId = await ctx.db.insert("alerts", {
+    userId: params.userId,
+    type: params.type,
+    status: "pending",
+    createdAt: now,
+    source: params.source,
+    sourceId: params.sourceId,
+    attemptId: params.attemptId,
+    triageId: params.triageId,
+  });
+
+  let studentLabel = "A student";
+  const studentId = ctx.db.normalizeId("users", params.userId);
+  if (studentId) {
+    const student = await ctx.db.get(studentId);
+    // Use the student ID rather than their name so no personal data lingers in staff inboxes.
+    if (student?.patientId) studentLabel = `Student ${student.patientId}`;
+  }
+
+  const isCritical = CRITICAL_ALERT_TYPES.has(params.type);
+  const title = ALERT_TITLES[params.type] || "Safety alert";
+  const origin =
+    params.source === "screening" ? "a screening" : params.source === "companion" ? "the Emoty companion" : params.source === "cbt" ? "a Think Differently (CBT) session" : "the system";
+
+  // Admins plus the student's assigned counsellor (all counsellors if unassigned)
+  const staff = await getStaffRecipientsForStudent(ctx, params.userId);
+  for (const member of staff) {
+    await ctx.db.insert("notifications", {
+      recipientId: String(member._id),
+      type: isCritical ? "critical_risk" : "safety_alert",
+      title,
+      message: `${studentLabel}: ${title.toLowerCase()} via ${origin}. Review immediately.`,
+      priority: isCritical ? "critical" : "high",
+      read: false,
+      archived: false,
+      createdAt: now,
+    });
+  }
+
+  console.log(`[ALERT TRIGGERED] type=${params.type} source=${params.source} notified=${staff.length}`);
+  return alertId;
+}
+
+/** Internal: create a new alert for the authenticated student (server-side callers only) */
+export const createAlert = internalMutation({
   args: {
     userId: v.optional(v.string()),
     type: v.string(),
+    source: v.optional(v.union(v.literal("screening"), v.literal("companion"), v.literal("cbt"), v.literal("system"))),
+    sourceId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
-    const userId = identity.subject;
 
-    // Validate type
     if (!args.type || args.type.trim().length === 0) {
       throw new Error("Alert type is required.");
     }
@@ -21,15 +95,11 @@ export const createAlert = mutation({
       throw new Error("Alert type too long.");
     }
 
-    console.log(`[ALERT TRIGGERED] User: ${userId}, Type: ${args.type}`);
-    console.log(`[TIME] ${new Date().toISOString()}`);
-    console.log(`[STATUS] PENDING — Counselor notification required`);
-
-    return await ctx.db.insert("alerts", {
-      userId,
+    return await insertSafetyAlert(ctx, {
+      userId: identity.subject,
       type: args.type,
-      status: "pending",
-      createdAt: Date.now(),
+      source: args.source ?? "system",
+      sourceId: args.sourceId,
     });
   },
 });
@@ -38,10 +108,12 @@ export const createAlert = mutation({
  * Creates a safety alert with deterministic deduplication/cooldown protection.
  * Prevents alert storms while guaranteeing timely clinical alerts.
  */
-export const createSafetyAlertWithDeduplication = mutation({
+export const createSafetyAlertWithDeduplication = internalMutation({
   args: {
     type: v.string(),
     cooldownMs: v.optional(v.number()),
+    source: v.optional(v.union(v.literal("companion"), v.literal("cbt"), v.literal("system"))),
+    sourceId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
@@ -67,29 +139,61 @@ export const createSafetyAlertWithDeduplication = mutation({
       )
       .collect();
 
-    const isSuppressed = recentAlerts.some(
-      (a) => now - a.createdAt < cooldown
-    );
-
-    if (isSuppressed) {
-      console.log(
-        `[ALERT SUPPRESSED] Duplicate ${args.type} alert suppressed under cooldown for user: ${userId}`
-      );
+    if (recentAlerts.some((a) => now - a.createdAt < cooldown)) {
+      console.log(`[ALERT SUPPRESSED] Duplicate ${args.type} alert suppressed under cooldown`);
       return { created: false, suppressed: true };
     }
 
-    console.log(`[ALERT TRIGGERED] User: ${userId}, Type: ${args.type}`);
-    console.log(`[TIME] ${new Date().toISOString()}`);
-    console.log(`[STATUS] PENDING — Counselor notification required`);
-
-    const alertId = await ctx.db.insert("alerts", {
+    const alertId = await insertSafetyAlert(ctx, {
       userId,
       type: args.type,
-      status: "pending",
-      createdAt: now,
+      source: args.source ?? "system",
+      sourceId: args.sourceId,
     });
 
     return { created: true, alertId, suppressed: false };
+  },
+});
+
+/**
+ * Student: record that they closed the suicide-flag emergency screen.
+ * The screen stays dismissible (so students are never locked out of support tools),
+ * but every dismissal is stamped on their open suicide alerts so counsellors can see it.
+ */
+export const recordEmergencyScreenDismissal = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const userId = identity.subject;
+
+    await checkRateLimit(ctx, userId, "emergency_dismissal", 30, 60 * 60 * 1000);
+
+    const now = Date.now();
+    const openSuicideAlerts = (
+      await ctx.db
+        .query("alerts")
+        .withIndex("by_userId", (q) => q.eq("userId", userId))
+        .collect()
+    ).filter(
+      (a) => (a.type === "suicide" || a.type === "suicideRisk") && a.status !== "resolved"
+    );
+
+    for (const alert of openSuicideAlerts) {
+      await ctx.db.patch(alert._id, {
+        studentDismissedAt: now,
+        studentDismissCount: (alert.studentDismissCount ?? 0) + 1,
+      });
+    }
+
+    await logAuditEvent(
+      ctx,
+      userId,
+      "emergency_screen_dismissed",
+      `Student closed the emergency safety screen (${openSuicideAlerts.length} open suicide alert(s) stamped).`
+    );
+
+    return { recordedOnAlerts: openSuicideAlerts.length };
   },
 });
 

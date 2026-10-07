@@ -80,9 +80,9 @@ export default function EditUserModal({ user, onClose, onSuccess }: { user: User
       }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
           <div>
-            <h2 style={{ fontSize: "1.4rem", fontWeight: 700, color: "var(--text-primary)", margin: "0 0 4px 0" }}>Edit User</h2>
+            <h2 style={{ fontSize: "1.4rem", fontWeight: 700, color: "var(--text-primary)", margin: "0 0 4px 0" }}>Edit Student</h2>
             <p style={{ color: "var(--text-secondary)", fontSize: "0.875rem", margin: 0 }}>
-              Update credentials and active status for the user profile.
+              Update credentials and active status for this student profile.
             </p>
           </div>
           <button

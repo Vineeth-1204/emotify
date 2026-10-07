@@ -89,9 +89,11 @@ export default defineSchema({
     rating: v.optional(v.number()),
     attended: v.optional(v.string()), // "yes" | "no"
     isFeedbackCompleted: v.optional(v.boolean()),
+    counsellorRequestId: v.optional(v.id("counsellorRequests")),
   })
     .index("by_userId", ["userId"])
-    .index("by_startTime", ["startTime"]),
+    .index("by_startTime", ["startTime"])
+    .index("by_counsellorRequestId", ["counsellorRequestId"]),
 
 
   screenings: defineTable({
@@ -354,7 +356,14 @@ export default defineSchema({
     sourceType: v.optional(v.string()), // "screening" | "triage" | "counselor" | "appointment"
     attemptId: v.optional(v.id("screeningAttempts")),
     triageId: v.optional(v.id("triages")),
-  }).index("by_userId", ["userId"]),
+    appointmentId: v.optional(v.id("appointments")),
+    notes: v.optional(v.string()),
+    status: v.optional(v.string()), // "pending" | "scheduled" | "completed" | "cancelled"
+    completedAt: v.optional(v.number()),
+    completedBy: v.optional(v.string()),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_appointmentId", ["appointmentId"]),
 
   wellnessProfiles: defineTable({
     userId: v.string(),
@@ -409,6 +418,36 @@ export default defineSchema({
     count: v.number(),
     windowStart: v.number(),
   }).index("by_key", ["key"]),
+
+  companionRateLimits: defineTable({
+    userId: v.string(),
+    burstCount: v.number(),
+    burstWindowStart: v.number(),
+    dailyCount: v.number(),
+    dailyWindowStart: v.number(),
+    inFlight: v.boolean(),
+    inFlightSince: v.optional(v.number()),
+  }).index("by_userId", ["userId"]),
+
+  aiTelemetryLogs: defineTable({
+    userId: v.string(),
+    timestamp: v.number(),
+    durationMs: v.number(),
+    path: v.string(), // "crisis" | "third_party" | "gemini" | "fallback" | "rate_limited"
+    mode: v.string(),
+    actionType: v.string(),
+    avatarState: v.string(),
+    safetyCategory: v.string(), // "normal" | "elevated" | "crisis" | "third_party" | "contextual_idiom"
+    geminiCalled: v.boolean(),
+    geminiSuccess: v.boolean(),
+    fallbackUsed: v.boolean(),
+    fallbackReason: v.optional(v.string()),
+    errorCode: v.optional(v.string()),
+    model: v.optional(v.string()),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_timestamp", ["timestamp"])
+    .index("by_path", ["path"]),
 
   auditLogs: defineTable({
     userId: v.optional(v.string()),
@@ -678,6 +717,24 @@ export default defineSchema({
     name: v.string(), // e.g. "patientId"
     value: v.number(), // monotonic sequential counter value
   }).index("by_name", ["name"]),
+
+  // AI-3 Step 7: Dedicated Non-Sensitive Persistent Memory Table
+  emotyMemories: defineTable({
+    userId: v.string(),
+    category: v.string(), // "communication_preference" | "support_preference" | "routine_preference" | "goal_preference" | "chosen_name" | "conversation_summary"
+    key: v.string(), // e.g., "response_length", "guidance_style", "goal_size", "routine_timing", "display_name", "last_topic"
+    value: v.string(), // concise sanitized value
+    source: v.optional(v.string()), // "user_stated" | "explicit_setting" | "app_context"
+    active: v.boolean(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    expiresAt: v.optional(v.number()), // optional expiration for temporary conversation summaries
+  })
+    .index("by_userId", ["userId"])
+    .index("by_userId_and_category", ["userId", "category"])
+    .index("by_userId_and_key", ["userId", "key"])
+    .index("by_userId_and_active", ["userId", "active"]),
 });
+
 
 

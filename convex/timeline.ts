@@ -47,6 +47,8 @@ export interface CanonicalTimelineEvent {
     triageId?: string;  // Originating triages._id
     alertId?: string;   // Associated alerts._id
     sessionId?: string; // Originating cbtSessions._id
+    counsellorRequestId?: string; // Originating counsellorRequests._id
+    appointmentId?: string; // Originating appointments._id
   };
 
   /** Structured, source-specific metadata for clinical slide-outs */
@@ -787,9 +789,14 @@ export const getStudentClinicalTimeline = query({
         title: "Counselor Consultation Requested",
         summary: `Student requested counseling support (Status: ${req.status || "pending"}).`,
         status: req.status || "pending",
+        provenance: {
+          attemptId: req.attemptId ? String(req.attemptId) : undefined,
+          triageId: req.triageId ? String(req.triageId) : undefined,
+        },
         metadata: {
           notes: req.notes,
           status: req.status,
+          sourceType: req.sourceType,
         },
       });
     }
@@ -798,6 +805,12 @@ export const getStudentClinicalTimeline = query({
     // SOURCE 6: appointments (Clinical Sessions)
     // ----------------------------------------------------
     for (const appt of appointmentsList) {
+      const apptProvenance = {
+        attemptId: appt.attemptId ? String(appt.attemptId) : undefined,
+        triageId: appt.triageId ? String(appt.triageId) : undefined,
+        counsellorRequestId: appt.counsellorRequestId ? String(appt.counsellorRequestId) : undefined,
+      };
+
       if (appt.status === "completed" || appt.attended === "yes") {
         events.push({
           id: `appointments_${appt._id}`,
@@ -810,11 +823,13 @@ export const getStudentClinicalTimeline = query({
           title: `Consultation Completed: ${appt.title || "Clinical Appointment"}`,
           summary: `Attended: ${appt.attended || "yes"}. Date: ${appt.date || "Recorded"}, Time: ${appt.time || "N/A"}.`,
           status: "completed",
+          provenance: apptProvenance,
           metadata: {
             date: appt.date,
             time: appt.time,
             attended: appt.attended,
             rating: appt.rating,
+            counsellorRequestId: appt.counsellorRequestId ? String(appt.counsellorRequestId) : undefined,
           },
         });
       } else if (appt.status === "cancelled" || appt.status === "rejected") {
@@ -829,10 +844,12 @@ export const getStudentClinicalTimeline = query({
           title: `Appointment Cancelled: ${appt.title || "Clinical Appointment"}`,
           summary: `Appointment cancelled or rejected (${appt.rejectionReason || "No reason specified"}).`,
           status: appt.status,
+          provenance: apptProvenance,
           metadata: {
             rejectionReason: appt.rejectionReason,
             date: appt.date,
             time: appt.time,
+            counsellorRequestId: appt.counsellorRequestId ? String(appt.counsellorRequestId) : undefined,
           },
         });
       } else {
@@ -847,11 +864,13 @@ export const getStudentClinicalTimeline = query({
           title: `Appointment Scheduled: ${appt.title || "Clinical Appointment"}`,
           summary: `Scheduled consultation on ${appt.date || "Upcoming"} at ${appt.time || "N/A"}. Status: ${appt.status}.`,
           status: appt.status,
+          provenance: apptProvenance,
           metadata: {
             date: appt.date,
             time: appt.time,
             status: appt.status,
             createdBy: appt.createdBy,
+            counsellorRequestId: appt.counsellorRequestId ? String(appt.counsellorRequestId) : undefined,
           },
         });
       }
@@ -872,10 +891,16 @@ export const getStudentClinicalTimeline = query({
         title: f.completed ? "Clinical Follow-up Completed" : "Clinical Follow-up Scheduled",
         summary: `Type: ${f.type}. Due date: ${new Date(f.dueDate).toLocaleDateString()}. Status: ${f.completed ? "Completed" : "Pending"}.`,
         status: f.completed ? "completed" : "pending",
+        provenance: {
+          attemptId: f.attemptId ? String(f.attemptId) : undefined,
+          triageId: f.triageId ? String(f.triageId) : undefined,
+          appointmentId: f.appointmentId ? String(f.appointmentId) : undefined,
+        },
         metadata: {
           type: f.type,
           dueDate: f.dueDate,
           completed: f.completed,
+          appointmentId: f.appointmentId ? String(f.appointmentId) : undefined,
         },
       });
     }

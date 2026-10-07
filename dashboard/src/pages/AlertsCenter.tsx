@@ -65,10 +65,10 @@ export default function AlertsCenter() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
         <div>
           <h1 style={{ fontSize: '2.2rem', fontWeight: 800, marginBottom: '4px', color: 'var(--text-primary)' }}>
-            Live Alerts Center
+            Alerts
           </h1>
           <p style={{ color: 'var(--text-secondary)', fontSize: '1rem', margin: 0 }}>
-            Real-time triage alerts and patient emergency response management.
+            Review student safety alerts and follow-up status.
           </p>
         </div>
       </div>
@@ -148,7 +148,7 @@ export default function AlertsCenter() {
         <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border-color)', background: '#ffffff', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
           <h2 style={{ fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '10px', textTransform: 'uppercase', letterSpacing: '0.05em', margin: 0, fontWeight: 700 }}>
             <Target size={20} color="var(--accent-primary)"/>
-            Emergency Queue
+            Alert list
           </h2>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
@@ -294,7 +294,7 @@ export default function AlertsCenter() {
                     {/* Patient Core Info */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap', marginBottom: '14px', fontSize: '0.92rem' }}>
                       <span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--text-primary)', fontWeight: 600 }}>
-                        Patient: 
+                        Student: 
                         <Link 
                           to={`/patients/${alert.patientId}`} 
                           style={{ color: 'var(--accent-primary)', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
@@ -316,7 +316,7 @@ export default function AlertsCenter() {
                     {isActive && (
                       <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
                         <button 
-                          onClick={() => setUnblockTarget({ id: alert.patientId, name: alert.patientName || "Patient" })} 
+                          onClick={() => setUnblockTarget({ id: alert.patientId, name: alert.patientName || "Student" })} 
                           className="btn btn-danger" 
                           style={{ 
                             display: 'inline-flex',
@@ -327,7 +327,7 @@ export default function AlertsCenter() {
                             fontWeight: 600
                           }}
                         >
-                          <Unlock size={14} /> Unblock Person
+                          <Unlock size={14} /> Review triage actions
                         </button>
 
                         <Link
@@ -335,7 +335,7 @@ export default function AlertsCenter() {
                           className="btn btn-secondary"
                           style={{ fontSize: '0.85rem', padding: '6px 14px', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
                         >
-                          Patient Profile
+                          Student Profile
                         </Link>
                       </div>
                     )}
@@ -357,8 +357,8 @@ export default function AlertsCenter() {
                   <Unlock size={22} />
                 </div>
                 <div>
-                  <h3 style={{ fontSize: "1.3rem", margin: 0, color: "var(--text-primary)" }}>Unblock Patient Triage</h3>
-                  <span style={{ fontSize: "0.85rem", color: "var(--text-secondary)" }}>Patient: <strong>{unblockTarget.name}</strong></span>
+                  <h3 style={{ fontSize: "1.3rem", margin: 0, color: "var(--text-primary)" }}>Triage actions</h3>
+                  <span style={{ fontSize: "0.85rem", color: "var(--text-secondary)" }}>Student: <strong>{unblockTarget.name}</strong></span>
                 </div>
               </div>
               <button
@@ -372,7 +372,7 @@ export default function AlertsCenter() {
             </div>
 
             <p style={{ fontSize: "0.95rem", color: "var(--text-secondary)", margin: "8px 0 16px 0", lineHeight: 1.5 }}>
-              Choose an unblock action to restore standard app access after the patient has met with their counsellor:
+              Choose an action to update the student’s triage status and app access after counsellor review:
             </p>
 
             <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>

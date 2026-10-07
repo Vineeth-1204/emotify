@@ -34,6 +34,65 @@ export const createAlert = mutation({
   },
 });
 
+/**
+ * Creates a safety alert with deterministic deduplication/cooldown protection.
+ * Prevents alert storms while guaranteeing timely clinical alerts.
+ */
+export const createSafetyAlertWithDeduplication = mutation({
+  args: {
+    type: v.string(),
+    cooldownMs: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const userId = identity.subject;
+
+    if (!args.type || args.type.trim().length === 0) {
+      throw new Error("Alert type is required.");
+    }
+
+    const now = Date.now();
+    const cooldown = args.cooldownMs ?? 15 * 60 * 1000; // default 15 minutes
+
+    // Query recent pending alerts for this student
+    const recentAlerts = await ctx.db
+      .query("alerts")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .filter((q) =>
+        q.and(
+          q.eq(q.field("type"), args.type),
+          q.eq(q.field("status"), "pending")
+        )
+      )
+      .collect();
+
+    const isSuppressed = recentAlerts.some(
+      (a) => now - a.createdAt < cooldown
+    );
+
+    if (isSuppressed) {
+      console.log(
+        `[ALERT SUPPRESSED] Duplicate ${args.type} alert suppressed under cooldown for user: ${userId}`
+      );
+      return { created: false, suppressed: true };
+    }
+
+    console.log(`[ALERT TRIGGERED] User: ${userId}, Type: ${args.type}`);
+    console.log(`[TIME] ${new Date().toISOString()}`);
+    console.log(`[STATUS] PENDING — Counselor notification required`);
+
+    const alertId = await ctx.db.insert("alerts", {
+      userId,
+      type: args.type,
+      status: "pending",
+      createdAt: now,
+    });
+
+    return { created: true, alertId, suppressed: false };
+  },
+});
+
 /** Acknowledge an alert (Counselor or Admin only) */
 export const acknowledgeAlert = mutation({
   args: { alertId: v.id("alerts") },

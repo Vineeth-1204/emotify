@@ -11,10 +11,10 @@ export default function Notifications() {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div>
           <h1 style={{ fontSize: "2.4rem", marginBottom: "8px", color: "var(--text-primary)" }}>
-            Notification Centre
+            Notifications
           </h1>
           <p style={{ color: "var(--text-secondary)", fontSize: "1.1rem" }}>
-            Real-time clinical alerts, critical risk escalations, counsellor requests, and system events.
+            Alerts, counsellor requests and important system updates.
           </p>
         </div>
       </div>
@@ -23,9 +23,8 @@ export default function Notifications() {
         <div style={{ padding: "20px 24px", borderBottom: "1px solid var(--border-color)", background: "#ffffff", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <h2 style={{ fontSize: "1.1rem", display: "flex", alignItems: "center", gap: "10px", margin: 0, textTransform: "uppercase", letterSpacing: "0.04em" }}>
             <Bell size={20} color="var(--accent-primary)" />
-            Notifications Stream
+            Recent notifications
           </h2>
-          <span className="hud-tag">LIVE FEED</span>
         </div>
 
         <div style={{ display: "flex", flexDirection: "column" }}>

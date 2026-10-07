@@ -1,10 +1,11 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
+import { useSearchParams, Link } from "react-router-dom";
 import { usePaginatedQuery, useMutation, useQuery, useConvex } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { 
   Calendar, Clock, User, X, FileText, CheckCircle, AlertTriangle, Trash2, 
-  RotateCcw, Search, ChevronRight, MessageSquare, Brain, Smile, Activity, HelpCircle 
+  RotateCcw, Search, ChevronRight, MessageSquare, Brain, Smile, Activity, HelpCircle, CheckSquare, Plus 
 } from "lucide-react";
 import { createPortal } from "react-dom";
 
@@ -29,6 +30,8 @@ export default function Sessions() {
   const updateStatus = useMutation(api.appointments.updateAppointmentStatus);
   const requestReschedule = useMutation(api.appointments.requestReschedule);
   const deleteAppointment = useMutation(api.appointments.deleteAppointment);
+  const createFollowUp = useMutation(api.followUps.create);
+  const markFollowUpComplete = useMutation(api.followUps.markComplete);
 
   // CBT sessions paginated query
   const cbtPage1 = useQuery(api.dashboard.listAllCbtSessions, { paginate: true });
@@ -72,7 +75,18 @@ export default function Sessions() {
   };
 
   // States
-  const [mainTab, setMainTab] = useState<"appointments" | "cbt">("appointments");
+  const [mainTab, setMainTab] = useState<"appointments" | "cbt" | "followups">("appointments");
+  const [followUpFilter, setFollowUpFilter] = useState<"all" | "pending" | "completed">("pending");
+  const followUps = useQuery(api.followUps.listAllFollowUps, { statusFilter: followUpFilter });
+  const [showCreateFollowUpModal, setShowCreateFollowUpModal] = useState(false);
+  const [followUpPatientId, setFollowUpPatientId] = useState("");
+  const [followUpType, setFollowUpType] = useState("counselor_checkin");
+  const [followUpDueDate, setFollowUpDueDate] = useState("");
+  const [followUpNotes, setFollowUpNotes] = useState("");
+  const [followUpApptId, setFollowUpApptId] = useState("");
+  const [followUpLoading, setFollowUpLoading] = useState(false);
+  const [followUpError, setFollowUpError] = useState("");
+  const [followUpSuccess, setFollowUpSuccess] = useState("");
   const [selectedCbtSession, setSelectedCbtSession] = useState<any | null>(null);
   
   const [activeTab, setActiveTab] = useState<TabStatus>("pending");
@@ -84,6 +98,23 @@ export default function Sessions() {
   const [showRescheduleModal, setShowRescheduleModal] = useState(false);
   
   const [selectedAppointment, setSelectedAppointment] = useState<any | null>(null);
+
+  const [searchParams] = useSearchParams();
+  const [counsellorRequestId, setCounsellorRequestId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const studentIdParam = searchParams.get("studentId");
+    const reqIdParam = searchParams.get("counsellorRequestId");
+    if (studentIdParam) {
+      setSelectedPatientId(studentIdParam);
+      if (reqIdParam) {
+        setCounsellorRequestId(reqIdParam);
+        setTitle("Counselor Support Session");
+        setReason("Follow-up session for counselor support request");
+      }
+      setShowCreateModal(true);
+    }
+  }, [searchParams]);
 
   // Form states
   const [selectedPatientId, setSelectedPatientId] = useState("");
@@ -137,7 +168,7 @@ export default function Sessions() {
 
   // Modal Handlers
   const openCreateModal = () => {
-    setSelectedPatientId(""); setTitle(""); setDate(""); setTime(""); setReason("");
+    setSelectedPatientId(""); setTitle(""); setDate(""); setTime(""); setReason(""); setCounsellorRequestId(null);
     setError(""); setSuccessMsg("");
     setShowCreateModal(true);
   };
@@ -163,6 +194,7 @@ export default function Sessions() {
         date,
         time: formatTime12Hour(time),
         reason,
+        counsellorRequestId: counsellorRequestId ? (counsellorRequestId as any) : undefined,
       });
       setSuccessMsg("Appointment request sent successfully!");
       setTimeout(() => setShowCreateModal(false), 1500);
@@ -236,6 +268,47 @@ export default function Sessions() {
     }
   };
 
+  const handleCreateFollowUp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!followUpPatientId || !followUpDueDate) {
+      setFollowUpError("Please select a student and due date.");
+      return;
+    }
+    setFollowUpLoading(true);
+    setFollowUpError("");
+    setFollowUpSuccess("");
+    try {
+      await createFollowUp({
+        userId: followUpPatientId,
+        type: followUpType,
+        dueDate: new Date(followUpDueDate).getTime(),
+        notes: followUpNotes || undefined,
+        appointmentId: followUpApptId ? (followUpApptId as Id<"appointments">) : undefined,
+      });
+      setFollowUpSuccess("Follow-up successfully created.");
+      setTimeout(() => {
+        setShowCreateFollowUpModal(false);
+        setFollowUpPatientId("");
+        setFollowUpDueDate("");
+        setFollowUpNotes("");
+        setFollowUpApptId("");
+        setFollowUpSuccess("");
+      }, 1200);
+    } catch (err: any) {
+      setFollowUpError(err.message || "Failed to create follow-up.");
+    } finally {
+      setFollowUpLoading(false);
+    }
+  };
+
+  const handleMarkFollowUpComplete = async (followUpId: Id<"followUps">) => {
+    try {
+      await markFollowUpComplete({ id: followUpId });
+    } catch (err: any) {
+      alert(err.message || "Failed to mark follow-up complete.");
+    }
+  };
+
   const tabs = [
     { id: "pending", label: "Pending" },
     { id: "waiting", label: "Waiting" },
@@ -279,7 +352,7 @@ export default function Sessions() {
             transition: "all 0.2s"
           }}
         >
-          📅 Clinical Appointment Handshakes
+          Appointment Requests
         </button>
         <button
           onClick={() => setMainTab("cbt")}
@@ -294,7 +367,22 @@ export default function Sessions() {
             transition: "all 0.2s"
           }}
         >
-          🧠 AI CBT Therapy Audit Log
+          AI CBT Session Log
+        </button>
+        <button
+          onClick={() => setMainTab("followups")}
+          style={{
+            padding: "10px 20px",
+            borderRadius: "10px",
+            border: "none",
+            background: mainTab === "followups" ? "var(--accent-primary)" : "rgba(255, 255, 255, 0.08)",
+            color: mainTab === "followups" ? "white" : "var(--text-secondary)",
+            fontWeight: 650,
+            cursor: "pointer",
+            transition: "all 0.2s"
+          }}
+        >
+          Care Follow-ups
         </button>
       </div>
 
@@ -303,8 +391,8 @@ export default function Sessions() {
         <>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
             <div>
-              <h1 style={{ fontSize: '2.4rem', marginBottom: '8px', color: 'var(--text-primary)' }}>Appointments</h1>
-              <p style={{ color: 'var(--text-secondary)', fontSize: '1.1rem' }}>Manage two-way handshake appointment requests and scheduling.</p>
+              <h1 style={{ fontSize: '2.4rem', marginBottom: '8px', color: 'var(--text-primary)' }}>Appointment Requests</h1>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '1.1rem' }}>Manage appointment requests and scheduling.</p>
             </div>
             <button className="btn btn-primary" onClick={openCreateModal}>
               <Calendar size={18} /> New Request
@@ -371,7 +459,7 @@ export default function Sessions() {
                 <table className="data-table">
                   <thead>
                     <tr>
-                      <th>Patient</th>
+                      <th>Student</th>
                       <th>Title & Reason</th>
                       <th>Date & Time</th>
                       <th>Status</th>
@@ -386,6 +474,11 @@ export default function Sessions() {
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                             <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{appt.title}</span>
                             <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>{appt.reason}</span>
+                            {appt.counsellorRequestId && (
+                              <span style={{ fontSize: '0.72rem', color: 'var(--accent-primary)', fontWeight: 600 }}>
+                                Linked to Counselor Request
+                              </span>
+                            )}
                           </div>
                         </td>
                         <td>
@@ -464,7 +557,7 @@ export default function Sessions() {
         <>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
             <div>
-              <h1 style={{ fontSize: '2.4rem', marginBottom: '8px', color: 'var(--text-primary)' }}>AI CBT Counselling Audits</h1>
+              <h1 style={{ fontSize: '2.4rem', marginBottom: '8px', color: 'var(--text-primary)' }}>AI CBT Session Log</h1>
               <p style={{ color: 'var(--text-secondary)', fontSize: '1.1rem' }}>Review student dialog transcript logs, cognitive distortions, and safety flags.</p>
             </div>
           </div>
@@ -472,7 +565,7 @@ export default function Sessions() {
           <div className="glass-panel hud-panel" style={{ padding: 0, overflow: 'hidden' }}>
             {/* Search filter bar */}
             <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#ffffff' }}>
-              <span style={{ fontWeight: 650, color: 'var(--text-primary)' }}>CBT Session Telemetry Log ({filteredCbtSessions.length} sessions)</span>
+              <span style={{ fontWeight: 650, color: 'var(--text-primary)' }}>CBT Session Log ({filteredCbtSessions.length} sessions)</span>
               <div style={{ position: 'relative' }}>
                 <Search size={16} style={{ position: 'absolute', left: '12px', top: '10px', color: 'var(--text-secondary)' }} />
                 <input
@@ -508,7 +601,7 @@ export default function Sessions() {
                 <table className="data-table">
                   <thead>
                     <tr>
-                      <th>Patient</th>
+                      <th>Student</th>
                       <th>Automatic Thought</th>
                       <th>Trap Style</th>
                       <th>CBT Distortion</th>
@@ -572,6 +665,139 @@ export default function Sessions() {
         </>
       )}
 
+      {/* BRANCH 3: CARE FOLLOW-UPS */}
+      {mainTab === "followups" && (
+        <>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+            <div>
+              <h1 style={{ fontSize: '2.4rem', marginBottom: '8px', color: 'var(--text-primary)' }}>Care Follow-ups</h1>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '1.1rem' }}>Track and manage scheduled counselor and clinical follow-ups.</p>
+            </div>
+            <button className="btn btn-primary" onClick={() => {
+              setFollowUpError("");
+              setFollowUpSuccess("");
+              setShowCreateFollowUpModal(true);
+            }}>
+              <Plus size={18} /> New Follow-up
+            </button>
+          </div>
+
+          <div className="glass-panel hud-panel" style={{ padding: 0, overflow: 'hidden' }}>
+            {/* Header & Tabs */}
+            <div style={{ borderBottom: '1px solid var(--border-color)', background: '#ffffff' }}>
+              <div style={{ padding: '20px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', gap: '16px', background: 'var(--surface-base)', padding: '6px', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
+                  {(["pending", "completed", "all"] as const).map(tab => (
+                    <button
+                      key={tab}
+                      onClick={() => setFollowUpFilter(tab)}
+                      style={{
+                        padding: '8px 16px',
+                        borderRadius: '8px',
+                        border: 'none',
+                        background: followUpFilter === tab ? '#ffffff' : 'transparent',
+                        color: followUpFilter === tab ? 'var(--text-primary)' : 'var(--text-secondary)',
+                        fontWeight: followUpFilter === tab ? 600 : 500,
+                        cursor: 'pointer',
+                        boxShadow: followUpFilter === tab ? '0 1px 3px rgba(0,0,0,0.05)' : 'none',
+                        textTransform: 'capitalize'
+                      }}
+                    >
+                      {tab}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Follow-up Table */}
+            <div style={{ overflowX: 'auto' }}>
+              {followUps === undefined ? (
+                <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-secondary)' }}>Loading follow-ups...</div>
+              ) : followUps.length === 0 ? (
+                <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                  No {followUpFilter === "all" ? "" : followUpFilter} follow-ups found.
+                </div>
+              ) : (
+                <table className="hud-table">
+                  <thead>
+                    <tr>
+                      <th>Student</th>
+                      <th>Type</th>
+                      <th>Due Date</th>
+                      <th>Status</th>
+                      <th>Originating Appointment</th>
+                      <th>Counselor Notes</th>
+                      <th style={{ textAlign: 'right' }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {followUps.map((fu: any) => (
+                      <tr key={fu._id}>
+                        <td>
+                          <Link to={`/patient/${fu.userId}`} style={{ fontWeight: 600, color: 'var(--accent-primary)', textDecoration: 'none' }}>
+                            {fu.studentName || fu.studentPhone || fu.userId}
+                          </Link>
+                        </td>
+                        <td>
+                          <span style={{ textTransform: 'capitalize' }}>
+                            {fu.type.replace(/_/g, ' ')}
+                          </span>
+                        </td>
+                        <td>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--text-primary)' }}>
+                            <Calendar size={14} color="var(--text-secondary)" />
+                            {new Date(fu.dueDate).toLocaleDateString()}
+                          </div>
+                        </td>
+                        <td>
+                          {fu.status === 'completed' || fu.completed ? (
+                            <span className="badge badge-green">Completed</span>
+                          ) : (
+                            <span className="badge" style={{ background: 'rgba(234, 179, 8, 0.15)', color: '#ca8a04', border: '1px solid rgba(234, 179, 8, 0.3)' }}>Pending</span>
+                          )}
+                        </td>
+                        <td>
+                          {fu.appointmentTitle ? (
+                            <span className="badge" style={{ background: 'rgba(56, 189, 248, 0.15)', color: '#0284c7', border: '1px solid rgba(56, 189, 248, 0.3)' }}>
+                              {fu.appointmentTitle}
+                            </span>
+                          ) : fu.appointmentId ? (
+                            <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Linked</span>
+                          ) : (
+                            <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>—</span>
+                          )}
+                        </td>
+                        <td style={{ maxWidth: '240px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          <span style={{ fontSize: '0.9rem', color: fu.notes ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
+                            {fu.notes || "—"}
+                          </span>
+                        </td>
+                        <td style={{ textAlign: 'right' }}>
+                          {fu.status !== 'completed' && !fu.completed ? (
+                            <button
+                              className="btn btn-secondary"
+                              style={{ padding: '4px 10px', fontSize: '0.85rem', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                              onClick={() => handleMarkFollowUpComplete(fu._id)}
+                            >
+                              <CheckSquare size={14} /> Mark Complete
+                            </button>
+                          ) : (
+                            <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                              Completed {fu.completedAt ? new Date(fu.completedAt).toLocaleDateString() : ""}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+
       {/* CREATE MODAL */}
       {showCreateModal && createPortal(
         <div className="modal-overlay" style={overlayStyle}>
@@ -589,7 +815,7 @@ export default function Sessions() {
                   style={{ fontSize: "0.85rem", padding: "8px 12px" }}
                 />
                 <select value={selectedPatientId} onChange={(e) => setSelectedPatientId(e.target.value)} className="hud-input">
-                  <option value="">Select Patient ({patientOptions?.length ?? 0} available)...</option>
+                  <option value="">Select Student ({patientOptions?.length ?? 0} available)...</option>
                   {patientOptions?.map((p: any) => (
                     <option key={p._id} value={p._id}>
                       {p.full_name} ({p.patientId ? `#${p.patientId}` : p.mobile_number || "Student"})
@@ -661,7 +887,7 @@ export default function Sessions() {
               <div>
                 <h2 style={{ fontSize: "1.4rem", margin: "0 0 4px 0", color: "var(--text-primary)" }}>CBT Session Dialog Transcript</h2>
                 <p style={{ color: "var(--text-secondary)", fontSize: "0.9rem", margin: 0 }}>
-                  Patient: <strong style={{ color: 'var(--text-primary)' }}>{selectedCbtSession.patientName}</strong> • Date: {new Date(selectedCbtSession.timestamp).toLocaleString()}
+                  Student: <strong style={{ color: 'var(--text-primary)' }}>{selectedCbtSession.patientName}</strong> • Date: {new Date(selectedCbtSession.timestamp).toLocaleString()}
                 </p>
               </div>
               <button 
@@ -740,6 +966,126 @@ export default function Sessions() {
                 Close Transcript
               </button>
             </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* CREATE FOLLOW-UP MODAL */}
+      {showCreateFollowUpModal && createPortal(
+        <div className="modal-overlay" style={overlayStyle}>
+          <div className="glass-panel hud-panel" style={modalStyle}>
+            {renderCloseButton(() => setShowCreateFollowUpModal(false))}
+            <h2>Create Care Follow-up</h2>
+            <form onSubmit={handleCreateFollowUp} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                <input
+                  type="text"
+                  placeholder="Search patient by name / ID / phone..."
+                  value={patientSearch}
+                  onChange={(e) => setPatientSearch(e.target.value)}
+                  className="hud-input"
+                  style={{ fontSize: "0.85rem", padding: "8px 12px" }}
+                />
+                <select 
+                  value={followUpPatientId} 
+                  onChange={(e) => setFollowUpPatientId(e.target.value)} 
+                  className="hud-input"
+                  required
+                >
+                  <option value="">Select Student ({patientOptions?.length ?? 0} available)...</option>
+                  {patientOptions?.map((p: any) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} {p.phone ? `(${p.phone})` : ''} - ID: {p.id.slice(-6)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+                <div>
+                  <label style={{ display: "block", fontSize: "0.85rem", marginBottom: "6px", color: "var(--text-secondary)" }}>
+                    Follow-up Type
+                  </label>
+                  <select 
+                    value={followUpType} 
+                    onChange={(e) => setFollowUpType(e.target.value)} 
+                    className="hud-input"
+                  >
+                    <option value="counselor_checkin">Counselor Check-in</option>
+                    <option value="clinical_monitoring">Clinical Monitoring</option>
+                    <option value="routine_checkin">Routine Check-in</option>
+                    <option value="triage_followup">Triage Follow-up</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: "0.85rem", marginBottom: "6px", color: "var(--text-secondary)" }}>
+                    Due Date
+                  </label>
+                  <input
+                    type="date"
+                    value={followUpDueDate}
+                    onChange={(e) => setFollowUpDueDate(e.target.value)}
+                    className="hud-input"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "0.85rem", marginBottom: "6px", color: "var(--text-secondary)" }}>
+                  Link to Originating Appointment (Optional)
+                </label>
+                <select
+                  value={followUpApptId}
+                  onChange={(e) => setFollowUpApptId(e.target.value)}
+                  className="hud-input"
+                >
+                  <option value="">None (Standalone Follow-up)</option>
+                  {appointments
+                    ?.filter(a => !followUpPatientId || a.userId === followUpPatientId)
+                    .map(a => (
+                      <option key={a._id} value={a._id}>
+                        {a.title} ({a.date} at {a.time}) - {a.patientName}
+                      </option>
+                    ))}
+                </select>
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "0.85rem", marginBottom: "6px", color: "var(--text-secondary)" }}>
+                  Internal Counselor Notes (Staff only)
+                </label>
+                <textarea
+                  placeholder="Notes, observations, or follow-up goals..."
+                  value={followUpNotes}
+                  onChange={(e) => setFollowUpNotes(e.target.value)}
+                  className="hud-input"
+                  rows={3}
+                />
+              </div>
+
+              {followUpError && <div style={{ color: "var(--error)", fontSize: "0.9rem" }}>{followUpError}</div>}
+              {followUpSuccess && <div style={{ color: "var(--success)", fontSize: "0.9rem" }}>{followUpSuccess}</div>}
+
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: "12px", marginTop: "8px" }}>
+                <button 
+                  type="button" 
+                  className="btn btn-secondary" 
+                  onClick={() => setShowCreateFollowUpModal(false)}
+                  disabled={followUpLoading}
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="submit" 
+                  className="btn btn-primary"
+                  disabled={followUpLoading}
+                >
+                  {followUpLoading ? "Creating..." : "Create Follow-up"}
+                </button>
+              </div>
+            </form>
           </div>
         </div>,
         document.body

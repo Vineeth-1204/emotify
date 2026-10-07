@@ -279,14 +279,35 @@ export const submitScreening = mutation({
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
-    const userId = identity?.subject || args.userId;
-    if (!userId) throw new Error("Unauthenticated");
+    if (!identity || !identity.subject) {
+      throw new Error("Unauthenticated: Must be logged in to submit screening.");
+    }
+    const authSubject = identity.subject;
+
+    // Enforce ownership: Student can only submit for their own identity unless authorized staff
+    if (args.userId && args.userId !== authSubject) {
+      await assertCanAccessStudent(ctx, args.userId);
+    }
+    const userId = (args.userId && args.userId !== authSubject) ? args.userId : authSubject;
 
     await checkRateLimit(ctx, userId, "journal_write", 5, 60000);
 
-    // Validation
-    if (args.phq9_total < 0 || args.gad7_total < 0 || args.pq16_total < 0 || args.phq9_item9_score < 0) {
-      throw new Error("Scores cannot be negative.");
+    // Validation: Enforce strict score bounds to prevent arbitrary score forgery
+    // PHQ-9 (9 items * 3 = 27), GAD-7 (7 items * 3 = 21), PQ-16 (16 items * 1 = 16), Item 9 (0-3)
+    if (
+      args.phq9_total < 0 || args.phq9_total > 27 ||
+      args.gad7_total < 0 || args.gad7_total > 21 ||
+      args.pq16_total < 0 || args.pq16_total > 16 ||
+      args.phq9_item9_score < 0 || args.phq9_item9_score > 3
+    ) {
+      throw new Error("Invalid score range: PHQ-9 must be 0-27, GAD-7 0-21, PQ-16 0-16, and PHQ-9 Item 9 0-3.");
+    }
+
+    if (args.phq9_item9_flag && args.phq9_item9_score === 0) {
+      throw new Error("Invalid item 9 score: flag is true but score is 0.");
+    }
+    if (!args.phq9_item9_flag && args.phq9_item9_score > 0) {
+      throw new Error("Invalid item 9 flag: score is positive but flag is false.");
     }
 
     return await ctx.db.insert("screenings", {

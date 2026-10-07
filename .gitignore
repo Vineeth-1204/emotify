@@ -45,6 +45,7 @@ yarn-error.*
 
 # APKs and scratch
 *.apk
+*.pdf
 scratch/
 ~$*
 *.tmp

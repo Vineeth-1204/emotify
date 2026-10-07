@@ -1,14 +1,14 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Modal, TextInput, ActivityIndicator, Alert, Animated, Platform } from "react-native";
 import { useRouter } from "expo-router";
-import { usePaginatedQuery, useMutation, useQuery } from "convex/react";
+import { usePaginatedQuery, useMutation, useQuery, useConvexAuth } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { useAppAuth } from "@/utils/auth";
 import { Ionicons } from "@expo/vector-icons";
 import { useThemeColors } from "@/context/MoodThemeContext";
 import { Calendar } from "react-native-calendars";
-import { MitraAvatar } from "@/components/avatar/MitraAvatar";
+import { EmotyAvatar, MitraAvatar } from "@/components/avatar/EmotyAvatar";
 
 const HOURS = Array.from({ length: 12 }, (_, i) => (i + 1).toString().padStart(2, '0'));
 const MINUTES = Array.from({ length: 60 }, (_, i) => i.toString().padStart(2, '0'));
@@ -176,10 +176,12 @@ type TabStatus = "pending" | "waiting" | "accepted" | "rejected" | "completed";
 export default function AppointmentsScreen() {
   const router = useRouter();
   const colors = useThemeColors();
-  const { user } = useAppAuth();
+  const { user, isAuthenticated } = useAppAuth();
+  const { isAuthenticated: isConvexAuthed } = useConvexAuth();
+  const isReady = Boolean(isAuthenticated && isConvexAuthed && user?.id);
   const clerkId = user?.id || "";
 
-  const dbUser = useQuery(api.users.getByClerkId, { clerkId });
+  const dbUser = useQuery(api.users.getByClerkId, isReady ? { clerkId } : "skip");
 
   // Pagination Query
   const {
@@ -211,6 +213,48 @@ export default function AppointmentsScreen() {
   const [showReschedule, setShowReschedule] = useState(false);
   const [showComplete, setShowComplete] = useState(false);
   const [showAttendancePrompt, setShowAttendancePrompt] = useState(false);
+  const [showCounsellorReqModal, setShowCounsellorReqModal] = useState(false);
+  const [reqThought, setReqThought] = useState("");
+  const [submittingReq, setSubmittingReq] = useState(false);
+
+  const myCounsellorRequests = useQuery(api.counsellorRequests.getMyRequests);
+  const createCounsellorRequest = useMutation(api.counsellorRequests.create);
+  const myFollowUps = useQuery(api.followUps.getStudentFollowUps, {});
+  const completeFollowUp = useMutation(api.followUps.markComplete);
+  const [completingFollowUpId, setCompletingFollowUpId] = useState<string | null>(null);
+
+  const handleStudentCompleteFollowUp = async (id: Id<"followUps">) => {
+    setCompletingFollowUpId(id);
+    try {
+      await completeFollowUp({ id });
+      Alert.alert("Success", "Care follow-up marked as completed.");
+    } catch (err: any) {
+      Alert.alert("Error", err.message || "Failed to complete follow-up.");
+    } finally {
+      setCompletingFollowUpId(null);
+    }
+  };
+
+  const handleRequestCounselor = async () => {
+    if (!reqThought.trim()) {
+      Alert.alert("Required", "Please describe what you would like to discuss.");
+      return;
+    }
+    setSubmittingReq(true);
+    try {
+      await createCounsellorRequest({
+        thought_original: reqThought.trim(),
+        sourceType: "self_initiated",
+      });
+      setShowCounsellorReqModal(false);
+      setReqThought("");
+      Alert.alert("Request Sent", "Your counselor support request has been submitted.");
+    } catch (err: any) {
+      Alert.alert("Request Error", err.message || "Failed to submit request.");
+    } finally {
+      setSubmittingReq(false);
+    }
+  };
 
   // Form State - Create
   const [title, setTitle] = useState("");
@@ -397,6 +441,153 @@ export default function AppointmentsScreen() {
                </View>
              )}
            </Animated.View>
+        </View>
+      )}
+
+      {/* COUNSELOR SUPPORT STATUS CARD */}
+      <View style={{ paddingHorizontal: 20, marginBottom: 12 }}>
+        {myCounsellorRequests && myCounsellorRequests.length > 0 ? (
+          <View style={{ backgroundColor: colors.surface, borderRadius: 16, padding: 16, borderWidth: 1, borderColor: (colors.border as string) || '#e5e7eb' }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Ionicons name="chatbubbles-outline" size={18} color={colors.primary} />
+                <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text }}>Counselor Support</Text>
+              </View>
+              <View style={{
+                paddingHorizontal: 10,
+                paddingVertical: 4,
+                borderRadius: 12,
+                backgroundColor:
+                  myCounsellorRequests[0].status === 'completed' ? '#dcfce7' :
+                  myCounsellorRequests[0].status === 'scheduled' || myCounsellorRequests[0].status === 'assigned' ? '#dbeafe' :
+                  myCounsellorRequests[0].status === 'dismissed' || myCounsellorRequests[0].status === 'cancelled' ? '#f3f4f6' :
+                  '#fef3c7',
+              }}>
+                <Text style={{
+                  fontSize: 12,
+                  fontWeight: '700',
+                  textTransform: 'capitalize',
+                  color:
+                    myCounsellorRequests[0].status === 'completed' ? '#166534' :
+                    myCounsellorRequests[0].status === 'scheduled' || myCounsellorRequests[0].status === 'assigned' ? '#1e40af' :
+                    myCounsellorRequests[0].status === 'dismissed' || myCounsellorRequests[0].status === 'cancelled' ? '#6b7280' :
+                    '#b45309',
+                }}>
+                  {myCounsellorRequests[0].status === 'pending' ? 'Pending Review' : myCounsellorRequests[0].status}
+                </Text>
+              </View>
+            </View>
+
+            {myCounsellorRequests[0].thought_original && (
+              <Text style={{ fontSize: 14, color: colors.text, marginBottom: 6 }}>
+                "{myCounsellorRequests[0].thought_original}"
+              </Text>
+            )}
+
+            {myCounsellorRequests[0].notes && (
+              <View style={{ backgroundColor: colors.background, padding: 8, borderRadius: 8, marginTop: 4, marginBottom: 6 }}>
+                <Text style={{ fontSize: 12, color: colors.textSecondary }}>
+                  <Text style={{ fontWeight: '600' }}>Counselor Note: </Text>{myCounsellorRequests[0].notes}
+                </Text>
+              </View>
+            )}
+
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
+              <Text style={{ fontSize: 12, color: colors.textMuted }}>
+                Requested {new Date(myCounsellorRequests[0].timestamp).toLocaleDateString()}
+              </Text>
+              {(!myCounsellorRequests[0].status || myCounsellorRequests[0].status === 'completed' || myCounsellorRequests[0].status === 'dismissed' || myCounsellorRequests[0].status === 'cancelled') && (
+                <TouchableOpacity onPress={() => setShowCounsellorReqModal(true)}>
+                  <Text style={{ fontSize: 13, color: colors.primary, fontWeight: '600' }}>New Request</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+        ) : (
+          <TouchableOpacity
+            onPress={() => setShowCounsellorReqModal(true)}
+            style={{
+              backgroundColor: colors.surface,
+              borderRadius: 16,
+              padding: 14,
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              borderWidth: 1,
+              borderColor: (colors.border as string) || '#e5e7eb',
+            }}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <Ionicons name="chatbubbles-outline" size={20} color={colors.primary} />
+              <View>
+                <Text style={{ fontSize: 14, fontWeight: '600', color: colors.text }}>Need Counselor Guidance?</Text>
+                <Text style={{ fontSize: 12, color: colors.textMuted }}>Request confidential support from institutional counselors</Text>
+              </View>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+          </TouchableOpacity>
+        )}
+      </View>
+
+      {/* CARE FOLLOW-UPS SECTION */}
+      {myFollowUps && myFollowUps.length > 0 && (
+        <View style={{ paddingHorizontal: 20, marginBottom: 16 }}>
+          <View style={{ backgroundColor: colors.surface, borderRadius: 16, padding: 16, borderWidth: 1, borderColor: (colors.border as string) || '#e5e7eb' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Ionicons name="checkbox-outline" size={18} color={colors.primary} />
+                <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text }}>Care Follow-ups</Text>
+              </View>
+              <Text style={{ fontSize: 12, color: colors.textMuted }}>
+                {myFollowUps.filter((f: any) => !f.completed).length} pending
+              </Text>
+            </View>
+
+            {myFollowUps.slice(0, 3).map((fu: any) => (
+              <View
+                key={fu._id}
+                style={{
+                  paddingVertical: 10,
+                  borderTopWidth: 1,
+                  borderTopColor: (colors.border as string) || '#f3f4f6',
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                }}
+              >
+                <View style={{ flex: 1, paddingRight: 10 }}>
+                  <Text style={{ fontSize: 14, fontWeight: '600', color: colors.text, textTransform: 'capitalize' }}>
+                    {fu.type.replace(/_/g, ' ')}
+                  </Text>
+                  <Text style={{ fontSize: 12, color: colors.textMuted, marginTop: 2 }}>
+                    Due: {new Date(fu.dueDate).toLocaleDateString()}
+                  </Text>
+                </View>
+
+                {fu.completed || fu.status === 'completed' ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#dcfce7', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 }}>
+                    <Ionicons name="checkmark-circle" size={14} color="#15803d" />
+                    <Text style={{ fontSize: 11, fontWeight: '600', color: '#15803d' }}>Completed</Text>
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    onPress={() => handleStudentCompleteFollowUp(fu._id)}
+                    disabled={completingFollowUpId === fu._id}
+                    style={{
+                      backgroundColor: colors.primary,
+                      paddingHorizontal: 10,
+                      paddingVertical: 6,
+                      borderRadius: 8,
+                    }}
+                  >
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: '#fff' }}>
+                      {completingFollowUpId === fu._id ? "..." : "Complete"}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            ))}
+          </View>
         </View>
       )}
 
@@ -621,6 +812,41 @@ export default function AppointmentsScreen() {
         </View>
       </Modal>
 
+      {/* COUNSELOR REQUEST MODAL */}
+      <Modal visible={showCounsellorReqModal} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: colors.surface }]}>
+            {renderCloseButton(() => setShowCounsellorReqModal(false))}
+            <Text style={[styles.modalTitle, { color: colors.text }]}>Request Counselor Support</Text>
+            <Text style={{ color: colors.textMuted, fontSize: 13, marginBottom: 16 }}>
+              Share what you'd like guidance with. A campus counselor will review and reach out.
+            </Text>
+
+            <TextInput
+              style={[styles.input, { backgroundColor: colors.background, color: colors.text, minHeight: 90, textAlignVertical: 'top' }]}
+              placeholder="What's on your mind? (e.g. academic stress, anxiety, personal issues)"
+              placeholderTextColor={colors.textMuted}
+              value={reqThought}
+              onChangeText={setReqThought}
+              multiline
+              numberOfLines={4}
+            />
+
+            <TouchableOpacity
+              onPress={handleRequestCounselor}
+              disabled={submittingReq}
+              style={[styles.btn, { backgroundColor: colors.primary, marginTop: 8 }]}
+            >
+              {submittingReq ? (
+                <ActivityIndicator color="#fff" size="small" />
+              ) : (
+                <Text style={{ color: '#fff', fontWeight: 'bold' }}>Submit Request</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
     </View>
   );
 }
@@ -690,6 +916,13 @@ function AppointmentCard({ appt, colors, styles, handleDelete, setSelectedAppt, 
         <Ionicons name="time-outline" size={16} color={colors.primary} />
         <Text style={{ color: colors.textSecondary }}>{appt.time}</Text>
       </View>
+
+      {appt.counsellorRequestId && (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 6 }}>
+          <Ionicons name="link-outline" size={14} color={colors.primary} />
+          <Text style={{ color: colors.primary, fontSize: 12, fontWeight: '600' }}>Linked to Counselor Request</Text>
+        </View>
+      )}
       
       {appt.status === 'accepted' && timeLeftStr && (
         <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8, gap: 6 }}>

@@ -158,9 +158,9 @@ export default function AddUserModal({ onClose, onSuccess }: { onClose: () => vo
           <>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
               <div>
-                <h2 style={{ fontSize: "1.5rem", fontWeight: 600, color: "var(--text-primary)", margin: "0 0 4px 0" }}>Add New User</h2>
+                <h2 style={{ fontSize: "1.5rem", fontWeight: 600, color: "var(--text-primary)", margin: "0 0 4px 0" }}>Add Student</h2>
                 <p style={{ color: "var(--text-secondary)", fontSize: "0.875rem", margin: 0 }}>
-                  Initialize a new user profile with secure temporary access.
+                  Create a student profile with secure temporary access.
                 </p>
               </div>
               <button

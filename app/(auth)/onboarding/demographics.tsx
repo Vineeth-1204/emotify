@@ -3,7 +3,7 @@ import { View, Text, TextInput, StyleSheet, ScrollView, KeyboardAvoidingView, Pl
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { useAppAuth } from "@/utils/auth";
-import { useMutation, useQuery } from "convex/react";
+import { useMutation, useQuery, useConvexAuth } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Colors } from "@/constants/Colors";
 import { Theme } from "@/constants/Theme";
@@ -11,14 +11,17 @@ import { Button } from "@/components/ui/Button";
 
 export default function DemographicsScreen() {
   const router = useRouter();
-  const { user, updateUser } = useAppAuth();
+  const { user, isAuthenticated, updateUser } = useAppAuth();
+  const { isAuthenticated: isConvexAuthed } = useConvexAuth();
+  const isReady = Boolean(isAuthenticated && isConvexAuthed && user?.id);
+
   const params = useLocalSearchParams<{
     emergencyName: string;
     emergencyPhone: string;
   }>();
 
-  const appUser = useQuery(api.users.getByClerkId, user?.id ? {
-    clerkId: user.id,
+  const appUser = useQuery(api.users.getByClerkId, isReady ? {
+    clerkId: user!.id,
   } : "skip");
 
   const completeOnboarding = useMutation(api.users.completeOnboarding);

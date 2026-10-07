@@ -43,6 +43,9 @@
     "signOutConfirmMessage": "क्या आप वाकई अपने खाते से साइन आउट करना चाहते हैं?"
   },
   "home": {
+    "checkInCompactTitle": "दैनिक चेक-इन",
+    "checkInMoodToday": "आज {{mood}}",
+    "goalSuggestedCopy": "{{companionName}} ने आज के लिए एक छोटी गतिविधि चुनी है।",
     "greetingMorning": "शुभ प्रभात",
     "greetingAfternoon": "शुभ दोपहर",
     "greetingEvening": "शुभ संध्या",
@@ -72,7 +75,7 @@
     "moodStreakDays": "{{count}} दिन का चेक-इन क्रम",
     "moodStreakToday": "आज दर्ज किया गया",
     "checkInCompletedTitle": "दैनिक चेक-इन पूर्ण",
-    "checkInCompletedDesc": "आपने आज {{mood}} महसूस करना दर्ज किया है। मित्रा आपके साथ है।",
+    "checkInCompletedDesc": "आपने आज {{mood}} महसूस करना दर्ज किया है। इमोटी (Emoty) आपके साथ है।",
     "updateCheckIn": "चेक-इन अपडेट करें",
     "metricsTitle": "कल्याण संतुलन",
     "metricsSubtitle": "हाल के चेक-इन पर आधारित गोपनीय संकेतक",
@@ -104,6 +107,7 @@
     "dailyInspirationSubtitle": "आपके दिन के लिए एक सचेत अनुस्मारक"
   },
   "profile": {
+    "companionPersonalizedSubtitle": "एक सहयोगी दोस्त, जब भी आपको ज़रूरत हो।",
     "title": "प्रोफ़ाइल",
     "subtitle": "खाता और व्यक्तिगत प्राथमिकताएं",
     "headerStatus": "आप बहुत अच्छा कर रहे हैं — आगे बढ़ते रहें",
@@ -123,7 +127,7 @@
     "avatarGirl": "लड़की (Girl)",
     "avatarBoy": "लड़का (Boy)",
     "companionNameLabel": "साथी का नाम",
-    "companionNameHelper": "डिफ़ॉल्ट नाम मित्रा है।",
+    "companionNameHelper": "डिफ़ॉल्ट नाम इमोटी (Emoty) है।",
     "renameModalTitle": "अपने साथी का नाम रखें",
     "renameModalSubtitle": "अपने साथी को एक ऐसा नाम दें जो आपके लिए व्यक्तिगत और सुखद हो।",
     "renameInputPlaceholder": "साथी का नाम दर्ज करें...",
@@ -174,6 +178,11 @@
     "signOutBtn": "साइन आउट करें"
   },
   "tools": {
+    "howImFeelingTitle": "मैं कैसा महसूस कर रहा/रही हूँ",
+    "howImFeelingDesc": "अपनी भावनाओं को समझें और जानें कि वे शरीर में कहाँ महसूस होती हैं।",
+    "howImFeelingTag": "बॉडी स्कैन",
+    "companionNameTitle": "{{companionName}}",
+    "companionNameDesc": "सहायता के लिए {{companionName}} से बात करें।",
     "title": "थेरेपी हब",
     "subtitle": "आपके मानसिक लचीलेपन के लिए क्यूरेटेड उपकरण।",
     "catAll": "सभी",
@@ -232,6 +241,16 @@
     "emergencyContactHelpline": "हेल्पलाइन नंबर देखें"
   },
   "companion": {
+    "emergencyBannerSupportDesc": "{{name}} आपका साथ दे सकते हैं, लेकिन आपातकालीन सहायता का विकल्प नहीं हैं। यदि आप बहुत परेशान महसूस करें, तो निःशुल्क गोपनीय सहायता 24/7 उपलब्ध है।",
+    "quickActionTellMore": "और बताएं",
+    "quickActionBreathe": "साँस लें",
+    "quickActionReflect": "विचार करें",
+    "quickActionGratitude": "आभार",
+    "quickActionTellMoreMessage": "मैं अपने मन की बात के बारे में और बात करना चाहता/चाहती हूँ।",
+    "quickActionBreatheMessage": "मैं थोड़ी देर साँस लेने का अभ्यास करना चाहता/चाहती हूँ।",
+    "quickActionReflectMessage": "मैं सोचना चाहता/चाहती हूँ कि क्या हुआ और उसका मुझ पर क्या असर पड़ा।",
+    "quickActionGratitudeMessage": "मैं एक छोटी-सी बात के बारे में सोचना चाहता/चाहती हूँ जिसके लिए मैं आभारी हूँ।",
+    "quickActionStartBreathing": "साँस लेने का अभ्यास शुरू करें",
     "chatTitle": "{{name}} साथी",
     "chatSubtitle": "सुरक्षित, निजी, सहानुभूतिपूर्ण संवाद",
     "inputPlaceholder": "{{name}} को संदेश भेजें...",

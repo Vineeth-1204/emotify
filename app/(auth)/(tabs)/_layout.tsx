@@ -4,7 +4,7 @@ import { useThemeColors } from "@/context/MoodThemeContext";
 import { Theme } from "@/constants/Theme";
 import { Ionicons } from "@expo/vector-icons";
 import { useAppAuth } from "@/utils/auth";
-import { useQuery, useMutation } from "convex/react";
+import { useQuery, useMutation, useConvexAuth } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { View, Text, StyleSheet, Linking, Alert, Platform, TouchableOpacity } from "react-native";
 import { Button } from "@/components/ui/Button";
@@ -16,22 +16,26 @@ import { ShieldSafetyIcon } from "@/components/svg/system";
 import { useLanguage } from "@/context/LanguageContext";
 
 export default function TabLayout() {
-  const { user, logout } = useAppAuth();
+  const { user, isAuthenticated, logout } = useAppAuth();
+  const { isAuthenticated: isConvexAuthed } = useConvexAuth();
+  const isReady = Boolean(isAuthenticated && isConvexAuthed && user?.id);
+
   const router = useRouter();
   const [dismissedEmergency, setDismissedEmergency] = useState(false);
   const insets = useSafeAreaInsets();
   const colors = useThemeColors();
   const { t } = useLanguage();
 
-  const appUser = useQuery(api.users.getByClerkId, user?.id ? {
-    clerkId: user.id,
+  const appUser = useQuery(api.users.getByClerkId, isReady ? {
+    clerkId: user!.id,
   } : "skip");
 
-  const latestTriage = useQuery(api.triage.getLatest, user?.id ? {
-    userId: user.id,
+  const latestTriage = useQuery(api.triage.getLatest, isReady ? {
+    userId: user!.id,
   } : "skip");
 
   const createAlert = useMutation(api.alerts.createAlert);
+  const createCounsellorRequest = useMutation(api.counsellorRequests.create);
 
   React.useEffect(() => {
     if (latestTriage?.level === "force_retest") {
@@ -43,8 +47,21 @@ export default function TabLayout() {
 
   const handleTalkToCounselor = async () => {
     if (!user) return;
-    await createAlert({ userId: user.id, type: "counselor_request" });
-    Alert.alert("Request Sent", "A counselor has been notified and will reach out to you shortly.");
+    try {
+      // 1. Canonical counselor request record
+      await createCounsellorRequest({
+        sourceType: "emergency_modal",
+        triageId: latestTriage?._id ? (latestTriage._id as any) : undefined,
+        situation_text: "Student requested immediate counselor contact from emergency modal",
+      });
+
+      // 2. Preserve safety alert for crisis path
+      await createAlert({ userId: user.id, type: "counselor_request" });
+
+      Alert.alert("Request Sent", "A counselor has been notified and will reach out to you shortly.");
+    } catch (err: any) {
+      Alert.alert("Request Error", err.message || "Failed to submit request.");
+    }
   };
 
   if (isEmergency) {

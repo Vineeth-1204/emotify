@@ -1,9 +1,11 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useQuery, useMutation } from 'convex/react';
+import { useQuery, useMutation, useConvexAuth } from 'convex/react';
 import { api } from '@/convex/_generated/api';
 import { useAppAuth } from '@/utils/auth';
-import { AvatarState } from '@/components/avatar/MitraAvatar';
+import { AvatarState } from '@/components/avatar/EmotyAvatar';
+import { getCompanionDisplayName } from '@/common/companionName';
+import { resolveAvatarPresentationState } from '@/common/avatarPresentation';
 
 export type HomeEmotionCard = 'good' | 'calm' | 'low' | 'heavy';
 export type AvatarGender = 'female' | 'male';
@@ -65,18 +67,21 @@ const ASYNC_KEY_NAME = '@emotify_avatar_name';
 const ASYNC_KEY_GENDER = '@emotify_avatar_gender';
 
 export const AvatarProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user } = useAppAuth();
-  const dbUser = useQuery(api.users.getByClerkId, user?.id ? { clerkId: user.id } : 'skip');
-  const latestTriage = useQuery(api.triage.getLatest, user?.id ? { userId: user.id } : 'skip');
-  const userGoals = useQuery(api.microGoals.getUserGoals, user?.id ? { userId: user.id } : 'skip');
+  const { user, isAuthenticated } = useAppAuth();
+  const { isAuthenticated: isConvexAuthed } = useConvexAuth();
+  const isReady = Boolean(isAuthenticated && isConvexAuthed && user?.id);
+
+  const dbUser = useQuery(api.users.getByClerkId, isReady ? { clerkId: user!.id } : 'skip');
+  const latestTriage = useQuery(api.triage.getLatest, isReady ? { userId: user!.id } : 'skip');
+  const userGoals = useQuery(api.microGoals.getUserGoals, isReady ? { userId: user!.id } : 'skip');
   const backendPrefs = useQuery(
     api.users.getMitraPreferences,
-    user?.id ? { userId: user.id } : 'skip'
+    isReady ? { userId: user!.id } : 'skip'
   );
   const updateMitraPrefsMutation = useMutation(api.users.updateMitraPreferences);
 
   const [avatarState, setInternalAvatarState] = useState<AvatarState>('idle');
-  const [avatarName, setAvatarNameState] = useState<string>('Mitra');
+  const [avatarName, setAvatarNameState] = useState<string>(getCompanionDisplayName());
   const [avatarGender, setAvatarGenderState] = useState<AvatarGender>('female');
   const [isSafetyActive, setIsSafetyActive] = useState(false);
   const [isCelebrating, setIsCelebrating] = useState(false);
@@ -90,7 +95,7 @@ export const AvatarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           AsyncStorage.getItem(ASYNC_KEY_GENDER),
         ]);
         if (cachedName && cachedName.trim().length > 0) {
-          setAvatarNameState(cachedName.trim());
+          setAvatarNameState(getCompanionDisplayName(cachedName));
         }
         if (cachedGender === 'female' || cachedGender === 'male') {
           setAvatarGenderState(cachedGender);
@@ -107,8 +112,9 @@ export const AvatarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const prefs = backendPrefs || dbUser?.mitraPreferences;
     if (prefs) {
       if (prefs.name && prefs.name.trim().length > 0) {
-        setAvatarNameState(prefs.name);
-        AsyncStorage.setItem(ASYNC_KEY_NAME, prefs.name).catch(() => {});
+        const preferredName = getCompanionDisplayName(prefs.name);
+        setAvatarNameState(preferredName);
+        AsyncStorage.setItem(ASYNC_KEY_NAME, preferredName).catch(() => {});
       }
       if (prefs.avatarGender === 'female' || prefs.avatarGender === 'male') {
         setAvatarGenderState(prefs.avatarGender);
@@ -120,9 +126,8 @@ export const AvatarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   // Set avatar name persistently
   const setAvatarName = useCallback(
     async (name: string) => {
-      let cleanName = name.replace(/[\x00-\x1F\x7F]/g, '').trim();
-      if (cleanName.length > 30) cleanName = cleanName.substring(0, 30).trim();
-      if (!cleanName) cleanName = 'Mitra';
+      const sanitizedName = name.replace(/[\x00-\x1F\x7F]/g, '');
+      const cleanName = getCompanionDisplayName(sanitizedName);
 
       setAvatarNameState(cleanName);
       try {
@@ -165,9 +170,8 @@ export const AvatarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     async (prefs: { name?: string; avatarGender?: AvatarGender }) => {
       let cleanName: string | undefined = undefined;
       if (prefs.name !== undefined) {
-        let n = prefs.name.replace(/[\x00-\x1F\x7F]/g, '').trim();
-        if (n.length > 30) n = n.substring(0, 30).trim();
-        cleanName = n.length > 0 ? n : 'Mitra';
+        const sanitizedName = prefs.name.replace(/[\x00-\x1F\x7F]/g, '');
+        cleanName = getCompanionDisplayName(sanitizedName);
         setAvatarNameState(cleanName);
         await AsyncStorage.setItem(ASYNC_KEY_NAME, cleanName).catch(() => {});
       }
@@ -214,20 +218,27 @@ export const AvatarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   // State setter with strict priority enforcement
   const setAvatarState = useCallback((newState: AvatarState, customPriority?: number) => {
+    // Resolve safe presentation state using single authoritative resolver
+    const resolvedState = resolveAvatarPresentationState({
+      isSafetyActive,
+      explicitAvatarState: newState,
+      defaultState: avatarState,
+    });
+
     // Priority 1 invariant: Safety state cannot be overridden
-    if (isSafetyActive && newState !== 'supportive') {
+    if (isSafetyActive && resolvedState !== 'supportive') {
       return;
     }
 
     const currentPriority = PRIORITY_LEVELS[avatarState] ?? 5;
-    const requestedPriority = customPriority ?? PRIORITY_LEVELS[newState] ?? 5;
+    const requestedPriority = customPriority ?? PRIORITY_LEVELS[resolvedState] ?? 5;
 
     // Only allow change if requested priority is higher (numerically lower) or equal
     if (requestedPriority <= currentPriority || currentPriority === 5) {
-      setInternalAvatarState(newState);
+      setInternalAvatarState(resolvedState);
 
       // Auto-decay celebration after 2.5 seconds
-      if (newState === 'celebrating') {
+      if (resolvedState === 'celebrating') {
         setIsCelebrating(true);
         setTimeout(() => {
           setIsCelebrating(false);

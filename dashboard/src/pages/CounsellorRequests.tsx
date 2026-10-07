@@ -302,7 +302,7 @@ export default function CounsellorRequests() {
                           className="btn btn-primary"
                           onClick={async () => {
                             await handleStatusChange(req._id, "scheduled");
-                            navigate(`/sessions`);
+                            navigate(`/sessions?studentId=${req.patientId}&counsellorRequestId=${req._id}`);
                           }}
                           style={{ padding: "6px 12px", fontSize: "0.82rem", display: "flex", alignItems: "center", gap: "6px" }}
                         >

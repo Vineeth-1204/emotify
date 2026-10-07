@@ -1,230 +1,225 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
-import { Activity, AlertTriangle, BrainCircuit, HeartPulse, TrendingUp, Download, Clock, ShieldAlert, CheckCircle2, Calendar, UserPlus, Zap } from "lucide-react";
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { LoadingState, EmptyState } from "../components/UIComponents";
+import {
+  Activity,
+  AlertTriangle,
+  Calendar,
+  CheckCircle2,
+  Clock,
+  HeartPulse,
+  TrendingUp,
+  UserPlus,
+} from "lucide-react";
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+import { EmptyState, LoadingState } from "../components/UIComponents";
 import EnrollPatientModal from "../components/EnrollPatientModal";
+
+function getAlertTitle(type: string) {
+  if (type === "suicideRisk" || type === "suicide") return "Suicide risk alert";
+  if (type === "psychosisRisk" || type === "psychosis") return "Psychosis risk alert";
+  if (type === "counselor_request") return "Counsellor request";
+  return `${type.charAt(0).toUpperCase()}${type.slice(1).replace(/_/g, " ")} alert`;
+}
 
 export default function Overview() {
   const data = useQuery(api.dashboard.getDashboardOverview);
   const feed = useQuery(api.dashboard.getActivityFeed);
+  const alerts = useQuery(api.dashboard.getAlerts);
   const allAppointments = useQuery(api.appointments.listAllTwoWayAppointments);
 
   const [showEnrollModal, setShowEnrollModal] = useState(false);
 
-  const todayStr = new Date().toISOString().split('T')[0];
-  const todaysAppointments = allAppointments?.filter((a: any) => a.date === todayStr) || [];
+  const todayStr = new Date().toISOString().split("T")[0];
+  const todaysAppointments = allAppointments?.filter((appointment) => appointment.date === todayStr) || [];
   const chartData = data?.trendData?.length ? data.trendData : [];
+  const openAlerts = (alerts || [])
+    .filter((alert) => alert.status === "active" || alert.status === "pending" || alert.status === "escalated")
+    .slice(0, 4);
 
-  const handleExportReport = () => {
-    window.print();
-  };
-
-  if (data === undefined || feed === undefined) {
-    return <LoadingState message="Connecting to institutional telemetry..." />;
+  if (data === undefined || feed === undefined || alerts === undefined) {
+    return <LoadingState message="Loading your counsellor overview…" />;
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }} className="animate-fade-in">
-      {/* Top Header Bar with Quick Action Hub */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
+    <div className="overview-page animate-fade-in">
+      <section className="overview-heading">
         <div>
-          <h1 style={{ fontSize: '2.4rem', marginBottom: '4px', color: 'var(--text-primary)' }}>Command Center</h1>
-          <p style={{ color: 'var(--text-secondary)', fontSize: '1.05rem', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span className="live-pulse-green"></span> Live monitoring of institutional mental health metrics
-          </p>
+          <p className="overview-eyebrow">Workspace</p>
+          <h1>Counsellor Dashboard</h1>
+          <p>Review student wellbeing, alerts and sessions in one place.</p>
         </div>
-
-        {/* Quick Action Hub */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <button
-            className="btn btn-primary"
-            onClick={() => setShowEnrollModal(true)}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "8px",
-              background: "linear-gradient(135deg, #2563eb, #1d4ed8)",
-              boxShadow: "0 4px 14px rgba(37, 99, 235, 0.3)",
-              fontWeight: 700
-            }}
-          >
-            <UserPlus size={18} /> + Add Patient / Rapid Triage
+        <div className="overview-actions">
+          <Link className="btn btn-secondary" to="/alerts">
+            <AlertTriangle size={17} /> Review alerts
+          </Link>
+          <button className="btn btn-primary" onClick={() => setShowEnrollModal(true)}>
+            <UserPlus size={17} /> Add student
           </button>
         </div>
-      </div>
+      </section>
 
-      {/* Metric Cards with Glassmorphism Soft Depth & Live Pulse Animations */}
-      <div className="grid-3">
-        <div className="glass-panel hud-panel glass-panel-hover glass-soft-depth animate-fade-in delay-1" style={{ borderTop: '3px solid var(--accent-primary)' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '24px' }}>
-            <div style={{ padding: '14px', background: 'rgba(99, 102, 241, 0.1)', borderRadius: '14px', color: 'var(--accent-primary)' }}>
-              <HeartPulse size={28} />
+      <section aria-labelledby="overview-metrics-title">
+        <h2 className="overview-section-heading" id="overview-metrics-title">At a glance</h2>
+        <div className="overview-metrics">
+          <article className="overview-metric-card">
+            <div className="overview-metric-icon"><HeartPulse size={20} /></div>
+            <div>
+              <p className="overview-metric-label">Students</p>
+              <p className="overview-metric-value">{data?.totalPatients ?? 0}</p>
+              <p className="overview-metric-note">Registered accounts</p>
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px' }}>
-              <span className="badge badge-blue">Active Base</span>
-              <span className="hud-tag" style={{ fontSize: '0.65rem', padding: '3px 8px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                <span className="live-pulse-green"></span> LIVE SYNC
-              </span>
-            </div>
-          </div>
-          <h3 style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Total Enrolled Patients</h3>
-          <p className="hud-num" style={{ fontSize: '3.2rem', fontWeight: 800, letterSpacing: '-0.03em', margin: 0 }}>{data?.totalPatients ?? 0}</p>
-        </div>
+          </article>
 
-        <div className="glass-panel hud-panel glass-panel-hover glass-soft-depth animate-fade-in delay-2" style={{ borderTop: '3px solid var(--danger)' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '24px' }}>
-            <div style={{ padding: '14px', background: 'rgba(244, 63, 94, 0.1)', borderRadius: '14px', color: 'var(--danger)' }}>
-              <AlertTriangle size={28} />
+          <article className="overview-metric-card">
+            <div className="overview-metric-icon priority"><AlertTriangle size={20} /></div>
+            <div>
+              <p className="overview-metric-label">Students with high-risk triage</p>
+              <p className="overview-metric-value">{data?.severeCases ?? 0}</p>
+              <p className="overview-metric-note">Latest severe or flagged triage</p>
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px' }}>
-              <span className="badge badge-red">{data?.severeCases || 0} Critical</span>
-              <span className="hud-tag" style={{ fontSize: '0.65rem', padding: '3px 8px', color: 'var(--danger)', background: 'rgba(244, 63, 94, 0.08)', borderColor: 'rgba(244, 63, 94, 0.25)', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                <span className="live-pulse-red"></span> TRIAGE: ALERT
-              </span>
-            </div>
-          </div>
-          <h3 style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Severe / Critical Risk</h3>
-          <p className="hud-num" style={{ fontSize: '3.2rem', fontWeight: 800, letterSpacing: '-0.03em', margin: 0 }}>
-            {data?.severeCases ?? 0}
-          </p>
-        </div>
+          </article>
 
-        <div className="glass-panel hud-panel glass-panel-hover glass-soft-depth animate-fade-in delay-3" style={{ borderTop: '3px solid var(--warning)' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '24px' }}>
-            <div style={{ padding: '14px', background: 'rgba(249, 115, 22, 0.1)', borderRadius: '14px', color: 'var(--warning)' }}>
-              <BrainCircuit size={28} />
+          <article className="overview-metric-card">
+            <div className="overview-metric-icon attention"><Activity size={20} /></div>
+            <div>
+              <p className="overview-metric-label">Open alerts</p>
+              <p className="overview-metric-value">{data?.activeAlertsCount ?? 0}</p>
+              <p className="overview-metric-note">Pending, active or escalated</p>
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px' }}>
-              <span className="badge badge-orange">{data?.activeAlertsCount || 0} Open</span>
-              <span className="hud-tag" style={{ fontSize: '0.65rem', padding: '3px 8px', color: 'var(--warning)', background: 'rgba(249, 115, 22, 0.08)', borderColor: 'rgba(249, 115, 22, 0.25)', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                <span className="live-pulse-green"></span> SYNC: LIVE
-              </span>
-            </div>
-          </div>
-          <h3 style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Active Clinical Alerts</h3>
-          <p className="hud-num" style={{ fontSize: '3.2rem', fontWeight: 800, letterSpacing: '-0.03em', margin: 0 }}>{data?.activeAlertsCount ?? 0}</p>
+            <Link className="overview-card-link" to="/alerts" aria-label="Review open alerts">→</Link>
+          </article>
         </div>
-      </div>
+      </section>
+
+      <section className="overview-attention" aria-labelledby="attention-title">
+        <div className="overview-attention-heading">
+          <div>
+            <h2 id="attention-title">Needs your attention</h2>
+            <p>Open alerts for staff review.</p>
+          </div>
+          <Link to="/alerts">View all alerts <span aria-hidden="true">→</span></Link>
+        </div>
+        {openAlerts.length === 0 ? (
+          <div className="overview-attention-empty">
+            <CheckCircle2 size={19} aria-hidden="true" />
+            <span>No open alerts right now.</span>
+          </div>
+        ) : (
+          <div className="overview-attention-list">
+            {openAlerts.map((alert) => (
+              <Link className="overview-attention-item" to="/alerts" key={alert._id}>
+                <span className={`overview-attention-marker ${alert.type === "suicideRisk" || alert.type === "suicide" ? "urgent" : alert.type === "psychosisRisk" || alert.type === "psychosis" ? "priority" : "standard"}`} aria-hidden="true">
+                  <AlertTriangle size={16} />
+                </span>
+                <span className="overview-attention-copy">
+                  <strong>{getAlertTitle(alert.type)}</strong>
+                  <span>{alert.patientName || "Student"} · {alert.status || "active"}</span>
+                </span>
+                <time dateTime={new Date(alert.createdAt).toISOString()}>{new Date(alert.createdAt).toLocaleDateString()}</time>
+              </Link>
+            ))}
+          </div>
+        )}
+      </section>
 
       {showEnrollModal && <EnrollPatientModal onClose={() => setShowEnrollModal(false)} />}
 
-      <div className="grid-2">
-        <div className="glass-panel hud-panel animate-fade-in delay-2">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
-            <h3 style={{ fontSize: '1.2rem', display: 'flex', alignItems: 'center', gap: '10px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-              <TrendingUp size={20} color="var(--accent-primary)" />
-              Severity Trends (Last 7 Days)
-            </h3>
-            <span className="hud-tag">TELEMETRY</span>
+      <div className="overview-content-grid">
+        <section className="glass-panel overview-panel" aria-labelledby="activity-title">
+          <div className="overview-panel-heading">
+            <div>
+              <h2 id="activity-title">Recent Activity</h2>
+              <p>Recent check-ins, alerts and completed activities.</p>
+            </div>
+            <Activity size={19} aria-hidden="true" />
           </div>
-          <div style={{ height: '320px', width: '100%' }}>
+
+          <div className="overview-activity-list">
+            {feed.length === 0 ? (
+              <EmptyState title="No recent activity" description="Updates will appear here as students check in and alerts are recorded." />
+            ) : feed.slice(0, 6).map((item) => (
+              <article className="overview-activity-item" key={item.id}>
+                <span className={`overview-activity-marker ${item.severity || "info"}`} aria-hidden="true">
+                  {item.type === "alert" ? <AlertTriangle size={15} /> : item.type === "goal" ? <CheckCircle2 size={15} /> : <Activity size={15} />}
+                </span>
+                <div className="overview-activity-copy">
+                  <div className="overview-activity-title-row">
+                    <h3>{item.title}</h3>
+                    <time dateTime={new Date(item.time).toISOString()}>
+                      <Clock size={12} aria-hidden="true" />
+                      {new Date(item.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                    </time>
+                  </div>
+                  <p>{item.desc}</p>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <section className="glass-panel overview-panel" aria-labelledby="trends-title">
+          <div className="overview-panel-heading">
+            <div>
+              <h2 id="trends-title">Screening &amp; triage trends</h2>
+              <p>Recorded triage levels over the last seven days.</p>
+            </div>
+            <TrendingUp size={19} aria-hidden="true" />
+          </div>
+          <div className="overview-chart">
             {chartData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="colorSevere" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#f43f5e" stopOpacity={0.4}/>
-                      <stop offset="95%" stopColor="#f43f5e" stopOpacity={0}/>
-                    </linearGradient>
-                    <linearGradient id="colorMod" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#f97316" stopOpacity={0.4}/>
-                      <stop offset="95%" stopColor="#f97316" stopOpacity={0}/>
-                    </linearGradient>
-                  </defs>
-                  <XAxis dataKey="name" stroke="#64748b" fontSize={11} tickLine={false} axisLine={false} dy={10} />
-                  <YAxis stroke="#64748b" fontSize={11} tickLine={false} axisLine={false} />
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+                <AreaChart data={chartData} margin={{ top: 10, right: 8, left: -20, bottom: 0 }}>
+                  <XAxis dataKey="name" stroke="#8290a0" fontSize={11} tickLine={false} axisLine={false} dy={8} />
+                  <YAxis stroke="#8290a0" fontSize={11} tickLine={false} axisLine={false} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e8edf2" vertical={false} />
                   <Tooltip />
-                  <Area type="monotone" dataKey="severe" name="Severe Triage" stroke="#f43f5e" fillOpacity={1} fill="url(#colorSevere)" strokeWidth={3} />
-                  <Area type="monotone" dataKey="moderate" name="Moderate Triage" stroke="#f97316" fillOpacity={1} fill="url(#colorMod)" strokeWidth={3} />
+                  <Area type="monotone" dataKey="severe" name="Severe" stroke="#bd6268" fill="#f4e5e6" strokeWidth={2} />
+                  <Area type="monotone" dataKey="moderate" name="Moderate" stroke="#bd8b50" fill="#f5eee2" strokeWidth={2} />
                 </AreaChart>
               </ResponsiveContainer>
             ) : (
-              <EmptyState title="No Telemetry Data" description="Longitudinal severity trends will render as assessments are logged." />
+              <EmptyState title="No trend data yet" description="Trend data will appear as triage records are added." />
             )}
           </div>
-        </div>
+        </section>
+      </div>
 
-        <div className="glass-panel hud-panel animate-fade-in delay-3" style={{ display: 'flex', flexDirection: 'column' }}>
-           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-             <h3 style={{ fontSize: '1.2rem', display: 'flex', alignItems: 'center', gap: '10px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-              <Activity size={20} color="var(--accent-tertiary)" />
-              Live Activity Feed
-             </h3>
-             <span className="badge badge-green">
-               <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--success)', display: 'inline-block' }}></span>
-               Live Sync
-             </span>
-           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', overflowY: 'auto', flex: 1, paddingRight: '8px' }}>
-            {feed.length === 0 ? (
-              <EmptyState title="No Activity Logs" description="Recent patient check-ins and clinical alerts will stream here." />
-            ) : feed.map((item: any) => (
-              <div key={item.id} style={{ 
-                padding: '16px 20px', 
-                background: 'var(--surface-base)', 
-                borderRadius: '12px', 
-                border: '1px solid var(--border-color)',
-                borderLeft: `4px solid var(--${item.severity})`,
-                transition: 'transform 0.2s',
-                cursor: 'pointer'
-              }}
-              onMouseEnter={(e) => e.currentTarget.style.transform = 'translateX(4px)'}
-              onMouseLeave={(e) => e.currentTarget.style.transform = 'translateX(0)'}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    {item.type === 'alert' && <ShieldAlert size={16} color={`var(--${item.severity})`} />}
-                    {item.type === 'emotion' && <Activity size={16} color={`var(--${item.severity})`} />}
-                    {item.type === 'goal' && <CheckCircle2 size={16} color={`var(--${item.severity})`} />}
-                    <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{item.title}</span>
-                  </div>
-                  <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    <Clock size={12} />
-                    {new Date(item.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </span>
+      <section className="glass-panel overview-panel overview-schedule" aria-labelledby="today-sessions-title">
+        <div className="overview-panel-heading">
+          <div>
+            <h2 id="today-sessions-title">Today’s sessions <span className="overview-count">{todaysAppointments.length}</span></h2>
+            <p>Appointments scheduled for today.</p>
+          </div>
+          <Calendar size={19} aria-hidden="true" />
+        </div>
+        {todaysAppointments.length === 0 ? (
+          <EmptyState title="No sessions scheduled today" />
+        ) : (
+          <div className="overview-session-list">
+            {todaysAppointments.map((appointment) => (
+              <article className="overview-session-item" key={appointment._id}>
+                <div className="overview-session-icon"><Calendar size={18} /></div>
+                <div className="overview-session-copy">
+                  <h3>{appointment.patientName} — {appointment.title}</h3>
+                  <p>{appointment.reason || "Routine check-in"}</p>
                 </div>
-                <p style={{ fontSize: '0.95rem', color: 'var(--text-secondary)' }}>{item.desc}</p>
-              </div>
+                <time>{appointment.time}</time>
+                <span className="badge badge-blue">{appointment.status}</span>
+              </article>
             ))}
           </div>
-        </div>
-      </div>
-
-      <div className="glass-panel hud-panel animate-fade-in delay-4">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-          <h3 style={{ fontSize: '1.2rem', display: 'flex', alignItems: 'center', gap: '10px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-            <Calendar size={20} color="var(--accent-secondary)" />
-            Today's Handshake Schedule ({todaysAppointments.length})
-          </h3>
-          <span className="hud-tag">SCHEDULE</span>
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          {todaysAppointments.length === 0 ? (
-            <EmptyState title="No Appointments Today" description="There are no clinical sessions scheduled for today." />
-          ) : (
-            todaysAppointments.map((appt: any) => (
-              <div key={appt._id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px', background: 'var(--surface-base)', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                  <div style={{ padding: '10px', background: 'rgba(99, 102, 241, 0.1)', color: 'var(--accent-primary)', borderRadius: '10px' }}>
-                    <Calendar size={20} />
-                  </div>
-                  <div>
-                    <h4 style={{ margin: '0 0 4px 0', fontSize: '1rem', fontWeight: 700 }}>{appt.patientName} — {appt.title}</h4>
-                    <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Reason: {appt.reason || "Routine Check-in"}</p>
-                  </div>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--accent-primary)' }}>{appt.time}</span>
-                  <span className="badge badge-green">{appt.status}</span>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      </div>
+        )}
+      </section>
     </div>
   );
 }

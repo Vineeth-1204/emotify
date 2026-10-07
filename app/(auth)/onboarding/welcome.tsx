@@ -6,24 +6,27 @@ import { Colors } from "@/constants/Colors";
 import { Theme } from "@/constants/Theme";
 import { Button } from "@/components/ui/Button";
 import { useAppAuth } from "@/utils/auth";
-import { useQuery } from "convex/react";
+import { useQuery, useConvexAuth } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useLanguage } from "@/context/LanguageContext";
 import { useAvatar, AvatarGender } from "@/context/AvatarContext";
 
-import { MitraAvatar } from "@/components/avatar/MitraAvatar";
+import { EmotyAvatar } from "@/components/avatar/EmotyAvatar";
 import { MindfulnessActivityIcon, DeepBreathingActivityIcon } from "@/components/svg/activities";
 import { CounsellorBadgeIcon, PlantProgress, ReminderIcon } from "@/components/svg/system";
 
 export default function WelcomeScreen() {
   const router = useRouter();
-  const { user } = useAppAuth();
+  const { user, isAuthenticated } = useAppAuth();
+  const { isAuthenticated: isConvexAuthed } = useConvexAuth();
+  const isReady = Boolean(isAuthenticated && isConvexAuthed && user?.id);
+
   const { t } = useLanguage();
   const { avatarName, avatarGender, setMitraPreferences } = useAvatar();
-  const dbUser = useQuery(api.users.getByClerkId, user?.id ? { clerkId: user.id } : "skip");
+  const dbUser = useQuery(api.users.getByClerkId, isReady ? { clerkId: user!.id } : "skip");
 
   const [selectedGender, setSelectedGender] = useState<AvatarGender>(avatarGender || "female");
-  const [customName, setCustomName] = useState<string>(avatarName || "Mitra");
+  const [customName, setCustomName] = useState<string>(avatarName || "Emoty");
 
   useEffect(() => {
     if (avatarGender) setSelectedGender(avatarGender);
@@ -71,11 +74,11 @@ export default function WelcomeScreen() {
     >
       <View style={styles.hero}>
         <View style={{ marginBottom: Theme.spacing.md }}>
-          <MitraAvatar gender={selectedGender} state="happy" size="lg" />
+          <EmotyAvatar gender={selectedGender} state="happy" size="lg" />
         </View>
         <Text style={styles.title}>{t("onboarding.welcomeTitle")}</Text>
         <Text style={styles.subtitle}>
-          {t("onboarding.welcomeSubtitle", { name: customName.trim() || "Mitra" })}
+          {t("onboarding.welcomeSubtitle", { name: customName.trim() || "Emoty" })}
         </Text>
       </View>
 
@@ -100,7 +103,7 @@ export default function WelcomeScreen() {
             accessibilityLabel={`${t("profile.avatarGirl")}, ${selectedGender === "female" ? "selected" : "not selected"}`}
             activeOpacity={0.8}
           >
-            <MitraAvatar gender="female" size="sm" state="happy" />
+            <EmotyAvatar gender="female" size="sm" state="happy" />
             <Text
               style={[
                 styles.avatarOptionText,
@@ -121,7 +124,7 @@ export default function WelcomeScreen() {
             accessibilityLabel={`${t("profile.avatarBoy")}, ${selectedGender === "male" ? "selected" : "not selected"}`}
             activeOpacity={0.8}
           >
-            <MitraAvatar gender="male" size="sm" state="happy" />
+            <EmotyAvatar gender="male" size="sm" state="happy" />
             <Text
               style={[
                 styles.avatarOptionText,

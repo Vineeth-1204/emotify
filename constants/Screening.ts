@@ -11,27 +11,27 @@ export interface ScreeningOption {
   value: number;
 }
 
-// ─── PHQ-9 (Patient Health Questionnaire) ───
+// ─── PHQ-9 (Patient Health Questionnaire - Student-Friendly Adaptation) ───
 export const PHQ9_QUESTIONS: ScreeningQuestion[] = [
-  { id: 1, text: 'Little interest or pleasure in doing things' },
-  { id: 2, text: 'Feeling down, depressed, or hopeless' },
-  { id: 3, text: 'Trouble falling or staying asleep, or sleeping too much' },
-  { id: 4, text: 'Feeling tired or having little energy' },
-  { id: 5, text: 'Poor appetite or overeating' },
-  { id: 6, text: 'Feeling bad about yourself — or that you are a failure or have let yourself or your family down' },
-  { id: 7, text: 'Trouble concentrating on things, such as reading or watching TV' },
-  { id: 8, text: 'Moving or speaking so slowly that other people could have noticed? Or the opposite — being so fidgety or restless' },
-  { id: 9, text: 'Thoughts that you would be better off dead, or of hurting yourself in some way' },
+  { id: 1, text: 'Have you had little or no interest in things you usually enjoy?' },
+  { id: 2, text: 'Have you been feeling sad, low, or hopeless?' },
+  { id: 3, text: 'Have you had trouble sleeping, slept too much, or had an irregular sleep pattern?' },
+  { id: 4, text: 'Have you often felt tired or low on energy?' },
+  { id: 5, text: 'Have you been eating much less or much more than usual?' },
+  { id: 6, text: 'Have you felt bad about yourself, like you are not good enough or have let yourself or others down?' },
+  { id: 7, text: 'Have you had difficulty concentrating on things, such as studying, reading, or watching something?' },
+  { id: 8, text: 'Have you been noticeably slower than usual in your movements or speech, or unusually restless and unable to sit still?' },
+  { id: 9, text: 'Have you had thoughts that you would be better off dead, or thoughts of hurting yourself?' },
 ];
 
 export const PHQ9_OPTIONS: ScreeningOption[] = [
-  { label: 'Not at all', value: 0 },
-  { label: 'Several days', value: 1 },
-  { label: 'More than half the days', value: 2 },
-  { label: 'Nearly every day', value: 3 },
+  { label: 'Never', value: 0 },
+  { label: 'A few days', value: 1 },
+  { label: 'Most days', value: 2 },
+  { label: 'Almost every day', value: 3 },
 ];
 
-export const PHQ9_INSTRUCTION = 'Over the last 2 weeks, how often have you been bothered by any of the following?';
+export const PHQ9_INSTRUCTION = 'Over the last 2 weeks, how often have you experienced any of these?';
 
 // ─── GAD-7 (Generalized Anxiety Disorder) ───
 export const GAD7_QUESTIONS: ScreeningQuestion[] = [

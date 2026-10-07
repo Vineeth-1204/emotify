@@ -1,8 +1,9 @@
 import { v, ConvexError } from "convex/values";
-import { mutation, query, action, internalMutation } from "./_generated/server";
+import { mutation, query, action, internalMutation, internalQuery } from "./_generated/server";
 import { api, internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
-import { assertCanAccessStudent } from "./authz";
+import { assertCanAccessStudent, requireAdmin } from "./authz";
+import { getGeminiModels } from "./emotyContract";
 
 // Helper to sanitize inputs
 function sanitizeInput(input: string): string {
@@ -30,7 +31,11 @@ export const getSession = query({
   },
 });
 
-export const getActiveApiKey = query({
+/**
+ * Internal query used strictly by server actions (CBT / Mitra) to fetch active key.
+ * Never callable directly by clients over public Convex protocols.
+ */
+export const getActiveApiKeyInternal = internalQuery({
   args: {},
   handler: async (ctx) => {
     const keyDoc = await ctx.db.query("apiKeys").order("desc").first();
@@ -40,20 +45,58 @@ export const getActiveApiKey = query({
   }
 });
 
+/**
+ * Public administrative key status query.
+ * Requires admin authentication. Never returns the plaintext API key.
+ */
+export const getActiveApiKey = query({
+  args: {},
+  handler: async (ctx) => {
+    await requireAdmin(ctx);
+
+    const keyDoc = await ctx.db.query("apiKeys").order("desc").first();
+    if (!keyDoc) return { configured: false, keyMasked: null };
+    const isExpired = !!(keyDoc.expiresAt && keyDoc.expiresAt < Date.now());
+    if (isExpired) return { configured: false, expired: true, keyMasked: null };
+
+    const rawKey = keyDoc.key || "";
+    const masked = rawKey.length > 8 ? `${rawKey.slice(0, 4)}...${rawKey.slice(-4)}` : (rawKey ? "****" : null);
+
+    return {
+      configured: true,
+      keyMasked: masked,
+      createdAt: keyDoc.createdAt,
+      expiresAt: keyDoc.expiresAt,
+    };
+  }
+});
+
+/**
+ * Public administrative key insertion/rotation mutation.
+ * Requires admin authentication.
+ */
 export const insertApiKey = mutation({
   args: { key: v.string() },
   handler: async (ctx, args) => {
+    await requireAdmin(ctx);
+
+    if (!args.key || args.key.trim().length === 0) {
+      throw new Error("API key cannot be empty.");
+    }
+
     // Purge old keys to keep table clean and prevent invalid key attempts
     const existing = await ctx.db.query("apiKeys").collect();
     for (const doc of existing) {
       await ctx.db.delete(doc._id);
     }
 
-    return await ctx.db.insert("apiKeys", {
-      key: args.key,
+    await ctx.db.insert("apiKeys", {
+      key: args.key.trim(),
       createdAt: Date.now(),
       expiresAt: Date.now() + 365 * 24 * 60 * 60 * 1000,
     });
+
+    return { success: true };
   }
 });
 
@@ -567,7 +610,7 @@ export const submitMessage = action({
       updates: { conversation: conversationHistory, timestamp: Date.now() }
     });
 
-    const dbKey = await ctx.runQuery(api.cbt.getActiveApiKey);
+    const dbKey = await ctx.runQuery(internal.cbt.getActiveApiKeyInternal);
     const envKey = process.env.GEMINI_API_KEY || null;
     const apiKeys = Array.from(new Set([dbKey, envKey].filter(Boolean) as string[]));
 
@@ -818,7 +861,7 @@ export const recommendGoalAction = action({
 
     const isHighRisk = session.riskFlags !== undefined && session.riskFlags.length > 0;
 
-    const dbKey = await ctx.runQuery(api.cbt.getActiveApiKey);
+    const dbKey = await ctx.runQuery(internal.cbt.getActiveApiKeyInternal);
     const envKey = process.env.GEMINI_API_KEY;
     const apiKeys = Array.from(new Set([dbKey, envKey].filter(Boolean) as string[]));
 
@@ -1042,8 +1085,7 @@ function cleanJsonResponse(rawText: string | undefined): string {
 
 async function fetchGeminiWithFallback(apiKeys: string | string[], payload: any, timeoutMs = 45000): Promise<any> {
   const keys = (Array.isArray(apiKeys) ? apiKeys : [apiKeys]).filter((k): k is string => Boolean(k) && typeof k === "string");
-  // gemini-3.1-flash-lite first (faster, lower latency), gemini-3.5-flash as fallback
-  const models = ["gemini-3.1-flash-lite", "gemini-3.5-flash"];
+  const models = getGeminiModels();
   let lastError: any = null;
 
   for (const apiKey of keys) {

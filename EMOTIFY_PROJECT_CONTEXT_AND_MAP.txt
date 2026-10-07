@@ -1,0 +1,191 @@
+================================================================================
+EMOTIFY PLATFORM — COMPREHENSIVE REPOSITORY & ARCHITECTURE MAP FOR NEW CHAT
+================================================================================
+Generated at: 2026-09-28
+Current Verified Baseline: 298 / 298 Vitest tests passing | 14 test files | TS Clean | Dashboard Build Clean
+Active Priority: Priority 9 (CBT / Guided Intervention & Media) — Steps 1, 2, & 3 Completed
+
+--------------------------------------------------------------------------------
+1. EXECUTIVE SUMMARY & TECH STACK
+--------------------------------------------------------------------------------
+Emotify is a production mental wellness platform for students and university counselors.
+- Mobile App: React Native (Expo SDK 52, Expo Router v4, React 18.3.1)
+- Backend: Convex (Real-time TypeScript reactive database, server functions, scheduled actions)
+- Authentication: Clerk (Mobile Expo clerk-expo, dashboard clerk-react) mapped to Convex users table
+- Web Dashboard: React 18 + Vite + TailwindCSS (Counselor & Admin clinical oversight)
+- Testing: Vitest + convex-test + @testing-library/react (Full backend mocking & authz tests)
+- AI / LLM: Google Gemini (gemini-3.1-flash-lite with fallback to gemini-3.5-flash and local offline mocks)
+
+--------------------------------------------------------------------------------
+2. HIGH-LEVEL REPOSITORY DIRECTORY MAP
+--------------------------------------------------------------------------------
+Emotify-Clerk/
+│
+├── app/                              # Mobile Application (Expo Router)
+│   ├── _layout.tsx                   # Root application layout (Providers: Clerk, Convex, Theme, Avatar)
+│   ├── index.tsx                     # Entrypoint & auth redirect
+│   ├── (public)/                     # Public routes (Landing, Sign-in, Sign-up, Verification)
+│   │   ├── welcome.tsx
+│   │   ├── sign-in.tsx
+│   │   └── sign-up.tsx
+│   └── (auth)/                       # Authenticated student routes
+│       ├── _layout.tsx               # Auth layout guarding student screens
+│       ├── onboarding/               # Student onboarding (Demographics, Baseline Screening)
+│       ├── (tabs)/                   # Student Bottom Tabs
+│       │   ├── _layout.tsx           # Tab bar configuration & navigation
+│       │   ├── index.tsx             # Home dashboard (Mitra greeting, daily habits, quick tools)
+│       │   ├── explore.tsx           # Wellness explore & self-care catalog
+│       │   ├── tools.tsx             # Interactive mental health tools hub
+│       │   ├── insights.tsx          # Mood trends, relaxation minutes, habit stats
+│       │   └── profile.tsx           # Student profile & settings
+│       ├── tools/                    # Dedicated intervention tool screens
+│       │   ├── reframe.tsx           # CBT cognitive restructuring & support tools
+│       │   ├── jpmr.tsx              # Jacobson's Progressive Muscle Relaxation (15 steps)
+│       │   ├── microgoals.tsx        # Daily non-clinical habit & micro-goal tracker
+│       │   ├── emotion-map.tsx       # Body emotion scan & somatic awareness
+│       │   ├── companion.tsx         # Mitra conversational wellness companion
+│       │   └── recovery-plan.tsx     # Student recovery & safety planning
+│       └── screening.tsx             # Clinical screening questionnaire runner (PHQ-9, GAD-7, etc.)
+│
+├── components/                       # Shared Mobile UI Components
+│   ├── ui/                           # Primitive UI buttons, cards, inputs, badges
+│   ├── avatar/MitraAvatar.tsx        # Animated Mitra companion SVG avatar (mood-reactive)
+│   ├── cbt/                          # Reframe & CBT-specific UI widgets
+│   ├── habit/                        # Habit & streak display widgets
+│   └── svg/system.tsx                # System SVG icons and illustrations
+│
+├── convex/                           # Authoritative Convex Backend Services
+│   ├── _generated/                   # Auto-generated Convex APIs and data models (DO NOT EDIT)
+│   ├── schema.ts                     # Single authoritative database schema definition
+│   ├── authz.ts                      # Centralized authorization & role-checking helpers
+│   ├── users.ts                      # User management, sync with Clerk, profile preferences
+│   ├── screening.ts                  # Clinical questionnaire intake (PHQ-9, GAD-7, PQ-16, WSAS, ReQoL-10)
+│   ├── clinicalScoring.ts            # Deterministic, non-AI clinical score calculators
+│   ├── triage.ts                     # Deterministic clinical triage level assignment (green/amber/red)
+│   ├── alerts.ts                     # Crisis & clinical alert triggers (suicide flag, high PHQ-9, manual SOS)
+│   ├── timeline.ts                   # Longitudinal clinical timeline builder for counselors
+│   ├── followUps.ts                  # Counselor check-in and re-assessment scheduling
+│   ├── appointments.ts               # Student-counselor booking & availability slots
+│   ├── cbt.ts                        # CBT restructuring state machine, AI orchestration, safety gates
+│   ├── reframes.ts                   # Authoritative saved cognitive reframes (`reframeLogs`)
+│   ├── microGoals.ts                 # Habit tracker, streak engine, non-clinical routine selector
+│   ├── jpmrLogs.ts                   # Somatic JPMR session completion & tension delta logging
+│   ├── jpmrVideos.ts                 # JPMR video storage catalog & admin upload URLs
+│   ├── emotionLogs.ts                # Student mood & emotion check-in records
+│   ├── wellness.ts                   # Longitudinal wellness profile metrics & trends
+│   ├── rateLimiter.ts                # Server-authoritative sliding-window rate limiting
+│   └── test files:
+│       ├── auth.test.ts              # Authentication & registration tests
+│       ├── authz.test.ts             # Role-based access control tests
+│       ├── screening.test.ts         # Clinical scoring & triage tests
+│       ├── timeline.test.ts          # Counselor longitudinal timeline tests
+│       ├── priority7.test.ts         # Comprehensive Priority 7 clinical suite (88 tests)
+│       ├── priority8.test.ts         # Priority 8 decoupling & habit engine suite (52 tests)
+│       └── priority9.test.ts         # Priority 9 JPMR security & provenance suite (14 tests)
+│
+├── common/                           # Shared Cross-Platform Utilities & Catalogs
+│   └── interventions.ts              # Centralized non-clinical routine habit catalog & deterministic picker
+│
+├── dashboard/                        # Web Dashboard for University Counselors & Admins
+│   ├── src/
+│   │   ├── pages/                    # Overview, Patients, PatientDetail, Alerts, Triage, Calendar
+│   │   ├── components/               # Patient timeline, alerts feed, screening charts
+│   │   └── lib/                      # Convex client, Clerk auth, date formatters
+│   └── vite.config.ts
+│
+├── reports/                          # Formal Audit, Remediation, and Closure Reports
+└── assets/                           # Bundled mobile images, icons, fonts
+
+--------------------------------------------------------------------------------
+3. AUTHORITATIVE DATA MODEL (KEY CONVEX TABLES)
+--------------------------------------------------------------------------------
+1. users:
+   - _id, clerkId, full_name, mobile_number, role ("patient"|"counsellor"|"admin"), status ("active"|"inactive"),
+     patientId (e.g. STU-001), emergencyContactName, emergencyContactPhone, mitraPreferences.
+2. screeningAttempts:
+   - Authoritative questionnaire intake records.
+   - instrumentVersions, responses (phq9, gad7, pq16, wsas, reqol10), results (scores, flags, severities).
+   - attemptType: "baseline" | "periodic" | "followup".
+3. triages:
+   - Authoritative clinical risk tier.
+   - level: "green" | "amber" | "red", suicideFlag: boolean, psychosisFlag: boolean, attemptId.
+4. counsellorAlerts:
+   - Critical clinical alerts requiring counselor action.
+   - type: "suicideRisk" | "severeDepression" | "psychosisRisk" | "manual_sos" | "triageEscalation".
+   - status: "pending" | "acknowledged" | "resolved".
+5. cbtSessions:
+   - Interactive, stateful CBT cognitive restructuring session.
+   - status: "active" | "completed" | "abandoned" | "safety_mode" | "expired".
+   - currentStep: "understanding" | "clarification" | "guided_discovery" | "belief_challenge" |
+                  "balanced_thought" | "emotion_rating" | "recovery_coach" | "completed".
+   - conversation: message history.
+   - bridges automatically and idempotently to reframeLogs on completion.
+6. reframeLogs:
+   - Canonical historical saved cognitive reframes.
+   - situation_text, thought_original, thinking_trap_choice, guided_answers, reframe_text,
+     pre_reframe_intensity, post_reframe_intensity, improvement_percentage, cbtSessionId.
+7. jpmrLogs:
+   - Somatic Jacobson's Progressive Muscle Relaxation records.
+   - preIntensity (1-10), postIntensity (1-10), durationSeconds, completed: boolean,
+     sourceType ("self_initiated" | "routine" | "screening" | "triage"), attemptId, triageId.
+8. microGoals:
+   - Non-clinical daily habits & challenge goals.
+   - goalId, goalTitle, goalDescription, category, difficulty, points, completed, status ("pending"|"completed"|"skipped").
+9. jpmrVideos:
+   - Media storage references for 15-step somatic video guidance.
+   - stepIndex, title, storageId (Id<"_storage">). Admin-only mutations.
+
+--------------------------------------------------------------------------------
+4. CRUCIAL ARCHITECTURAL INVARIANTS & CLINICAL GUARDRAILS
+--------------------------------------------------------------------------------
+1. Absolute Clinical Decoupling:
+   - Clinical screening scores (PHQ-9, GAD-7, PQ-16, WSAS, ReQoL-10) and triage tiers (green/amber/red)
+     MUST NEVER be used as inputs for ordinary intervention recommendations (daily habits, CBT reframes, JPMR).
+   - Provenance fields (sourceType, attemptId, triageId) exist strictly for clinical audit and counselor timeline.
+2. Non-Fabrication Rule:
+   - If an intervention was self-initiated or direct, attemptId and triageId MUST remain undefined.
+   - Never query "latest screening" to fabricate provenance on an unlinked session.
+3. Server-Authoritative Identity:
+   - Every mutation reads userId from `identity.subject` via `ctx.auth.getUserIdentity()`.
+   - Client-provided userId arguments in mutations (e.g. `userId`) are strictly ignored or rejected.
+4. Deterministic Habit Engine:
+   - Daily routine micro-goals are chosen deterministically from `common/interventions.ts`
+     using user ID + calendar date hash. Zero `Math.random` in production habit selection.
+5. Reframe Architecture:
+   - `cbtSessions` = active state machine.
+   - `reframeLogs` = permanent saved reframe history.
+   - Bridge from CBT session to `reframeLogs` is idempotent via the `by_cbtSessionId` index.
+6. Crisis & Safety Interception:
+   - In CBT or companion, any explicit suicidal ideation or self-harm keywords trigger immediate
+     server-authoritative `safety_mode`, generate a `suicideRisk` alert for counselors,
+     and show the 988 Crisis Lifeline. Sessions in `safety_mode` never bridge to ordinary `reframeLogs`.
+
+--------------------------------------------------------------------------------
+5. MILESTONE HISTORY & PROGRESS SUMMARY
+--------------------------------------------------------------------------------
+- Priorities 1 to 6: Core app architecture, screening intake, clinical scoring, counselor alerts,
+  role-based access control, longitudinal timeline, and clinical hardening. (CLOSED)
+- Priority 7: Counselor reassessment, longitudinal wellness, follow-ups, and active alert visibility. (CLOSED)
+- Priority 8: Personalized intervention decoupling, deterministic habit engine, CBT->reframeLogs bridge. (CLOSED)
+- Priority 9: CBT / Guided Intervention & Media:
+  - Step 1 (Audit): Exhaustive audit of CBT, JPMR, breathing, sensory grounding, media architecture. (CLOSED)
+  - Step 2 (Security & Provenance Hardening):
+    * Fixed P0 vulnerability in `convex/jpmrVideos.ts` using `requireAdmin(ctx)`.
+    * Wired `sourceType`, `attemptId`, `triageId` from `app/(auth)/tools/jpmr.tsx` into `jpmrLogs`.
+    * Added 14 regression tests in `convex/priority9.test.ts`. (CLOSED)
+  - Step 3 (Resilient JPMR Media & Video Fallback):
+    * Completely excised 15 remote Mixkit preview URLs.
+    * Implemented local vector SVG anatomical demonstration in `components/jpmr/`.
+    * Resolved "black rectangle" defect with local illustration fallback and buffering overlay.
+    * Added 10 regression tests in `convex/priority9.test.ts`. (CLOSED)
+  - Next: Step 4 (Unified Breathing Tool & Database Persistence).
+
+--------------------------------------------------------------------------------
+6. COMMANDS FOR VERIFICATION
+--------------------------------------------------------------------------------
+- Run all tests:             npx vitest run
+- Run Priority 9 tests only: npx vitest run convex/priority9.test.ts
+- TypeScript check:          npx tsc --noEmit
+- Dashboard build check:     npm run build --prefix dashboard
+- Expo start (local dev):    npx expo start
+================================================================================

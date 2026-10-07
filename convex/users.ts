@@ -3,7 +3,7 @@ import { mutation, query, internalMutation } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import { signJwt, verifyPassword, hashPassword } from "./authHelpers";
 import { logAuditEvent } from "./audit";
-import { assertCanAccessStudent } from "./authz";
+import { assertCanAccessStudent, requireAdmin, getAuthenticatedUser } from "./authz";
 
 function sanitizeUser(u: any) {
   if (!u) return null;
@@ -15,6 +15,8 @@ function sanitizeUser(u: any) {
 export const getByClerkId = query({
   args: { clerkId: v.string() },
   handler: async (ctx, args) => {
+    await assertCanAccessStudent(ctx, args.clerkId);
+
     let user = null;
     try {
       user = await ctx.db.get(args.clerkId as Id<"users">);
@@ -134,71 +136,162 @@ export const listPatients = query({
       cursorObj = decodePatientCursor(args.cursor);
     }
 
-    const fetchBatchSize = Math.max(effectiveLimit * 4, 100);
-    let candidateUsers = await ctx.db
-      .query("users")
-      .withIndex("by_role_and_created_at", (q) =>
-        cursorObj
-          ? q.eq("role", "patient").lte("created_at", cursorObj.createdAt)
-          : q.eq("role", "patient")
-      )
-      .order("desc")
-      .take(fetchBatchSize);
+    const searchStr = args.search && args.search.trim() ? args.search.trim().toLowerCase() : null;
 
-    // Fallback if records exist without created_at field
-    if (candidateUsers.length === 0 && !cursorObj) {
-      candidateUsers = await ctx.db
+    if (!searchStr) {
+      // Normal unfiltered cursor pagination: fetch strictly bounded batch
+      const fetchBatchSize = effectiveLimit + 1;
+      let candidateUsers = await ctx.db
         .query("users")
-        .withIndex("by_role", (q) => q.eq("role", "patient"))
+        .withIndex("by_role_and_created_at", (q) =>
+          cursorObj
+            ? q.eq("role", "patient").lte("created_at", cursorObj.createdAt)
+            : q.eq("role", "patient")
+        )
         .order("desc")
         .take(fetchBatchSize);
-    }
 
-    // Sort deterministically: created_at DESC, _id DESC
-    candidateUsers.sort((a, b) => {
-      const tA = a.created_at ?? a.createdAt ?? a._creationTime ?? 0;
-      const tB = b.created_at ?? b.createdAt ?? b._creationTime ?? 0;
-      if (tB !== tA) return tB - tA;
-      return String(b._id).localeCompare(String(a._id));
-    });
-
-    const eligible = [];
-    for (const u of candidateUsers) {
-      const t = u.created_at ?? u.createdAt ?? u._creationTime ?? 0;
-      const id = String(u._id);
-      if (cursorObj) {
-        if (t > cursorObj.createdAt) continue;
-        if (t === cursorObj.createdAt && id.localeCompare(cursorObj.id) >= 0) continue;
+      // Fallback if records exist without created_at field
+      if (candidateUsers.length === 0 && !cursorObj) {
+        candidateUsers = await ctx.db
+          .query("users")
+          .withIndex("by_role", (q) => q.eq("role", "patient"))
+          .order("desc")
+          .take(fetchBatchSize);
       }
-      eligible.push(u);
+
+      // Sort deterministically: created_at DESC, _id DESC
+      candidateUsers.sort((a, b) => {
+        const tA = a.created_at ?? a.createdAt ?? a._creationTime ?? 0;
+        const tB = b.created_at ?? b.createdAt ?? b._creationTime ?? 0;
+        if (tB !== tA) return tB - tA;
+        return String(b._id).localeCompare(String(a._id));
+      });
+
+      const eligible = [];
+      for (const u of candidateUsers) {
+        const t = u.created_at ?? u.createdAt ?? u._creationTime ?? 0;
+        const id = String(u._id);
+        if (cursorObj) {
+          if (t > cursorObj.createdAt) continue;
+          if (t === cursorObj.createdAt && id.localeCompare(cursorObj.id) >= 0) continue;
+        }
+        eligible.push(u);
+      }
+
+      const mapped = eligible.map((u, idx) => {
+        const safe = sanitizeUser(u);
+        return {
+          ...safe,
+          patientId: u.patientId || String(101 + idx),
+        };
+      });
+
+      const pageRecords = mapped.slice(0, effectiveLimit);
+      const hasMore = mapped.length > effectiveLimit;
+
+      const nextCursor =
+        hasMore && pageRecords.length > 0
+          ? encodePatientCursor({
+              createdAt:
+                pageRecords[pageRecords.length - 1].created_at ??
+                pageRecords[pageRecords.length - 1].createdAt ??
+                pageRecords[pageRecords.length - 1]._creationTime ??
+                0,
+              id: String(pageRecords[pageRecords.length - 1]._id),
+            })
+          : null;
+
+      if (args.cursor !== undefined || args.paginate === true) {
+        return {
+          patients: pageRecords,
+          nextCursor,
+        } as any as PaginatedPatientsResult;
+      }
+
+      return pageRecords as any as PaginatedPatientsResult;
     }
 
-    // Assign permanent/stable patientId first, stripping password hashes and auth secrets
-    let mapped = eligible.map((u, idx) => {
-      const safe = sanitizeUser(u);
-      return {
-        ...safe,
-        patientId: u.patientId || String(101 + idx),
-      };
-    });
+    // Search query path: Bounded iterative indexed retrieval across candidate batches
+    const BATCH_SIZE = 100;
+    const MAX_SCAN_LIMIT = 1000;
+    let totalScanned = 0;
+    let currentCursor = cursorObj;
+    const matched: any[] = [];
+    let hasMore = false;
 
-    if (args.search && args.search.trim()) {
-      const s = args.search.trim().toLowerCase();
-      mapped = mapped.filter(
-        (u: any) =>
-          (u.patientId || "").toLowerCase().includes(s) ||
-          (u.full_name || "").toLowerCase().includes(s) ||
-          (u.mobile_number || "").includes(s)
-      );
+    while (totalScanned < MAX_SCAN_LIMIT) {
+      let batch = await ctx.db
+        .query("users")
+        .withIndex("by_role_and_created_at", (q) =>
+          currentCursor
+            ? q.eq("role", "patient").lte("created_at", currentCursor.createdAt)
+            : q.eq("role", "patient")
+        )
+        .order("desc")
+        .take(BATCH_SIZE);
+
+      if (batch.length === 0 && !currentCursor && totalScanned === 0) {
+        batch = await ctx.db
+          .query("users")
+          .withIndex("by_role", (q) => q.eq("role", "patient"))
+          .order("desc")
+          .take(BATCH_SIZE);
+      }
+
+      if (batch.length === 0) break;
+
+      batch.sort((a, b) => {
+        const tA = a.created_at ?? a.createdAt ?? a._creationTime ?? 0;
+        const tB = b.created_at ?? b.createdAt ?? b._creationTime ?? 0;
+        if (tB !== tA) return tB - tA;
+        return String(b._id).localeCompare(String(a._id));
+      });
+
+      let advanced = false;
+      for (const u of batch) {
+        const t = u.created_at ?? u.createdAt ?? u._creationTime ?? 0;
+        const id = String(u._id);
+
+        if (currentCursor) {
+          if (t > currentCursor.createdAt) continue;
+          if (t === currentCursor.createdAt && id.localeCompare(currentCursor.id) >= 0) continue;
+        }
+
+        totalScanned++;
+        currentCursor = { createdAt: t, id };
+        advanced = true;
+
+        const pId = (u.patientId || "").toLowerCase();
+        const fn = (u.full_name || "").toLowerCase();
+        const mob = u.mobile_number || "";
+
+        if (pId.includes(searchStr) || fn.includes(searchStr) || mob.includes(searchStr)) {
+          const safe = sanitizeUser(u);
+          matched.push({
+            ...safe,
+            patientId: u.patientId || String(u._id),
+          });
+
+          if (matched.length > effectiveLimit) {
+            hasMore = true;
+            break;
+          }
+        }
+      }
+
+      if (hasMore || batch.length < BATCH_SIZE || !advanced) break;
     }
 
-    const pageRecords = mapped.slice(0, effectiveLimit);
-    const hasMore = mapped.length > effectiveLimit;
-
+    const pageRecords = matched.slice(0, effectiveLimit);
     const nextCursor =
       hasMore && pageRecords.length > 0
         ? encodePatientCursor({
-            createdAt: pageRecords[pageRecords.length - 1].created_at ?? pageRecords[pageRecords.length - 1].createdAt ?? pageRecords[pageRecords.length - 1]._creationTime ?? 0,
+            createdAt:
+              pageRecords[pageRecords.length - 1].created_at ??
+              pageRecords[pageRecords.length - 1].createdAt ??
+              pageRecords[pageRecords.length - 1]._creationTime ??
+              0,
             id: String(pageRecords[pageRecords.length - 1]._id),
           })
         : null;
@@ -225,32 +318,86 @@ export const searchPatientSelector = query({
     if (!staff) return [];
 
     const effectiveLimit = Math.min(Math.max(args.limit ?? 50, 1), 50);
+    const searchStr = args.search && args.search.trim() ? args.search.trim().toLowerCase() : null;
 
-    const candidates = await ctx.db
-      .query("users")
-      .withIndex("by_role_and_created_at", (q) => q.eq("role", "patient"))
-      .order("desc")
-      .take(150);
+    if (!searchStr) {
+      const candidates = await ctx.db
+        .query("users")
+        .withIndex("by_role_and_created_at", (q) => q.eq("role", "patient"))
+        .order("desc")
+        .take(effectiveLimit);
 
-    let mapped = candidates.map((u) => ({
-      _id: u._id,
-      full_name: u.full_name || "Unknown Patient",
-      patientId: u.patientId || String(u._id),
-      mobile_number: u.mobile_number || "N/A",
-      status: u.status || "active",
-    }));
-
-    if (args.search && args.search.trim()) {
-      const s = args.search.trim().toLowerCase();
-      mapped = mapped.filter(
-        (p) =>
-          p.full_name.toLowerCase().includes(s) ||
-          p.patientId.toLowerCase().includes(s) ||
-          p.mobile_number.includes(s)
-      );
+      return candidates.map((u) => ({
+        _id: u._id,
+        full_name: u.full_name || "Unknown Patient",
+        patientId: u.patientId || String(u._id),
+        mobile_number: u.mobile_number || "N/A",
+        status: u.status || "active",
+      }));
     }
 
-    return mapped.slice(0, effectiveLimit);
+    // Iterative search over patient role index
+    const BATCH_SIZE = 100;
+    const MAX_SCAN_LIMIT = 500;
+    let totalScanned = 0;
+    let currentCursor: PatientCursorPayload | null = null;
+    const matched: any[] = [];
+
+    while (totalScanned < MAX_SCAN_LIMIT) {
+      const batch = await ctx.db
+        .query("users")
+        .withIndex("by_role_and_created_at", (q) =>
+          currentCursor
+            ? q.eq("role", "patient").lte("created_at", currentCursor.createdAt)
+            : q.eq("role", "patient")
+        )
+        .order("desc")
+        .take(BATCH_SIZE);
+
+      if (batch.length === 0) break;
+
+      batch.sort((a, b) => {
+        const tA = a.created_at ?? a.createdAt ?? a._creationTime ?? 0;
+        const tB = b.created_at ?? b.createdAt ?? b._creationTime ?? 0;
+        if (tB !== tA) return tB - tA;
+        return String(b._id).localeCompare(String(a._id));
+      });
+
+      let advanced = false;
+      for (const u of batch) {
+        const t = u.created_at ?? u.createdAt ?? u._creationTime ?? 0;
+        const id = String(u._id);
+
+        if (currentCursor) {
+          if (t > currentCursor.createdAt) continue;
+          if (t === currentCursor.createdAt && id.localeCompare(currentCursor.id) >= 0) continue;
+        }
+
+        totalScanned++;
+        currentCursor = { createdAt: t, id };
+        advanced = true;
+
+        const fn = (u.full_name || "").toLowerCase();
+        const pId = (u.patientId || "").toLowerCase();
+        const mob = u.mobile_number || "";
+
+        if (fn.includes(searchStr) || pId.includes(searchStr) || mob.includes(searchStr)) {
+          matched.push({
+            _id: u._id,
+            full_name: u.full_name || "Unknown Patient",
+            patientId: u.patientId || String(u._id),
+            mobile_number: u.mobile_number || "N/A",
+            status: u.status || "active",
+          });
+
+          if (matched.length >= effectiveLimit) break;
+        }
+      }
+
+      if (matched.length >= effectiveLimit || batch.length < BATCH_SIZE || !advanced) break;
+    }
+
+    return matched;
   },
 });
 
@@ -351,7 +498,6 @@ export const createUser = mutation({
       mobile_number: args.mobile_number,
       email: args.email,
       password_hash,
-      temp_password: args.password,
       role: args.role,
       status: args.status,
       is_first_login: true,
@@ -372,6 +518,15 @@ export const toggleUserStatus = mutation({
   handler: async (ctx, args) => {
     const admin = await checkAdmin(ctx);
     if (!admin) throw new Error("Unauthorized");
+
+    const user = await ctx.db.get(args.userId);
+    if (!user) throw new Error("User not found");
+
+    // EMOT-PERF-02: Idempotent status update - avoid redundant write
+    if (user.status === args.status) {
+      return { success: true };
+    }
+
     await ctx.db.patch(args.userId, {
       status: args.status,
       updated_at: Date.now(),
@@ -493,31 +648,43 @@ export const completeOnboarding = mutation({
     ),
   },
   handler: async (ctx, args) => {
-    let user = null;
     const identity = await ctx.auth.getUserIdentity();
-    if (identity) {
-      try {
-        user = await ctx.db.get(identity.subject as Id<"users">);
-      } catch (e) {}
-      if (!user) {
-        user = await ctx.db
-          .query("users")
-          .withIndex("by_clerkId", (q) => q.eq("clerkId", identity.subject))
-          .first();
+    if (!identity || !identity.subject) {
+      throw new Error("Unauthenticated: Must be logged in to complete onboarding.");
+    }
+
+    const caller = await getAuthenticatedUser(ctx);
+    const callerSubject = identity.subject;
+
+    // Enforce ownership: Student can only complete onboarding for themselves.
+    // If a different args.userId is provided, caller must be staff (counsellor or admin).
+    let targetUserId = caller ? String(caller._id) : callerSubject;
+    const isStaff = caller && (caller.role === "admin" || caller.role === "counsellor");
+
+    if (args.userId) {
+      const isSelf =
+        args.userId === callerSubject ||
+        (caller && (args.userId === String(caller._id) || args.userId === caller.clerkId));
+
+      if (!isSelf) {
+        if (!isStaff) {
+          throw new Error("Unauthorized: Cannot modify another student's onboarding.");
+        }
+        targetUserId = args.userId;
       }
     }
-    if (!user && args.userId) {
-      try {
-        user = await ctx.db.get(args.userId as Id<"users">);
-      } catch (e) {}
-      if (!user) {
-        user = await ctx.db
-          .query("users")
-          .withIndex("by_clerkId", (q) => q.eq("clerkId", args.userId))
-          .first();
-      }
+
+    let user: any = null;
+    try {
+      user = await ctx.db.get(targetUserId as Id<"users">);
+    } catch (e) {}
+    if (!user) {
+      user = await ctx.db
+        .query("users")
+        .withIndex("by_clerkId", (q) => q.eq("clerkId", targetUserId))
+        .first();
     }
-    if (!user) throw new Error("Unauthenticated");
+    if (!user) throw new Error("User not found.");
 
     // Process optional mitraPreferences or keep existing/default
     let validatedMitra = user.mitraPreferences;
@@ -525,9 +692,9 @@ export const completeOnboarding = mutation({
       let g = (args.mitraPreferences.avatarGender || "female").toLowerCase().trim();
       if (g !== "female" && g !== "male") g = "female";
 
-      let rawName = args.mitraPreferences.name ? args.mitraPreferences.name.replace(/[\x00-\x1F\x7F]/g, "").trim() : "Mitra";
+      let rawName = args.mitraPreferences.name ? args.mitraPreferences.name.replace(/[\x00-\x1F\x7F]/g, "").trim() : "Emoty";
       if (rawName.length > 30) rawName = rawName.substring(0, 30).trim();
-      const n = rawName.length > 0 ? rawName : "Mitra";
+      const n = rawName.length > 0 ? rawName : "Emoty";
 
       validatedMitra = {
         name: n,
@@ -536,9 +703,9 @@ export const completeOnboarding = mutation({
         updatedAt: Date.now(),
       };
     } else if (!validatedMitra) {
-      // Default to female + Mitra if none set
+      // Default to female + Emoty if none set
       validatedMitra = {
-        name: "Mitra",
+        name: "Emoty",
         avatarGender: "female",
         avatarVariant: "default",
         updatedAt: Date.now(),
@@ -569,6 +736,7 @@ export const completeOnboarding = mutation({
 export const getUserById = query({
   args: { userId: v.id("users") },
   handler: async (ctx, args) => {
+    await assertCanAccessStudent(ctx, String(args.userId));
     const user = await ctx.db.get(args.userId);
     return sanitizeUser(user);
   },
@@ -589,21 +757,36 @@ export const getCurrentUser = query({
 export const toggleBiometric = mutation({
   args: { clerkId: v.string(), enabled: v.boolean() },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity || !identity.subject) {
+      throw new Error("Unauthenticated: Login required.");
+    }
+    const caller = await getAuthenticatedUser(ctx);
+    const callerSubject = identity.subject;
+
+    let targetUser = null;
     try {
-      const user = await ctx.db.get(args.clerkId as Id<"users">);
-      if (user) {
-        await ctx.db.patch(user._id, { biometricEnabled: args.enabled });
-        return;
-      }
+      targetUser = await ctx.db.get(args.clerkId as Id<"users">);
     } catch (e) { }
 
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_clerkId", (q) => q.eq("clerkId", args.clerkId))
-      .first();
-    if (user) {
-      await ctx.db.patch(user._id, { biometricEnabled: args.enabled });
+    if (!targetUser) {
+      targetUser = await ctx.db
+        .query("users")
+        .withIndex("by_clerkId", (q) => q.eq("clerkId", args.clerkId))
+        .first();
     }
+
+    if (!targetUser) throw new Error("User not found");
+
+    const isSelf =
+      args.clerkId === callerSubject ||
+      (caller && (args.clerkId === String(caller._id) || args.clerkId === caller.clerkId || targetUser._id === caller._id));
+
+    if (!isSelf) {
+      throw new Error("Unauthorized: Cannot modify biometric settings for another user.");
+    }
+
+    await ctx.db.patch(targetUser._id, { biometricEnabled: args.enabled });
   },
 });
 
@@ -611,54 +794,82 @@ export const toggleBiometric = mutation({
 export const markScreeningComplete = mutation({
   args: { clerkId: v.string() },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity || !identity.subject) {
+      throw new Error("Unauthenticated: Login required.");
+    }
+    const caller = await getAuthenticatedUser(ctx);
+    const callerSubject = identity.subject;
+
+    let targetUser = null;
     try {
-      const user = await ctx.db.get(args.clerkId as Id<"users">);
-      if (user) {
-        await ctx.db.patch(user._id, { screeningComplete: true });
-        return;
-      }
+      targetUser = await ctx.db.get(args.clerkId as Id<"users">);
     } catch (e) { }
 
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_clerkId", (q) => q.eq("clerkId", args.clerkId))
-      .first();
-    if (user) {
-      await ctx.db.patch(user._id, { screeningComplete: true });
+    if (!targetUser) {
+      targetUser = await ctx.db
+        .query("users")
+        .withIndex("by_clerkId", (q) => q.eq("clerkId", args.clerkId))
+        .first();
     }
+
+    if (!targetUser) throw new Error("User not found");
+
+    const isSelf =
+      args.clerkId === callerSubject ||
+      (caller && (args.clerkId === String(caller._id) || args.clerkId === caller.clerkId || targetUser._id === caller._id));
+
+    if (!isSelf) {
+      throw new Error("Unauthorized: Cannot update screening completion for another student.");
+    }
+
+    await ctx.db.patch(targetUser._id, { screeningComplete: true });
   },
 });
 
-/** Seed a default admin user for testing */
+async function doSeedAdmin(ctx: any) {
+  const existing = await ctx.db
+    .query("users")
+    .withIndex("by_mobile_number", (q: any) => q.eq("mobile_number", "1234567890"))
+    .first();
+
+  if (existing) {
+    return { userId: existing._id, message: "Admin already seeded" };
+  }
+
+  const password_hash = await hashPassword("adminpassword");
+  const userId = await ctx.db.insert("users", {
+    clerkId: "seed-admin",
+    full_name: "Admin User",
+    mobile_number: "1234567890",
+    password_hash,
+    role: "admin",
+    status: "active",
+    is_first_login: false,
+    created_at: Date.now(),
+    updated_at: Date.now(),
+    onboardingComplete: true,
+    screeningComplete: true,
+    biometricEnabled: false,
+  });
+
+  return { userId, message: "Admin seeded successfully." };
+}
+
+/** Seed a default admin user (Admin only) */
 export const seedAdmin = mutation({
   args: {},
   handler: async (ctx) => {
-    const existing = await ctx.db
-      .query("users")
-      .withIndex("by_mobile_number", (q) => q.eq("mobile_number", "1234567890"))
-      .first();
+    await requireAdmin(ctx);
+    return await doSeedAdmin(ctx);
+  },
+});
 
-    if (existing) {
-      return { userId: existing._id, message: "Admin already seeded" };
-    }
-
-    const password_hash = await hashPassword("adminpassword");
-    const userId = await ctx.db.insert("users", {
-      clerkId: "seed-admin",
-      full_name: "Admin User",
-      mobile_number: "1234567890",
-      password_hash,
-      role: "admin",
-      status: "active",
-      is_first_login: false,
-      created_at: Date.now(),
-      updated_at: Date.now(),
-      onboardingComplete: true,
-      screeningComplete: true,
-      biometricEnabled: false,
-    });
-
-    return { userId, message: "Admin seeded successfully. Mobile: 1234567890, Password: adminpassword" };
+/** Internal admin seeding for backend setup / deploy scripts */
+export const seedAdminInternal = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    return await doSeedAdmin(ctx);
   },
 });
 
@@ -670,13 +881,16 @@ export const resetAdminCredentials = mutation({
     newPassword: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    // Only an authenticated admin can reset administrator credentials
+    await requireAdmin(ctx);
+
     const user = await ctx.db
       .query("users")
       .withIndex("by_mobile_number", (q) => q.eq("mobile_number", args.currentMobile))
       .first();
 
     if (!user) {
-      throw new Error("Admin user not found with the specified mobile number.");
+      throw new Error("Admin user not found.");
     }
     if (user.role !== "admin") {
       throw new Error("Specified user is not an admin.");
@@ -701,7 +915,7 @@ export const resetAdminCredentials = mutation({
     await ctx.db.patch(user._id, updates);
     return {
       success: true,
-      message: `Admin credentials updated successfully. Mobile: ${args.newMobile || args.currentMobile}`,
+      message: "Admin credentials updated successfully.",
     };
   },
 });
@@ -888,8 +1102,10 @@ export const login = mutation({
       expiresAt,
     });
 
-    // Generate a unique biometricToken for this user
-    const biometricToken = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+    // Generate a cryptographically secure biometricToken for this user
+    const tokenBytes = new Uint8Array(24);
+    crypto.getRandomValues(tokenBytes);
+    const biometricToken = Array.from(tokenBytes, (b) => b.toString(16).padStart(2, "0")).join("");
     await ctx.db.patch(user._id, {
       biometricToken,
       biometricEnabled: true
@@ -1363,7 +1579,54 @@ export const deleteUser = mutation({
       await ctx.db.delete(doc._id);
     }
 
-    // 29. Finally delete the user
+    // 29. breathingLogs
+    const breathingLogs1 = await ctx.db
+      .query("breathingLogs")
+      .withIndex("by_userId", (q) => q.eq("userId", String(args.userId)))
+      .collect();
+    for (const doc of breathingLogs1) {
+      await ctx.db.delete(doc._id);
+    }
+    if (user.clerkId && user.clerkId !== String(args.userId)) {
+      const breathingLogs2 = await ctx.db
+        .query("breathingLogs")
+        .withIndex("by_userId", (q) => q.eq("userId", user.clerkId!))
+        .collect();
+      for (const doc of breathingLogs2) {
+        await ctx.db.delete(doc._id);
+      }
+    }
+
+    // 30. groundingLogs
+    const groundingLogs1 = await ctx.db
+      .query("groundingLogs")
+      .withIndex("by_userId", (q) => q.eq("userId", String(args.userId)))
+      .collect();
+    for (const doc of groundingLogs1) {
+      await ctx.db.delete(doc._id);
+    }
+    if (user.clerkId && user.clerkId !== String(args.userId)) {
+      const groundingLogs2 = await ctx.db
+        .query("groundingLogs")
+        .withIndex("by_userId", (q) => q.eq("userId", user.clerkId!))
+        .collect();
+      for (const doc of groundingLogs2) {
+        await ctx.db.delete(doc._id);
+      }
+    }
+
+    // 31. counsellors
+    const allCounsellors = await ctx.db.query("counsellors").collect();
+    for (const doc of allCounsellors) {
+      if (
+        (doc.userId && doc.userId === args.userId) ||
+        (user.email && doc.email && doc.email.toLowerCase() === user.email.toLowerCase())
+      ) {
+        await ctx.db.delete(doc._id);
+      }
+    }
+
+    // 32. Finally delete the user
     await ctx.db.delete(args.userId);
 
     return { success: true };
@@ -1381,7 +1644,7 @@ export const getMitraPreferences = query({
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) {
       return {
-        name: "Mitra",
+        name: "Emoty",
         avatarGender: "female",
         avatarVariant: "default",
       };
@@ -1401,7 +1664,7 @@ export const getMitraPreferences = query({
     }
 
     const prefs = user?.mitraPreferences;
-    const name = prefs?.name && prefs.name.trim().length > 0 ? prefs.name.trim() : "Mitra";
+    const name = prefs?.name && prefs.name.trim().length > 0 ? prefs.name.trim() : "Emoty";
     const avatarGender =
       prefs?.avatarGender === "male" || prefs?.avatarGender === "female"
         ? prefs.avatarGender
@@ -1453,11 +1716,11 @@ export const updateMitraPreferences = mutation({
     }
 
     // Validate and sanitize custom name (strip control characters, trim, max length 30)
-    let validatedName = user.mitraPreferences?.name || "Mitra";
+    let validatedName = user.mitraPreferences?.name || "Emoty";
     if (args.name !== undefined) {
       let clean = args.name.replace(/[\x00-\x1F\x7F]/g, "").trim();
       if (clean.length > 30) clean = clean.substring(0, 30).trim();
-      validatedName = clean.length > 0 ? clean : "Mitra";
+      validatedName = clean.length > 0 ? clean : "Emoty";
     }
 
     const updatedPrefs = {

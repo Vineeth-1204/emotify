@@ -373,7 +373,7 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
     });
 
     const studentId = regRes.user!.id;
-    const dbUser = await t.query(api.users.getByClerkId, { clerkId: studentId });
+    const dbUser = await t.withIdentity({ subject: studentId }).query(api.users.getByClerkId, { clerkId: studentId });
     const expectedPatientId = dbUser?.patientId;
     expect(expectedPatientId).toBeDefined();
 
@@ -420,7 +420,7 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
       mobile_number: "9100000001",
       password: "Password123!",
     });
-    const userA = await t.query(api.users.getByClerkId, { clerkId: regA.user!.id });
+    const userA = await t.withIdentity({ subject: regA.user!.id }).query(api.users.getByClerkId, { clerkId: regA.user!.id });
 
     // Register Student B
     const regB = await t.mutation(api.users.registerStudent, {
@@ -428,7 +428,7 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
       mobile_number: "9200000002",
       password: "Password123!",
     });
-    const userB = await t.query(api.users.getByClerkId, { clerkId: regB.user!.id });
+    const userB = await t.withIdentity({ subject: regB.user!.id }).query(api.users.getByClerkId, { clerkId: regB.user!.id });
 
     const authedA = t.withIdentity({ subject: regA.user!.id });
     const attemptA = await authedA.mutation(api.screening.submitScreeningAttempt, {

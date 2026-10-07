@@ -305,7 +305,7 @@ export const getTodayGoals = query({
       .withIndex("by_userId", (q) => q.eq("userId", targetUserId))
       .collect();
 
-    return goals.filter((g) => g.createdAt >= startOfDay && g.createdAt < endOfDay);
+    return goals.filter((g) => (args.dateStr ? g.date === args.dateStr : (g.createdAt >= startOfDay && g.createdAt < endOfDay)));
   },
 });
 
@@ -1127,7 +1127,7 @@ export const getMitraSuggestedGoal = query({
       .withIndex("by_userId", (q) => q.eq("userId", userId))
       .collect();
 
-    const todayGoals = allUserGoals.filter((g) => g.createdAt >= startOfDay && g.createdAt < endOfDay);
+    const todayGoals = allUserGoals.filter((g) => (args.dateStr ? g.date === todayStr : (g.createdAt >= startOfDay && g.createdAt < endOfDay)));
 
     // 1. If an active uncompleted and unskipped goal exists for today in DB:
     const activeGoal = todayGoals.find((g) => !g.completed && !g.skipped);
@@ -1232,7 +1232,7 @@ export const acceptMitraGoal = mutation({
       .withIndex("by_userId", (q) => q.eq("userId", userId))
       .collect();
 
-    const todayGoals = allUserGoals.filter((g) => g.createdAt >= startOfDay && g.createdAt < endOfDay);
+    const todayGoals = allUserGoals.filter((g) => (args.dateStr ? g.date === todayStr : (g.createdAt >= startOfDay && g.createdAt < endOfDay)));
 
     // If a matching goal is already in DB for today:
     if (args.goalId) {

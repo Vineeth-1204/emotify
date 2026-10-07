@@ -3,10 +3,11 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Dimensions, Anima
 import { useRouter } from "expo-router";
 import { useThemeColors, useStyles } from "@/context/MoodThemeContext";
 import { useLanguage } from "@/context/LanguageContext";
+import { useAvatar } from "@/context/AvatarContext";
 import { Theme } from "@/constants/Theme";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
-import { MitraAvatar } from "@/components/avatar/MitraAvatar";
+import { EmotyAvatar } from "@/components/avatar/EmotyAvatar";
 import { MindfulnessActivityIcon, MuscleRelaxActivityIcon, JournalActivityIcon, HabitMicrogoalIcon, GroundingIcon } from "@/components/svg/activities";
 import { CounsellorBadgeIcon } from "@/components/svg/system";
 
@@ -77,6 +78,7 @@ export default function ToolsScreen() {
   const colors = useThemeColors();
   const styles = useStyles(stylesFactory);
   const { t } = useLanguage();
+  const { avatarName } = useAvatar();
   const [selectedCategory, setSelectedCategory] = React.useState('all');
 
   const categories = [
@@ -91,19 +93,19 @@ export default function ToolsScreen() {
   const tools = [
     {
       id: "emotion-map",
-      title: t("tools.emotionMapTitle"),
-      description: t("tools.emotionMapDesc"),
+      title: t("tools.howImFeelingTitle"),
+      description: t("tools.howImFeelingDesc"),
       renderIcon: (color: string) => <MindfulnessActivityIcon size={26} color={color} />,
       route: "/(auth)/tools/emotion-map" as const,
       color: colors.primary,
       category: "mindfulness",
-      categoryText: t("tools.emotionMapTag"),
+      categoryText: t("tools.howImFeelingTag"),
     },
     {
       id: "companion",
-      title: t("tools.companionTitle"),
-      description: t("tools.companionDesc"),
-      renderIcon: () => <MitraAvatar state="neutral" size="sm" />,
+      title: t("tools.companionNameTitle", { companionName: avatarName }),
+      description: t("tools.companionNameDesc", { companionName: avatarName }),
+      renderIcon: () => <EmotyAvatar state="neutral" size="sm" />,
       route: "/(auth)/tools/companion" as const,
       color: colors.primary,
       category: "mindfulness",

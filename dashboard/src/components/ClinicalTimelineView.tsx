@@ -285,12 +285,29 @@ export const ClinicalTimelineView: React.FC<ClinicalTimelineViewProps> = ({
                   </p>
 
                   {/* Provenance Badges (Only displayed when explicit provenance exists) */}
-                  {event.provenance && (event.provenance.attemptId || event.provenance.triageId || event.provenance.alertId || event.provenance.sessionId) && (
+                  {event.provenance && (
+                    event.provenance.attemptId ||
+                    event.provenance.triageId ||
+                    event.provenance.alertId ||
+                    event.provenance.sessionId ||
+                    event.provenance.counsellorRequestId ||
+                    event.provenance.appointmentId
+                  ) && (
                     <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "8px", flexWrap: "wrap" }}>
                       <span style={{ display: "inline-flex", alignItems: "center", gap: "3px", fontSize: "0.72rem", color: "var(--accent-primary)", fontWeight: 600 }}>
                         <LinkIcon size={12} />
                         Provenance:
                       </span>
+                      {event.provenance.counsellorRequestId && (
+                        <span style={{ fontSize: "0.7rem", padding: "1px 6px", borderRadius: "4px", background: "rgba(6,182,212,0.08)", border: "1px solid rgba(6,182,212,0.2)", color: "#0891b2" }}>
+                          Counselor Request #{event.provenance.counsellorRequestId.slice(-6)}
+                        </span>
+                      )}
+                      {event.provenance.appointmentId && (
+                        <span style={{ fontSize: "0.7rem", padding: "1px 6px", borderRadius: "4px", background: "rgba(59,130,246,0.08)", border: "1px solid rgba(59,130,246,0.2)", color: "var(--accent-primary)" }}>
+                          Appointment #{event.provenance.appointmentId.slice(-6)}
+                        </span>
+                      )}
                       {event.provenance.attemptId && (
                         <span style={{ fontSize: "0.7rem", padding: "1px 6px", borderRadius: "4px", background: "rgba(37,99,235,0.08)", border: "1px solid rgba(37,99,235,0.2)", color: "var(--accent-primary)" }}>
                           Attempt #{event.provenance.attemptId.slice(-6)}

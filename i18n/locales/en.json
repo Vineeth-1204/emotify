@@ -43,6 +43,9 @@
     "signOutConfirmMessage": "Are you sure you want to sign out of your account?"
   },
   "home": {
+    "checkInCompactTitle": "Daily Check-in",
+    "checkInMoodToday": "{{mood}} today",
+    "goalSuggestedCopy": "{{companionName}} picked a small activity for you today.",
     "greetingMorning": "Good morning",
     "greetingAfternoon": "Good afternoon",
     "greetingEvening": "Good evening",
@@ -72,7 +75,7 @@
     "moodStreakDays": "{{count}} day check-in streak",
     "moodStreakToday": "Logged today",
     "checkInCompletedTitle": "Daily Check-in Complete",
-    "checkInCompletedDesc": "You logged feeling {{mood}} today. Mitra is right here with you.",
+    "checkInCompletedDesc": "You logged feeling {{mood}} today. Emoty is right here with you.",
     "updateCheckIn": "Update Check-in",
     "metricsTitle": "WELLBEING BALANCE",
     "metricsSubtitle": "Confidential indicators based on your recent check-ins",
@@ -109,6 +112,7 @@
     "calmResetAction": "Calm Breathing"
   },
   "profile": {
+    "companionPersonalizedSubtitle": "A supportive friend, here when you need one.",
     "title": "Profile",
     "subtitle": "Account and Personal Preferences",
     "headerStatus": "You are doing great — keep going",
@@ -128,7 +132,7 @@
     "avatarGirl": "Girl",
     "avatarBoy": "Boy",
     "companionNameLabel": "Companion Name",
-    "companionNameHelper": "Default is Mitra.",
+    "companionNameHelper": "Default is Emoty.",
     "renameModalTitle": "Name Your Companion",
     "renameModalSubtitle": "Give your companion a custom name that feels comforting and personal to you.",
     "renameInputPlaceholder": "Enter companion name...",
@@ -179,6 +183,11 @@
     "signOutBtn": "Sign Out"
   },
   "tools": {
+    "howImFeelingTitle": "How I'm Feeling",
+    "howImFeelingDesc": "Explore your feelings and where you notice them in your body.",
+    "howImFeelingTag": "Body Scan",
+    "companionNameTitle": "{{companionName}}",
+    "companionNameDesc": "Talk with {{companionName}} when you need support.",
     "title": "Therapy Hub",
     "subtitle": "Curated tools for your mental resilience.",
     "catAll": "All",
@@ -200,10 +209,10 @@
     "groundingTitle": "Sensory Grounding",
     "groundingDesc": "Anchor in the present with 5-4-3-2-1 senses.",
     "groundingTag": "Grounding",
-    "reframeTitle": "Reframe",
+    "reframeTitle": "Think Differently",
     "reframeDesc": "Balance negative thinking patterns.",
     "reframeTag": "CBT",
-    "microgoalsTitle": "MicroGoals",
+    "microgoalsTitle": "Small Steps",
     "microgoalsDesc": "Daily habits for small wins.",
     "microgoalsTag": "Habits",
     "appointmentsTitle": "Appointments",
@@ -237,6 +246,16 @@
     "emergencyContactHelpline": "Access Helpline Numbers"
   },
   "companion": {
+    "emergencyBannerSupportDesc": "{{name}} is here to support you but cannot replace emergency help. If you feel overwhelmed, free confidential help is open 24/7.",
+    "quickActionTellMore": "Tell me more",
+    "quickActionBreathe": "Breathe",
+    "quickActionReflect": "Reflect",
+    "quickActionGratitude": "Gratitude",
+    "quickActionTellMoreMessage": "I'd like to talk more about what's on my mind.",
+    "quickActionBreatheMessage": "I'd like to take a short breathing break.",
+    "quickActionReflectMessage": "I'd like to reflect on what happened and how it affected me.",
+    "quickActionGratitudeMessage": "I'd like to think of one small thing I'm grateful for.",
+    "quickActionStartBreathing": "Start a breathing break",
     "chatTitle": "{{name}} Companion",
     "chatSubtitle": "Safe, private, empathetic reflection",
     "inputPlaceholder": "Message {{name}}...",

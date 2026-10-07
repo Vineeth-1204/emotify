@@ -43,6 +43,9 @@
     "signOutConfirmMessage": "మీరు ఖచ్చితంగా సైన్ అవుట్ చేయాలనుకుంటున్నారా?"
   },
   "home": {
+    "checkInCompactTitle": "రోజువారీ చెక్-ఇన్",
+    "checkInMoodToday": "ఈరోజు {{mood}}",
+    "goalSuggestedCopy": "ఈరోజు కోసం {{companionName}} ఒక చిన్న పనిని ఎంచుకున్నారు.",
     "greetingMorning": "శుభోదయం",
     "greetingAfternoon": "శుభ మధ్యాహ్నం",
     "greetingEvening": "శుభ సాయంత్రం",
@@ -72,7 +75,7 @@
     "moodStreakDays": "{{count}} రోజుల నిరంతర నమోదు",
     "moodStreakToday": "ఈరోజు నమోదైంది",
     "checkInCompletedTitle": "రోజువారీ నమోదు పూర్తయింది",
-    "checkInCompletedDesc": "ఈరోజు మీరు {{mood}} గా ఉన్నట్లు నమోదు చేశారు. మిత్ర మీకు తోడుగా ఉంది.",
+    "checkInCompletedDesc": "ఈరోజు మీరు {{mood}} గా ఉన్నట్లు నమోదు చేశారు. ఎమోటీ (Emoty) మీకు తోడుగా ఉంది.",
     "updateCheckIn": "నమోదును నవీకరించండి",
     "metricsTitle": "ఆరోగ్య సమతుల్యత",
     "metricsSubtitle": "ఇటీవలి వివరాల ఆధారంగా గోప్యమైన సూచికలు",
@@ -109,6 +112,7 @@
     "calmResetAction": "ప్రశాంత శ్వాస"
   },
   "profile": {
+    "companionPersonalizedSubtitle": "మీకు అవసరమైనప్పుడు తోడుగా ఉండే స్నేహితుడు.",
     "title": "ప్రొఫైల్",
     "subtitle": "ఖాతా మరియు ప్రాధాన్యతలు",
     "headerStatus": "మీరు గొప్పగా ముందుకు సాగుతున్నారు — కొనసాగించండి",
@@ -128,7 +132,7 @@
     "avatarGirl": "అమ్మాయి",
     "avatarBoy": "అబ్బాయి",
     "companionNameLabel": "స్నేహితుడి పేరు",
-    "companionNameHelper": "డిఫాల్ట్ మిత్ర (Mitra).",
+    "companionNameHelper": "డిఫాల్ట్ ఎమోటీ (Emoty).",
     "renameModalTitle": "స్నేహితుడికి పేరు పెట్టండి",
     "renameModalSubtitle": "మీ స్నేహితుడికి మీకు నచ్చిన వ్యక్తిగత పేరు పెట్టండి.",
     "renameInputPlaceholder": "స్నేహితుడి పేరు నమోదు చేయండి...",
@@ -179,6 +183,11 @@
     "signOutBtn": "సైన్ అవుట్"
   },
   "tools": {
+    "howImFeelingTitle": "నేను ఎలా భావిస్తున్నాను",
+    "howImFeelingDesc": "మీ భావాలను, అవి శరీరంలో ఎక్కడ అనిపిస్తున్నాయో తెలుసుకోండి.",
+    "howImFeelingTag": "శరీర పరిశీలన",
+    "companionNameTitle": "{{companionName}}",
+    "companionNameDesc": "మద్దతు అవసరమైనప్పుడు {{companionName}}తో మాట్లాడండి.",
     "title": "థెరపీ హబ్",
     "subtitle": "మీ మానసిక దృఢత్వం కోసం ప్రత్యేక సాధనాలు.",
     "catAll": "అన్నీ",
@@ -235,6 +244,16 @@
     "emergencyContactHelpline": "హెల్ప్‌లైన్ నంబర్లు చూడండి"
   },
   "companion": {
+    "emergencyBannerSupportDesc": "{{name}} మీకు మద్దతుగా ఉంటారు, కానీ అత్యవసర సహాయానికి ప్రత్యామ్నాయం కాదు. మీరు తీవ్రంగా ఇబ్బంది పడుతున్నట్లయితే, ఉచిత గోప్య సహాయం 24/7 అందుబాటులో ఉంటుంది.",
+    "quickActionTellMore": "ఇంకా చెప్పండి",
+    "quickActionBreathe": "శ్వాస తీసుకుందాం",
+    "quickActionReflect": "ఆలోచిద్దాం",
+    "quickActionGratitude": "కృతజ్ఞత",
+    "quickActionTellMoreMessage": "నా మనసులో ఉన్న విషయం గురించి ఇంకా మాట్లాడాలనుకుంటున్నాను.",
+    "quickActionBreatheMessage": "కొద్దిసేపు శ్వాసాభ్యాసం చేయాలనుకుంటున్నాను.",
+    "quickActionReflectMessage": "ఏం జరిగింది, అది నన్ను ఎలా ప్రభావితం చేసిందో ఆలోచించాలనుకుంటున్నాను.",
+    "quickActionGratitudeMessage": "నేను కృతజ్ఞతతో భావించే ఒక చిన్న విషయం గురించి ఆలోచించాలనుకుంటున్నాను.",
+    "quickActionStartBreathing": "శ్వాసాభ్యాసం ప్రారంభించండి",
     "chatTitle": "{{name}} స్నేహితుడు",
     "chatSubtitle": "సురక్షితమైన, వ్యక్తిగత, స్నేహపూర్వక సంభాషణ",
     "inputPlaceholder": "{{name}} కి సందేశం పంపండి...",

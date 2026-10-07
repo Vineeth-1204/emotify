@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { View, Text, StyleSheet, ScrollView, ActivityIndicator, Alert, TouchableOpacity, Dimensions, ViewStyle, TextStyle, Switch, Linking, TextInput, Modal, KeyboardAvoidingView, Platform } from "react-native";
 import { useAppAuth } from "@/utils/auth";
-import { useQuery, useMutation } from "convex/react";
+import { useQuery, useMutation, useConvexAuth } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useThemeColors, useStyles } from "@/context/MoodThemeContext";
 import { Theme } from "@/constants/Theme";
@@ -14,22 +14,25 @@ import { useRouter } from "expo-router";
 import * as SecureStore from "expo-secure-store";
 import * as LocalAuthentication from "expo-local-authentication";
 import { useAvatar, AvatarGender } from "@/context/AvatarContext";
-import { MitraAvatar } from "@/components/avatar/MitraAvatar";
+import { EmotyAvatar } from "@/components/avatar/EmotyAvatar";
 import { useLanguage } from "@/context/LanguageContext";
 import { useVoice } from "@/context/VoiceContext";
 import { VoiceSettingsModal } from "@/components/voice/VoiceSettingsModal";
+import { EmotyPreferencesSection } from "@/components/profile/EmotyPreferencesSection";
 
 const { width } = Dimensions.get('window');
 
 export default function ProfileScreen() {
-  const { logout, user, biometricsEnabled, setBiometricsEnabled } = useAppAuth();
+  const { logout, user, isAuthenticated, biometricsEnabled, setBiometricsEnabled } = useAppAuth();
+  const { isAuthenticated: isConvexAuthed } = useConvexAuth();
+  const isReady = Boolean(isAuthenticated && isConvexAuthed && user?.id);
   const router = useRouter();
   const userId = user?.id;
   const colors = useThemeColors();
   const styles = useStyles(stylesFactory);
 
-  const dbUser = useQuery(api.users.getByClerkId, userId ? { clerkId: userId } : "skip");
-  const exportScreenings = useQuery(api.screening.getAll, userId ? { userId: userId } : "skip");
+  const dbUser = useQuery(api.users.getByClerkId, isReady && userId ? { clerkId: userId } : "skip");
+  const exportScreenings = useQuery(api.screening.getAll, isReady && userId ? { userId: userId } : "skip");
 
   const { t, language, setLanguage, supportedLanguages, activeLanguageOption } = useLanguage();
   const { avatarName, avatarGender, setMitraPreferences } = useAvatar();
@@ -338,14 +341,14 @@ export default function ProfileScreen() {
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
                 <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: colors.primary + '15', justifyContent: 'center', alignItems: 'center', flexShrink: 0 }}>
-                  <MitraAvatar gender={avatarGender} state="happy" size="sm" />
+                  <EmotyAvatar gender={avatarGender} state="happy" size="sm" />
                 </View>
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <Text style={{ fontFamily: Theme.fontFamily.bold, fontSize: 16, color: colors.text }} numberOfLines={1}>
                     {avatarName}
                   </Text>
                   <Text style={{ fontFamily: Theme.fontFamily.medium, fontSize: 12, color: colors.textSecondary, marginTop: 2 }} numberOfLines={1}>
-                    {avatarGender === "male" ? t("profile.avatarBoy") : t("profile.avatarGirl")} • {t("profile.companionSubtitle")}
+                    {avatarGender === "male" ? t("profile.avatarBoy") : t("profile.avatarGirl")} • {t("profile.companionPersonalizedSubtitle")}
                   </Text>
                 </View>
               </View>
@@ -424,6 +427,9 @@ export default function ProfileScreen() {
             )}
           </View>
         </View>
+
+        {/* Emoty Personalization & Preferences Section */}
+        <EmotyPreferencesSection isReady={isReady} />
 
         {/* Account Details Section */}
         <View style={styles.section}>
@@ -600,7 +606,7 @@ export default function ProfileScreen() {
         <View style={styles.renameModalOverlay}>
           <View style={styles.renameModalCard}>
             <View style={{ alignItems: 'center', marginBottom: 16 }}>
-              <MitraAvatar gender={selectedGender} state="happy" size="md" />
+              <EmotyAvatar gender={selectedGender} state="happy" size="md" />
             </View>
             <Text style={styles.renameModalTitle}>{t("profile.customizeModalTitle")}</Text>
             <Text style={styles.renameModalSubtitle}>
@@ -631,7 +637,7 @@ export default function ProfileScreen() {
                 accessibilityRole="button"
                 accessibilityLabel={`${t("profile.avatarGirl")}, ${selectedGender === 'female' ? 'selected' : 'not selected'}`}
               >
-                <MitraAvatar gender="female" size="xs" state="happy" />
+                <EmotyAvatar gender="female" size="xs" state="happy" />
                 <Text style={{
                   fontFamily: selectedGender === 'female' ? Theme.fontFamily.bold : Theme.fontFamily.medium,
                   fontSize: 14,
@@ -660,7 +666,7 @@ export default function ProfileScreen() {
                 accessibilityRole="button"
                 accessibilityLabel={`${t("profile.avatarBoy")}, ${selectedGender === 'male' ? 'selected' : 'not selected'}`}
               >
-                <MitraAvatar gender="male" size="xs" state="happy" />
+                <EmotyAvatar gender="male" size="xs" state="happy" />
                 <Text style={{
                   fontFamily: selectedGender === 'male' ? Theme.fontFamily.bold : Theme.fontFamily.medium,
                   fontSize: 14,

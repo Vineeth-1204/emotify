@@ -7,6 +7,7 @@ import {
   requireCounselorOrAdmin,
   assertCanAccessStudent,
 } from "./authz";
+import { sanitizePlainText } from "./sanitizer";
 
 // Helper to resolve patient name dynamically by userId (clerkId or user _id)
 async function getPatientName(ctx: any, userId: string): Promise<string> {
@@ -46,9 +47,27 @@ export const getDashboardOverview = query({
       }
     }
 
-    // For dashboard overview, we count triages belonging to active enrolled patients
-    const rawTriages = await ctx.db.query("triages").collect();
-    const triages = rawTriages.filter((t) => t.userId && patientIdMap.has(t.userId.toString()));
+    // Severe / Critical Risk: Calculate based on LATEST triage per enrolled patient using indexed queries
+    const latestTriageByPatient: Record<string, any> = {};
+    for (const p of patients) {
+      const canonicalId = p._id.toString();
+      let latest = await ctx.db
+        .query("triages")
+        .withIndex("by_userId_and_createdAt", (q) => q.eq("userId", canonicalId))
+        .order("desc")
+        .first();
+      const clerkId = p.clerkId;
+      if (!latest && clerkId) {
+        latest = await ctx.db
+          .query("triages")
+          .withIndex("by_userId_and_createdAt", (q) => q.eq("userId", clerkId))
+          .order("desc")
+          .first();
+      }
+      if (latest) {
+        latestTriageByPatient[canonicalId] = latest;
+      }
+    }
 
     // Alerts - count any unresolved/active alerts (pending or escalated or active)
     const pendingAlerts = await ctx.db
@@ -68,15 +87,6 @@ export const getDashboardOverview = query({
 
     const totalActiveAlerts = [...pendingAlerts, ...escalatedAlerts, ...activeAlerts];
 
-    // Severe / Critical Risk: Calculate based on LATEST triage per enrolled patient (not raw historical log count or unmapped aliases)
-    const latestTriageByPatient: Record<string, any> = {};
-    for (const t of triages) {
-      const canonicalId = patientIdMap.get(t.userId.toString())!;
-      if (!latestTriageByPatient[canonicalId] || (t.createdAt || 0) > (latestTriageByPatient[canonicalId].createdAt || 0)) {
-        latestTriageByPatient[canonicalId] = t;
-      }
-    }
-
     const latestTriagesList = Object.values(latestTriageByPatient);
     const severeCases = latestTriagesList.filter(
       (t) => t.level === "severe" || t.level === "suicide_flag" || t.level === "psychosis_flag" || t.suicideFlag || t.psychosisFlag
@@ -85,7 +95,26 @@ export const getDashboardOverview = query({
     const suicideRisks = latestTriagesList.filter((t) => t.suicideFlag || t.level === "suicide_flag").length;
     const psychosisRisks = latestTriagesList.filter((t) => t.psychosisFlag || t.level === "psychosis_flag").length;
 
-    // Generate real trend data for the last 7 days based on triages
+    // Generate real trend data for the last 7 days based on indexed triages
+    const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const recentTriages: any[] = [];
+    for (const p of patients) {
+      const canonicalId = p._id.toString();
+      const recents = await ctx.db
+        .query("triages")
+        .withIndex("by_userId_and_createdAt", (q) => q.eq("userId", canonicalId).gte("createdAt", sevenDaysAgo))
+        .take(50);
+      recentTriages.push(...recents);
+      const clerkId = p.clerkId;
+      if (clerkId) {
+        const clerkRecents = await ctx.db
+          .query("triages")
+          .withIndex("by_userId_and_createdAt", (q) => q.eq("userId", clerkId).gte("createdAt", sevenDaysAgo))
+          .take(50);
+        recentTriages.push(...clerkRecents);
+      }
+    }
+
     const trendData = [];
     for (let i = 6; i >= 0; i--) {
       const d = new Date();
@@ -93,7 +122,7 @@ export const getDashboardOverview = query({
       const startOfDay = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
       const endOfDay = startOfDay + 86399999;
 
-      const dayTriages = triages.filter(t => t.createdAt >= startOfDay && t.createdAt <= endOfDay);
+      const dayTriages = recentTriages.filter(t => t.createdAt >= startOfDay && t.createdAt <= endOfDay);
       trendData.push({
         name: d.toLocaleDateString('en-US', { weekday: 'short' }),
         severe: dayTriages.filter(t => t.level === "severe" || t.suicideFlag || t.psychosisFlag).length,
@@ -212,41 +241,53 @@ export const getAlerts = query({
         }));
     }
 
-    // Staff path: Institution-wide clinical alerts
-    let dbAlerts = await ctx.db.query("alerts").order("desc").collect();
-    
-    // Fetch all active patients
-    const patients = await ctx.db
-      .query("users")
-      .withIndex("by_role", (q) => q.eq("role", "patient"))
-      .collect();
+    // Staff path: Institution-wide clinical alerts (Bounded retrieval to prevent full-table scans)
+    const dbAlerts = await ctx.db.query("alerts").order("desc").take(150);
 
-    const patientMap = new Map<string, any>();
-    for (const p of patients) {
-      patientMap.set(p._id.toString(), p);
-      if (p.clerkId) {
-        patientMap.set(p.clerkId, p);
+    // Patient lookup cache to avoid full-table scans of users
+    const patientCache = new Map<string, any>();
+    async function resolvePatient(userId: string) {
+      if (!userId) return null;
+      if (patientCache.has(userId)) return patientCache.get(userId);
+      let patient = null;
+      try {
+        patient = await ctx.db.get(userId as Id<"users">);
+      } catch (e) {}
+      if (!patient) {
+        patient = await ctx.db
+          .query("users")
+          .withIndex("by_clerkId", (q: any) => q.eq("clerkId", userId))
+          .first();
       }
+      patientCache.set(userId, patient);
+      if (patient) {
+        patientCache.set(patient._id.toString(), patient);
+        if (patient.clerkId) patientCache.set(patient.clerkId, patient);
+      }
+      return patient;
     }
 
-    // Fetch latest triage per patient to ensure real-time triage flags generate live alerts if not already in alerts table
-    const rawTriages = await ctx.db.query("triages").order("desc").collect();
+    // Bounded fetch of recent triages to ensure real-time triage flags generate live alerts if not already in alerts table
+    const recentTriages = await ctx.db.query("triages").order("desc").take(100);
     const latestTriageByPatient: Record<string, any> = {};
-    for (const t of rawTriages) {
-      if (t.userId && patientMap.has(t.userId.toString())) {
-        const canonicalId = patientMap.get(t.userId.toString())!._id.toString();
-        if (!latestTriageByPatient[canonicalId] || (t.createdAt || 0) > (latestTriageByPatient[canonicalId].createdAt || 0)) {
-          latestTriageByPatient[canonicalId] = t;
+    for (const t of recentTriages) {
+      if (t.userId) {
+        const patient = await resolvePatient(t.userId.toString());
+        if (patient) {
+          const canonicalId = patient._id.toString();
+          if (!latestTriageByPatient[canonicalId] || (t.createdAt || 0) > (latestTriageByPatient[canonicalId].createdAt || 0)) {
+            latestTriageByPatient[canonicalId] = t;
+          }
         }
       }
     }
 
-    const alertUserIds = new Set(dbAlerts.map(a => a.userId.toString()));
+    const alertUserIds = new Set(dbAlerts.map((a) => a.userId.toString()));
     const synthesizedAlerts: any[] = [...dbAlerts];
 
     // For any patient whose latest triage has suicideFlag or psychosisFlag or severe level, ensure an active alert exists
     for (const [canonicalId, triage] of Object.entries(latestTriageByPatient)) {
-      const patient = patientMap.get(canonicalId);
+      const patient = await resolvePatient(canonicalId);
       if (!patient) continue;
 
       const hasSuicide = triage.suicideFlag || triage.level === "suicide_flag";
@@ -284,16 +325,7 @@ export const getAlerts = query({
 
     const results = [];
     for (const alert of synthesizedAlerts) {
-      let patient = null;
-      try {
-        patient = await ctx.db.get(alert.userId as Id<"users">);
-      } catch (e) {}
-      if (!patient && alert.userId) {
-        patient = await ctx.db
-          .query("users")
-          .withIndex("by_clerkId", (q) => q.eq("clerkId", alert.userId))
-          .first();
-      }
+      const patient = await resolvePatient(alert.userId);
 
       results.push({
         ...alert,
@@ -428,10 +460,19 @@ export const updateAlertStatus = mutation({
   handler: async (ctx, args) => {
     await requireCounselorOrAdmin(ctx);
 
+    const alert = await ctx.db.get(args.alertId);
+    if (!alert) throw new Error("Alert not found");
+
+    // EMOT-PERF-02: Idempotent status update - avoid redundant write
+    if (alert.status === args.status) {
+      return { success: true };
+    }
+
     await ctx.db.patch(args.alertId, {
       status: args.status,
       acknowledgedAt: Date.now(),
     });
+    return { success: true };
   }
 });
 
@@ -1070,8 +1111,8 @@ export const addTimelineEvent = mutation({
     return await ctx.db.insert("clinicalTimelines", {
       userId: args.userId,
       eventType: args.eventType,
-      title: args.title,
-      description: args.description,
+      title: sanitizePlainText(args.title),
+      description: sanitizePlainText(args.description),
       performedBy: staff.full_name || "Staff",
       timestamp: Date.now(),
       metadata: args.metadata,
@@ -1097,14 +1138,56 @@ export const getAiMonitoringLogs = query({
 });
 
 // ENTERPRISE SYSTEM NOTIFICATIONS
+// ENTERPRISE SYSTEM NOTIFICATIONS
 export const getNotifications = query({
   args: {},
   handler: async (ctx) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return [];
 
-    return await ctx.db.query("notifications").order("desc").take(50);
-  }
+    const caller = await getAuthenticatedUser(ctx);
+    const searchRecipientIds = new Set<string>();
+
+    if (identity.subject) {
+      searchRecipientIds.add(identity.subject);
+    }
+    if (caller) {
+      searchRecipientIds.add(String(caller._id));
+      if (caller.clerkId) {
+        searchRecipientIds.add(caller.clerkId);
+      }
+      if (caller.patientId) {
+        searchRecipientIds.add(caller.patientId);
+      }
+    }
+
+    const seenIds = new Set<string>();
+    const notifications: any[] = [];
+
+    for (const recipientId of Array.from(searchRecipientIds)) {
+      const notifs = await ctx.db
+        .query("notifications")
+        .withIndex("by_recipientId", (q) => q.eq("recipientId", recipientId))
+        .order("desc")
+        .take(50);
+
+      for (const n of notifs) {
+        const idStr = String(n._id);
+        if (!seenIds.has(idStr)) {
+          seenIds.add(idStr);
+          notifications.push(n);
+        }
+      }
+    }
+
+    notifications.sort((a, b) => {
+      const tA = a.createdAt ?? a._creationTime ?? 0;
+      const tB = b.createdAt ?? b._creationTime ?? 0;
+      return tB - tA;
+    });
+
+    return notifications.slice(0, 50);
+  },
 });
 
 export const markNotificationRead = mutation({
@@ -1113,8 +1196,35 @@ export const markNotificationRead = mutation({
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
 
+    const notification = await ctx.db.get(args.notificationId);
+    if (!notification) throw new Error("Notification not found");
+
+    const caller = await getAuthenticatedUser(ctx);
+    const validRecipientIds = new Set<string>();
+
+    if (identity.subject) {
+      validRecipientIds.add(identity.subject);
+    }
+    if (caller) {
+      validRecipientIds.add(String(caller._id));
+      if (caller.clerkId) {
+        validRecipientIds.add(caller.clerkId);
+      }
+      if (caller.patientId) {
+        validRecipientIds.add(caller.patientId);
+      }
+    }
+
+    const isRecipient = validRecipientIds.has(notification.recipientId);
+    const isAdmin = caller?.role === "admin";
+
+    if (!isRecipient && !isAdmin) {
+      throw new Error("Unauthorized: Cannot mark another user's notification as read");
+    }
+
     await ctx.db.patch(args.notificationId, { read: true });
-  }
+    return { success: true };
+  },
 });
 
 // ENTERPRISE ANALYTICS METRICS
@@ -1124,8 +1234,10 @@ export const getEnterpriseAnalytics = query({
     const caller = await getAuthenticatedUser(ctx);
     if (!caller || (caller.role !== "admin" && caller.role !== "counsellor")) return null;
 
-    const users = await ctx.db.query("users").collect();
-    const patients = users.filter(u => u.role === "patient");
+    const patients = await ctx.db
+      .query("users")
+      .withIndex("by_role", (q) => q.eq("role", "patient"))
+      .collect();
 
     const patientIdMap = new Map<string, string>();
     for (const p of patients) {
@@ -1136,20 +1248,25 @@ export const getEnterpriseAnalytics = query({
       }
     }
 
-    const sessions = await ctx.db.query("cbtSessions").collect();
-    const rawTriages = await ctx.db.query("triages").collect();
-    const triages = rawTriages.filter((t) => t.userId && patientIdMap.has(t.userId.toString()));
-    const rawAttempts = await ctx.db.query("screeningAttempts").collect();
-    const completedAttempts = rawAttempts.filter(
-      (a) => a.status === "completed" && a.userId && patientIdMap.has(a.userId.toString())
-    );
-    const emotionLogs = await ctx.db.query("emotionLogs").collect();
-
+    // Latest triage per patient using indexed lookups
     const latestTriageByPatient: Record<string, any> = {};
-    for (const t of triages) {
-      const canonicalId = patientIdMap.get(t.userId.toString())!;
-      if (!latestTriageByPatient[canonicalId] || (t.createdAt || 0) > (latestTriageByPatient[canonicalId].createdAt || 0)) {
-        latestTriageByPatient[canonicalId] = t;
+    for (const p of patients) {
+      const canonicalId = p._id.toString();
+      let latest = await ctx.db
+        .query("triages")
+        .withIndex("by_userId_and_createdAt", (q) => q.eq("userId", canonicalId))
+        .order("desc")
+        .first();
+      const clerkId = p.clerkId;
+      if (!latest && clerkId) {
+        latest = await ctx.db
+          .query("triages")
+          .withIndex("by_userId_and_createdAt", (q) => q.eq("userId", clerkId))
+          .order("desc")
+          .first();
+      }
+      if (latest) {
+        latestTriageByPatient[canonicalId] = latest;
       }
     }
     const latestTriagesList = Object.values(latestTriageByPatient);
@@ -1159,36 +1276,68 @@ export const getEnterpriseAnalytics = query({
     let totalGad = 0;
     let count = 0;
 
-    if (completedAttempts.length > 0) {
-      for (const a of completedAttempts) {
+    for (const p of patients) {
+      const canonicalId = p._id.toString();
+      const userAttempts = await ctx.db
+        .query("screeningAttempts")
+        .withIndex("by_userId", (q) => q.eq("userId", canonicalId))
+        .take(50);
+      const userCompleted = userAttempts.filter((a) => a.status === "completed");
+      for (const a of userCompleted) {
         if (a.results?.phq9?.score !== undefined) {
           totalPhq += a.results.phq9.score;
           totalGad += a.results.gad7.score;
           count++;
         }
       }
-    } else {
-      const fallbackScreenings = await ctx.db.query("screenings").collect();
-      fallbackScreenings.forEach((s) => {
-        totalPhq += s.phq9_total;
-        totalGad += s.gad7_total;
-      });
-      count = fallbackScreenings.length;
+      const clerkId = p.clerkId;
+      if (clerkId) {
+        const clerkAttempts = await ctx.db
+          .query("screeningAttempts")
+          .withIndex("by_userId", (q) => q.eq("userId", clerkId))
+          .take(50);
+        const clerkCompleted = clerkAttempts.filter((a) => a.status === "completed");
+        for (const a of clerkCompleted) {
+          if (a.results?.phq9?.score !== undefined) {
+            totalPhq += a.results.phq9.score;
+            totalGad += a.results.gad7.score;
+            count++;
+          }
+        }
+      }
+    }
+
+    if (count === 0) {
+      for (const p of patients) {
+        const canonicalId = p._id.toString();
+        const fallbackScreenings = await ctx.db
+          .query("screenings")
+          .withIndex("by_userId", (q) => q.eq("userId", canonicalId))
+          .take(20);
+        fallbackScreenings.forEach((s) => {
+          totalPhq += s.phq9_total;
+          totalGad += s.gad7_total;
+          count++;
+        });
+      }
     }
 
     const avgPhq = count > 0 ? (totalPhq / count).toFixed(1) : "0";
     const avgGad = count > 0 ? (totalGad / count).toFixed(1) : "0";
 
+    const sessions = await ctx.db.query("cbtSessions").order("desc").take(500);
+    const emotionLogs = await ctx.db.query("emotionLogs").order("desc").take(500);
+
     return {
       totalPatients: patients.length,
       totalSessions: sessions.length,
-      completedSessions: sessions.filter(s => s.sessionStatus === "completed").length,
+      completedSessions: sessions.filter((s) => s.sessionStatus === "completed").length,
       avgPhqScore: avgPhq,
       avgGadScore: avgGad,
       riskDistribution: {
-        mild: latestTriagesList.filter(t => t.level === "mild").length,
-        moderate: latestTriagesList.filter(t => t.level === "moderate").length,
-        severe: latestTriagesList.filter(t => t.level === "severe" || t.suicideFlag || t.psychosisFlag).length,
+        mild: latestTriagesList.filter((t) => t.level === "mild").length,
+        moderate: latestTriagesList.filter((t) => t.level === "moderate").length,
+        severe: latestTriagesList.filter((t) => t.level === "severe" || t.suicideFlag || t.psychosisFlag).length,
       },
       totalEmotionLogs: emotionLogs.length,
     };
@@ -1240,16 +1389,25 @@ export const getUsersWithAiChats = query({
   args: {},
   handler: async (ctx) => {
     const caller = await getAuthenticatedUser(ctx);
-    if (!caller || (caller.role !== "admin" && caller.role !== "counsellor")) {
+    if (!caller || caller.role !== "admin") {
       return {
         users: [],
         stats: { totalUsers: 0, totalMessages: 0, activeToday: 0, highRiskFlags: 0 }
       };
     }
 
-    const companionLogs = await ctx.db.query("aiCompanionLogs").collect();
-    const fallbackMessages = await ctx.db.query("companionMessages").collect();
-    const telemetryLogs = await ctx.db.query("aiMonitoringLogs").collect();
+    const companionLogs = await ctx.db
+      .query("aiCompanionLogs")
+      .order("desc")
+      .take(500);
+    const fallbackMessages = await ctx.db
+      .query("companionMessages")
+      .order("desc")
+      .take(200);
+    const telemetryLogs = await ctx.db
+      .query("aiMonitoringLogs")
+      .order("desc")
+      .take(200);
 
     const userMessageMap = new Map<string, any[]>();
 
@@ -1373,9 +1531,13 @@ export const getUsersWithAiChats = query({
 export const getPatientAiChatHistoryAdmin = query({
   args: { userId: v.string() },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new Error("Unauthenticated: Login required.");
+    }
     const caller = await getAuthenticatedUser(ctx);
-    if (!caller || (caller.role !== "admin" && caller.role !== "counsellor")) {
-      return { patient: null, messages: [] };
+    if (!caller || caller.role !== "admin") {
+      throw new Error("Unauthorized: Administrative access required to view AI companion chat transcripts.");
     }
 
     let patient = null;

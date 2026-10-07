@@ -43,7 +43,7 @@ import {
   GroundingIcon,
   JournalActivityIcon,
 } from "@/components/svg/activities";
-import { MitraAvatar } from "@/components/avatar/MitraAvatar";
+import { EmotyAvatar, MitraAvatar } from "@/components/avatar/EmotyAvatar";
 import { BreathingPlayer } from "@/components/breathing/BreathingPlayer";
 import { SensoryGroundingPlayer } from "@/components/grounding/SensoryGroundingPlayer";
 import { SENSORY_54321_PROTOCOL } from "@/constants/GroundingProtocols";
@@ -60,6 +60,12 @@ import {
   getCanonicalEmotionForRouting,
   PrimaryEmotionId,
 } from "@/common/emotionTaxonomy";
+import { validateContextualPrimary } from "@/common/phase6EmotionEntry";
+import { useLanguage } from "@/context/LanguageContext";
+import {
+  PRIMARY_EMOTION_CARD_DESCRIPTIONS,
+  PRIMARY_EMOTION_CARD_MIN_HEIGHT,
+} from "@/common/primaryEmotionCardLayout";
 
 // Phase 3: SecureStore key for pending post-session state (JPMR/Reframe navigate away, then return)
 const P3_PENDING_KEY = "emotion_map_phase3_pending";
@@ -193,16 +199,18 @@ function IntensitySelector({ value, onChange, activeColor }: IntensitySelectorPr
 }
 
 export default function EmotionMapScreen() {
+  const { t } = useLanguage();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { user } = useAppAuth();
-  const params = useLocalSearchParams<{ postSession?: string; reset?: string }>();
+  const params = useLocalSearchParams<{ postSession?: string; reset?: string; primaryEmotion?: string }>();
+  const contextualPrimary = validateContextualPrimary(params.primaryEmotion);
 
   // Tab navigation
   const [activeTab, setActiveTab] = useState<"log" | "history">("log");
 
   // Step 1: Broad emotional state (Primary)
-  const [primaryEmotion, setPrimaryEmotion] = useState<PrimaryEmotionId | null>(null);
+  const [primaryEmotion, setPrimaryEmotion] = useState<PrimaryEmotionId | null>(contextualPrimary);
 
   // Step 2: More specific feeling (Secondary)
   const [secondaryEmotion, setSecondaryEmotion] = useState<string | null>(null);
@@ -250,7 +258,7 @@ export default function EmotionMapScreen() {
   // 6: Uncertain support (fallback activity)
   // 7: Post-intervention check ("How do you feel now?")
   // 8: Mitra followup message
-  const [step, setStep] = useState<number>(1);
+  const [step, setStep] = useState<number>(contextualPrimary ? 2 : 1);
 
   // History Tab States
   const [filterDays, setFilterDays] = useState<7 | 30>(7);
@@ -276,6 +284,10 @@ export default function EmotionMapScreen() {
         return true;
       }
       if (step === 2) {
+        if (contextualPrimary) {
+          router.back();
+          return true;
+        }
         setStep(1);
         return true;
       }
@@ -304,7 +316,7 @@ export default function EmotionMapScreen() {
 
     const sub = BackHandler.addEventListener("hardwareBackPress", onBackPress);
     return () => sub.remove();
-  }, [step, activeTab, router]);
+  }, [step, activeTab, router, contextualPrimary]);
 
   // Phase 3 — On mount: check if returning from JPMR/Reframe with pending post-session state
   useEffect(() => {
@@ -665,7 +677,7 @@ export default function EmotionMapScreen() {
       <ScrollView
         contentContainerStyle={[
           styles.content,
-          { paddingTop: Math.max(insets.top + 20, 68) },
+          { paddingTop: Math.max(insets.top + 20, 68), paddingBottom: Math.max(insets.bottom, 12) + 96 },
         ]}
         showsVerticalScrollIndicator={false}
       >
@@ -677,7 +689,8 @@ export default function EmotionMapScreen() {
                 if (activeTab === "history") {
                   setActiveTab("log");
                 } else if (step === 2) {
-                  setStep(1);
+                  if (contextualPrimary) router.back();
+                  else setStep(1);
                 } else if (step === 3) {
                   setStep(2);
                 } else if (step === 4) {
@@ -696,7 +709,7 @@ export default function EmotionMapScreen() {
             >
               <Ionicons name="chevron-back" size={24} color={Colors.text} />
             </TouchableOpacity>
-            <Text style={styles.title}>Emotion Check-in</Text>
+            <Text style={styles.title}>{t("tools.howImFeelingTitle")}</Text>
           </View>
 
           {/* Tab Selection */}
@@ -772,24 +785,25 @@ export default function EmotionMapScreen() {
                           <Text style={[styles.primaryLabel, isSelected && { color: emotion.themeColor }]}>
                             {emotion.label}
                           </Text>
-                          <Text style={styles.primaryDescription}>{emotion.description}</Text>
+                          <Text style={styles.primaryDescription}>
+                            {PRIMARY_EMOTION_CARD_DESCRIPTIONS[emotion.id]}
+                          </Text>
                         </View>
-                        {isSelected && (
-                          <View style={[styles.primaryBadge, { backgroundColor: emotion.themeColor }]}>
+                        <View
+                          style={[
+                            styles.primaryBadge,
+                            isSelected && { backgroundColor: emotion.themeColor, borderColor: emotion.themeColor },
+                          ]}
+                        >
+                          {isSelected && (
                             <Ionicons name="checkmark" size={14} color={Colors.white} />
-                          </View>
-                        )}
+                          )}
+                        </View>
                       </TouchableOpacity>
                     );
                   })}
                 </View>
 
-                <Button
-                  title={primaryEmotion ? `Continue with ${PRIMARY_EMOTIONS.find((e) => e.id === primaryEmotion)?.label}` : "Continue"}
-                  onPress={handleContinueFromStep1}
-                  disabled={!primaryEmotion}
-                  style={styles.nextBtn}
-                />
               </View>
             )}
 
@@ -1364,6 +1378,17 @@ export default function EmotionMapScreen() {
         <View style={{ height: 100 }} />
       </ScrollView>
 
+      {activeTab === "log" && step === 1 && (
+        <View style={[styles.primaryFooter, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+          <Button
+            title={primaryEmotion ? `Continue with ${PRIMARY_EMOTIONS.find((e) => e.id === primaryEmotion)?.label}` : "Continue"}
+            onPress={handleContinueFromStep1}
+            disabled={!primaryEmotion}
+            style={styles.nextBtn}
+          />
+        </View>
+      )}
+
       {/* Phase 3 — Guided Breathing Modal (inline, completion → step 7) */}
       <Modal
         visible={showBreathingModal}
@@ -1515,14 +1540,15 @@ const styles = StyleSheet.create({
   },
   primaryCard: {
     width: "48%",
-    paddingVertical: 18,
-    paddingHorizontal: 12,
+    minHeight: PRIMARY_EMOTION_CARD_MIN_HEIGHT,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
     borderRadius: Theme.borderRadius.xl,
     backgroundColor: "#F8FAFC",
     borderWidth: 2,
     borderColor: "#E2E8F0",
     alignItems: "center",
-    justifyContent: "center",
+    justifyContent: "flex-start",
     ...Theme.shadows.tertiary,
     position: "relative",
   },
@@ -1531,37 +1557,50 @@ const styles = StyleSheet.create({
     ...Theme.shadows.primary,
   },
   primaryIconContainer: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
     justifyContent: "center",
     alignItems: "center",
-    marginBottom: 8,
+    marginBottom: 6,
   },
   primaryTextContainer: {
     alignItems: "center",
+    width: "100%",
+    flex: 1,
   },
   primaryLabel: {
     fontFamily: Theme.fontFamily.bold,
     fontSize: Theme.fontSize.md,
+    lineHeight: 22,
     color: Colors.text,
   },
   primaryDescription: {
     fontFamily: Theme.fontFamily.medium,
     fontSize: Theme.fontSize.xs,
+    lineHeight: 16,
     color: Colors.textSecondary,
     textAlign: "center",
-    marginTop: 2,
+    marginTop: 3,
+    paddingHorizontal: 2,
   },
   primaryBadge: {
-    position: "absolute",
-    top: 8,
-    right: 8,
     width: 20,
     height: 20,
     borderRadius: 10,
     justifyContent: "center",
     alignItems: "center",
+    marginTop: 6,
+    borderWidth: 1,
+    borderColor: "#CBD5E1",
+    backgroundColor: "#FFFFFF",
+  },
+  primaryFooter: {
+    paddingHorizontal: Theme.spacing.lg,
+    paddingTop: 10,
+    backgroundColor: Colors.white,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "#E2E8F0",
   },
 
   // Level 2: Secondary Emotions

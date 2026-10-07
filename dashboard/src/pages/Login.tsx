@@ -33,31 +33,19 @@ export default function Login() {
   };
 
   return (
-    <div style={{
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      minHeight: "100vh",
-      width: "100vw",
-      background: "radial-gradient(circle at 50% 50%, #4c1d95 0%, #3b0764 100%)",
-      color: "var(--text-primary)",
-      position: "fixed",
-      top: 0,
-      left: 0,
-      zIndex: 9999
-    }}>
+    <div className="staff-login-page">
       <div className="glass-panel" style={{
-        width: "100%",
-        maxWidth: "420px",
-        padding: "40px",
-        borderRadius: "24px",
-        boxShadow: "0 20px 40px rgba(0, 0, 0, 0.15)",
+        maxWidth: "440px",
+        width: "calc(100% - 32px)",
+        padding: "36px",
+        borderRadius: "20px",
+        boxShadow: "0 12px 36px rgba(31, 45, 61, 0.1)",
         display: "flex",
         flexDirection: "column",
         gap: "24px"
       }}>
-        <div style={{ textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: "12px" }}>
-          <div style={{
+        <div className="staff-login-brand">
+          <div className="staff-login-mark" style={{
             padding: "16px",
             background: "rgba(37, 99, 235, 0.08)",
             borderRadius: "16px",
@@ -69,16 +57,9 @@ export default function Login() {
           }}>
             <Activity size={32} color="var(--accent-primary)" />
           </div>
-          <h1 style={{
-            fontSize: "2.2rem",
-            fontWeight: 800,
-            background: "linear-gradient(to right, var(--accent-primary), var(--accent-tertiary))",
-            WebkitBackgroundClip: "text",
-            WebkitTextFillColor: "transparent",
-            margin: 0,
-            letterSpacing: "-0.03em"
-          }}>EMOTIFY</h1>
-          <p style={{ color: "var(--text-secondary)", fontSize: "0.95rem", margin: 0, fontWeight: 500 }}>Clinical Command Console</p>
+          <h1>Welcome to Emotify</h1>
+          <p className="staff-login-kicker">Staff Portal</p>
+          <p className="staff-login-description">Sign in to review student wellbeing and provide support.</p>
         </div>
 
         <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
@@ -158,7 +139,7 @@ export default function Login() {
               alignItems: "center"
             }}
           >
-            {loading ? "Authenticating..." : "Access Command Console"}
+            {loading ? "Signing in…" : "Sign in"}
           </button>
         </form>
       </div>

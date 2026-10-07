@@ -27,12 +27,12 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
         minHeight: '100vh',
         alignItems: 'center',
         justifyContent: 'center',
-        color: 'white',
-        background: '#0B0F19',
+        color: 'var(--text-secondary)',
+        background: 'var(--bg-color)',
         fontSize: '1.2rem',
         fontWeight: 500
       }}>
-        Initializing console...
+        Loading staff workspace…
       </div>
     );
   }

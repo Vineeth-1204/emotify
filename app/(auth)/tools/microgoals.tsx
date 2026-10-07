@@ -12,7 +12,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAvatar } from "@/context/AvatarContext";
-import { MitraAvatar } from "@/components/avatar/MitraAvatar";
+import { EmotyAvatar, MitraAvatar } from "@/components/avatar/EmotyAvatar";
 import { CalmPointToken } from "@/components/svg/system";
 import {
   HappyEmotionIcon,
@@ -50,24 +50,8 @@ const BADGES_DEFINITIONS = [
   { id: "consistent", name: "Consistent", desc: "7 Day Streak", icon: "flash-outline", color: "#EF4444" },
   { id: "strong_mind", name: "Strong Mind", desc: "14 Day Streak", icon: "shield-outline", color: "#EC4899" },
   { id: "habit_builder", name: "Habit Builder", desc: "30 Day Streak", icon: "heart-outline", color: "#F59E0B" },
-  { id: "calm_builder", name: "Calm Builder", desc: "100 Coins Earned", icon: "ribbon-outline", color: "#8B5CF6" }
+  { id: "calm_builder", name: "Calm Builder", desc: "Earn 100 points", icon: "ribbon-outline", color: "#8B5CF6" }
 ];
-
-function getXpRangeForLevel(level: number) {
-  const levels = [
-    { lvl: 1, min: 0, max: 100 },
-    { lvl: 2, min: 100, max: 250 },
-    { lvl: 3, min: 250, max: 450 },
-    { lvl: 4, min: 450, max: 700 },
-    { lvl: 5, min: 700, max: 1000 },
-    { lvl: 6, min: 1000, max: 1400 },
-    { lvl: 7, min: 1400, max: 1900 },
-    { lvl: 8, min: 1900, max: 2500 },
-    { lvl: 9, min: 2500, max: 3200 },
-    { lvl: 10, min: 3200, max: 5000 },
-  ];
-  return levels.find(l => l.lvl === level) || { lvl: level, min: 3200, max: 10000 };
-}
 
 export default function MicroGoalsScreen() {
   const router = useRouter();
@@ -128,12 +112,7 @@ export default function MicroGoalsScreen() {
 
   // Level computation logic
   const currentLevel = gamification?.level || 1;
-  const xpVal = gamification?.xp || 0;
   const coinsVal = gamification?.coins || 0;
-  const levelRange = getXpRangeForLevel(currentLevel);
-  const xpProgress = xpVal - levelRange.min;
-  const xpNeeded = levelRange.max - levelRange.min;
-  const xpPercent = Math.min(1, Math.max(0, xpProgress / xpNeeded));
 
   // Handler functions
   const handleMoodSelect = async (mood: string) => {
@@ -238,42 +217,14 @@ export default function MicroGoalsScreen() {
     }
   };
 
-  // Filter CBT goals (completed CBT sessions) vs Condition assigned goals
-  const cbtGoals = (dailyGoals || []).filter(
-    (g) =>
-      Boolean(g.cbtSessionId) ||
-      g.category?.toLowerCase() === "cbt" ||
-      g.category?.toLowerCase() === "cbt_recommended" ||
-      g.category?.toLowerCase()?.includes("cbt")
-  );
-
-  const conditionGoals = (dailyGoals || []).filter(
-    (g) =>
-      !(
-        Boolean(g.cbtSessionId) ||
-        g.category?.toLowerCase() === "cbt" ||
-        g.category?.toLowerCase() === "cbt_recommended" ||
-        g.category?.toLowerCase()?.includes("cbt")
-      )
-  );
-
-  const renderGoalItem = (goal: any, isCbtType: boolean) => {
-    const diffColors: Record<string, string> = {
-      easy: "#10B981",
-      medium: "#F59E0B",
-      large: "#8B5CF6",
-      very_small: "#3B82F6"
-    };
-    const diffColor = diffColors[goal.difficulty] || "#64748B";
-
+  const renderGoalItem = (goal: any) => {
     return (
       <View
         key={goal._id}
         style={[
           styles.goalCard,
           goal.completed && styles.goalCardCompleted,
-          goal.isDailyChallenge && styles.challengeGoalCard,
-          isCbtType ? styles.cbtGoalCardBorder : styles.conditionGoalCardBorder
+          goal.isDailyChallenge && styles.challengeGoalCard
         ]}
       >
         {/* Left checkbox */}
@@ -292,29 +243,11 @@ export default function MicroGoalsScreen() {
           disabled={goal.completed || goal.skipped}
         >
           <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 4, marginBottom: 2 }}>
-            {isCbtType ? (
-              <View style={styles.cbtBadge}>
-                <Ionicons name="sparkles" size={10} color="#6D28D9" style={{ marginRight: 2 }} />
-                <Text style={styles.cbtBadgeText}>CBT GOAL</Text>
-              </View>
-            ) : (
-              <View style={styles.assignedBadge}>
-                <Ionicons name="fitness-outline" size={10} color="#047857" style={{ marginRight: 2 }} />
-                <Text style={styles.assignedBadgeText}>PATIENT GOAL</Text>
-              </View>
-            )}
-
             {goal.isDailyChallenge && (
               <View style={styles.challengeBadge}>
-                <Text style={styles.challengeBadgeText}>CHALLENGE</Text>
+                <Text style={styles.challengeBadgeText}>TODAY'S PICK</Text>
               </View>
             )}
-
-            <View style={[styles.diffIndicator, { backgroundColor: diffColor + "15" }]}>
-              <Text style={[styles.diffIndicatorText, { color: diffColor }]}>
-                {goal.difficulty.toUpperCase().replace("_", " ")}
-              </Text>
-            </View>
           </View>
 
           <Text style={[styles.goalTitleText, goal.completed && styles.goalTextCompleted]}>
@@ -322,30 +255,18 @@ export default function MicroGoalsScreen() {
           </Text>
           <Text style={styles.goalDescText} numberOfLines={1}>{goal.goalDescription}</Text>
 
-          {goal.aiReason ? (
-            <View style={styles.aiReasonBox}>
-              <Ionicons name="bulb-outline" size={11} color="#6D28D9" style={{ marginRight: 4 }} />
-              <Text style={styles.aiReasonText} numberOfLines={1}>
-                {goal.aiReason}
-              </Text>
-            </View>
-          ) : null}
-
           {goal.scheduledTime ? (
             <View style={styles.scheduledRow}>
               <Ionicons name="alarm-outline" size={12} color="#6D28D9" style={{ marginRight: 4 }} />
               <Text style={styles.scheduledText}>
-                Scheduled: {new Date(goal.scheduledTime).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                Reminder set for {new Date(goal.scheduledTime).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
               </Text>
             </View>
           ) : null}
         </TouchableOpacity>
 
-        {/* Right Points/XP award badge */}
+        {/* Reminder and skip actions */}
         <View style={{ alignItems: 'flex-end', justifyContent: 'center', gap: 6, marginLeft: 6 }}>
-          <View style={styles.xpRewardBadge}>
-            <Text style={styles.xpRewardText}>+{goal.xpAwarded || goal.points} XP</Text>
-          </View>
           {!goal.completed && !goal.skipped && (
             <View style={{ flexDirection: 'row', gap: 8 }}>
               <TouchableOpacity onPress={() => handleOpenGoalDetails(goal)} style={styles.smallCircleButton}>
@@ -363,7 +284,7 @@ export default function MicroGoalsScreen() {
 
   return (
     <View style={styles.container}>
-      <LinearGradient colors={['#F4F3FF', '#E0DBFF']} style={StyleSheet.absoluteFill} />
+      <LinearGradient colors={['#F8FAFF', '#EEF2FF']} style={StyleSheet.absoluteFill} />
 
       <ScrollView
         contentContainerStyle={[
@@ -380,51 +301,48 @@ export default function MicroGoalsScreen() {
           <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
             <Ionicons name="chevron-back" size={24} color={Colors.text} />
           </TouchableOpacity>
-          <Text style={styles.title}>MicroGoals Hub</Text>
-          <Text style={styles.subtitle}>Build consistency with tiny, restorative daily habits.</Text>
+          <Text style={styles.title}>Your daily goals</Text>
+          <Text style={styles.subtitle}>Small steps that fit into your day.</Text>
         </View>
 
-        {/* 1. GAMIFICATION HUB HEADER */}
-        <View style={styles.gamificationHub}>
-          <View style={styles.xpRow}>
-            <View style={styles.levelBadge}>
-              <Text style={styles.levelText}>LVL {currentLevel}</Text>
+        <View style={styles.todayOverview}>
+          <View style={styles.todayOverviewTop}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.todayEyebrow}>TODAY</Text>
+              <Text style={styles.todayOverviewTitle}>
+                {totalGoalsCount === 0 ? "A fresh start" : completedCount === totalGoalsCount ? "You did it!" : "One step at a time"}
+              </Text>
             </View>
-            <View style={styles.xpTrack}>
-              <View style={[styles.xpBar, { width: `${xpPercent * 100}%` }]} />
-              <Text style={styles.xpProgressLabel}>{xpProgress} / {xpNeeded} XP</Text>
+            <View style={styles.pointsPill}>
+              <CalmPointToken size={18} />
+              <Text style={styles.pointsPillText}>{coinsVal} points</Text>
             </View>
           </View>
-
-          <View style={styles.economyRow}>
-            <View style={styles.ecoItem}>
-              <View style={{ marginBottom: 2 }}>
-                <CalmPointToken size={22} />
-              </View>
-              <Text style={styles.ecoVal}>{coinsVal}</Text>
-              <Text style={styles.ecoLbl}>Coins</Text>
-            </View>
-            <View style={styles.verticalDivider} />
-            <View style={styles.ecoItem}>
-              <Ionicons name="flame" size={22} color="#EF4444" style={{ marginBottom: 2 }} />
-              <Text style={styles.ecoVal}>{streakInfo?.currentStreak ?? 0} Days</Text>
-              <Text style={styles.ecoLbl}>Active Streak</Text>
-            </View>
-            <View style={styles.verticalDivider} />
-            <View style={styles.ecoItem}>
-              <Ionicons name="snow" size={22} color="#3B82F6" style={{ marginBottom: 2 }} />
-              <Text style={styles.ecoVal}>{streakInfo?.frozen ? "Active" : "Ready"}</Text>
-              <Text style={styles.ecoLbl}>Freeze Lock</Text>
-            </View>
+          <View style={styles.todayProgressRow}>
+              <Text style={styles.todayProgressLabel}>
+              {totalGoalsCount === 0
+                ? todayCheckin ? "No tasks waiting for you today" : "Check in to see your steps for today"
+                : `${completedCount} of ${totalGoalsCount} tasks done`}
+            </Text>
+            <Text style={styles.todayProgressPercent}>{Math.round(progressPercent * 100)}%</Text>
+          </View>
+          <View style={styles.todayProgressTrack}>
+            <View style={[styles.todayProgressFill, { width: `${progressPercent * 100}%` }]} />
+          </View>
+          <View style={styles.streakPill}>
+            <Ionicons name="flame-outline" size={15} color="#C56B25" />
+            <Text style={styles.streakPillText}>
+              {(streakInfo?.currentStreak ?? 0) === 1 ? "1 day in a row" : `${streakInfo?.currentStreak ?? 0} days in a row`}
+            </Text>
           </View>
         </View>
 
         {/* Tab Selection */}
         <View style={styles.tabsRow}>
           {[
-            { id: "goals", label: "Daily Goals" },
-            { id: "progress", label: "Missions" },
-            { id: "history", label: "Analytics" }
+            { id: "goals", label: "Today" },
+            { id: "progress", label: "Progress" },
+            { id: "history", label: "History" }
           ].map(tab => (
             <TouchableOpacity
               key={tab.id}
@@ -450,8 +368,8 @@ export default function MicroGoalsScreen() {
               {/* Morning checkin check */}
               {!todayCheckin ? (
                 <View style={styles.glassCard}>
-                  <Text style={styles.checkinTitle}>Morning Check-in</Text>
-                  <Text style={styles.checkinSubtitle}>How are you feeling today? Your choice will adapt today's wellness plan.</Text>
+                  <Text style={styles.checkinTitle}>Quick check-in</Text>
+                  <Text style={styles.checkinSubtitle}>How are you feeling today?</Text>
 
                   {isCheckinLoading ? (
                     <ActivityIndicator size="large" color={Colors.primary} style={{ marginVertical: 20 }} />
@@ -473,77 +391,30 @@ export default function MicroGoalsScreen() {
                 <View style={styles.moodBanner}>
                   <Ionicons name="sunny-outline" size={20} color="#6D28D9" style={{ marginRight: 8 }} />
                   <Text style={styles.moodBannerText}>
-                    Today's check-in: <Text style={{ fontWeight: 'bold' }}>{todayCheckin.mood.toUpperCase()}</Text>. Focus is adjusted.
+                    You checked in as <Text style={{ fontWeight: 'bold' }}>{todayCheckin.mood.toUpperCase()}</Text> today.
                   </Text>
                 </View>
               )}
 
-              {/* Progress bar */}
-              {totalGoalsCount > 0 && (
-                <View style={styles.glassCard}>
-                  <View style={styles.progressBarRow}>
-                    <Text style={styles.progressTitle}>Daily Focus Progress</Text>
-                    <Text style={styles.progressValText}>{completedCount} of {totalGoalsCount} completed</Text>
-                  </View>
-                  <View style={styles.progressTrack}>
-                    <View style={[styles.progressBar, { width: `${progressPercent * 100}%` }]} />
-                  </View>
+              <View style={styles.todayTasksHeader}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.todayTasksTitle}>Your tasks</Text>
+                  <Text style={styles.todayTasksSubtitle}>Choose one to get started. Small steps count.</Text>
                 </View>
-              )}
-
-              {/* PART 1: CBT COMPLETED / RECOMMENDED GOALS */}
-              <View style={styles.sectionHeaderContainer}>
-                <View style={styles.sectionTitleRow}>
-                  <Ionicons name="sparkles" size={18} color="#7C3AED" />
-                  <Text style={styles.sectionTitleText}>CBT Session Goals</Text>
-                  <View style={styles.sectionBadgeCbt}>
-                    <Text style={styles.sectionBadgeCbtText}>{cbtGoals.length} Active</Text>
-                  </View>
-                </View>
-                <Text style={styles.sectionSubtext}>
-                  Behavioral activation goals generated after completing CBT exercises.
-                </Text>
+                {totalGoalsCount > 0 && <Text style={styles.taskCountPill}>{totalGoalsCount} today</Text>}
               </View>
 
-              {cbtGoals.length === 0 ? (
+              {totalGoalsCount === 0 ? (
                 <View style={styles.emptyCardBox}>
-                  <Ionicons name="sparkles-outline" size={24} color="#A78BFA" style={{ marginBottom: 4 }} />
-                  <Text style={styles.emptyCardTitle}>No CBT Goals Active Today</Text>
+                  <Ionicons name="leaf-outline" size={24} color="#7B8CA8" style={{ marginBottom: 4 }} />
+                  <Text style={styles.emptyCardTitle}>Nothing on your list yet</Text>
                   <Text style={styles.emptyCardDesc}>
-                    Complete a CBT therapy exercise to unlock personalized post-session goals.
+                    Your small steps for today will appear here. You can also take a moment to check in above.
                   </Text>
                 </View>
               ) : (
-                <View style={{ gap: 8 }}>
-                  {cbtGoals.map((goal) => renderGoalItem(goal, true))}
-                </View>
-              )}
-
-              {/* PART 2: PATIENT CONDITION ASSIGNED GOALS */}
-              <View style={[styles.sectionHeaderContainer, { marginTop: 14 }]}>
-                <View style={styles.sectionTitleRow}>
-                  <Ionicons name="fitness-outline" size={18} color="#059669" />
-                  <Text style={styles.sectionTitleText}>Patient Condition Goals</Text>
-                  <View style={styles.sectionBadgeAssigned}>
-                    <Text style={styles.sectionBadgeAssignedText}>{conditionGoals.length} Active</Text>
-                  </View>
-                </View>
-                <Text style={styles.sectionSubtext}>
-                  Habits & daily goals assigned based on your health condition & screening.
-                </Text>
-              </View>
-
-              {conditionGoals.length === 0 ? (
-                <View style={styles.emptyCardBox}>
-                  <Ionicons name="heart-outline" size={24} color="#34D399" style={{ marginBottom: 4 }} />
-                  <Text style={styles.emptyCardTitle}>No Condition Goals Assigned Today</Text>
-                  <Text style={styles.emptyCardDesc}>
-                    Complete your morning check-in to generate daily condition assigned goals.
-                  </Text>
-                </View>
-              ) : (
-                <View style={{ gap: 8 }}>
-                  {conditionGoals.map((goal) => renderGoalItem(goal, false))}
+                <View style={{ gap: 10 }}>
+                  {(dailyGoals || []).map((goal) => renderGoalItem(goal))}
                 </View>
               )}
             </View>
@@ -557,15 +428,15 @@ export default function MicroGoalsScreen() {
           <View style={styles.tabSection}>
             {/* Weekly Missions */}
             <View style={styles.glassCard}>
-              <Text style={styles.sectionTitle}>Weekly Missions</Text>
-              <Text style={styles.checkinSubtitle}>Resets every Monday. Complete all tracks to earn bonus rewards.</Text>
+              <Text style={styles.sectionTitle}>This week</Text>
+              <Text style={styles.checkinSubtitle}>A few gentle ways to keep showing up. Your progress resets each Monday.</Text>
 
               {weeklyMission ? (
                 <View style={{ gap: 12, marginTop: 10 }}>
                   {/* Goal count track */}
                   <View style={styles.missionProgressBox}>
                     <View style={styles.missionHeaderRow}>
-                      <Text style={styles.missionLabelText}>Complete 18 MicroGoals</Text>
+                      <Text style={styles.missionLabelText}>Complete 18 small steps</Text>
                       <Text style={styles.missionProgressVal}>{weeklyMission.goalCountCurrent} / {weeklyMission.goalCountTarget}</Text>
                     </View>
                     <View style={styles.missionTrack}>
@@ -573,10 +444,10 @@ export default function MicroGoalsScreen() {
                     </View>
                   </View>
 
-                  {/* JPMR count track */}
+                  {/* Relaxation practice track */}
                   <View style={styles.missionProgressBox}>
                     <View style={styles.missionHeaderRow}>
-                      <Text style={styles.missionLabelText}>Complete JPMR Relaxation Twice</Text>
+                      <Text style={styles.missionLabelText}>Try a relaxation exercise twice</Text>
                       <Text style={styles.missionProgressVal}>{weeklyMission.jpmrCurrent} / {weeklyMission.jpmrTarget}</Text>
                     </View>
                     <View style={styles.missionTrack}>
@@ -587,7 +458,7 @@ export default function MicroGoalsScreen() {
                   {/* Journaling track */}
                   <View style={styles.missionProgressBox}>
                     <View style={styles.missionHeaderRow}>
-                      <Text style={styles.missionLabelText}>Journal Your Emotion Logs 5 Days</Text>
+                      <Text style={styles.missionLabelText}>Write down how you feel on 5 days</Text>
                       <Text style={styles.missionProgressVal}>{weeklyMission.journalCurrent} / {weeklyMission.journalTarget}</Text>
                     </View>
                     <View style={styles.missionTrack}>
@@ -596,7 +467,7 @@ export default function MicroGoalsScreen() {
                   </View>
 
                   <View style={styles.missionRewardFooter}>
-                    <Text style={styles.rewardText}>Reward: 100 Coins | 500 XP</Text>
+                    <Text style={styles.rewardText}>Reward: 100 points</Text>
                     {weeklyMission.completed && (
                       <View style={styles.completedMissionTag}>
                         <Text style={styles.completedTagText}>CLAIMED</Text>
@@ -611,12 +482,12 @@ export default function MicroGoalsScreen() {
 
             {/* Monthly Challenge */}
             <View style={styles.glassCard}>
-              <Text style={styles.sectionTitle}>Monthly Challenge</Text>
+              <Text style={styles.sectionTitle}>This month</Text>
               {monthlyChallenge ? (
                 <View style={{ gap: 12, marginTop: 10 }}>
                   <View style={styles.missionProgressBox}>
                     <View style={styles.missionHeaderRow}>
-                      <Text style={styles.missionLabelText}>Complete 70 Habit Goals</Text>
+                      <Text style={styles.missionLabelText}>Complete 70 small steps</Text>
                       <Text style={styles.missionProgressVal}>{monthlyChallenge.goalCountCurrent} / {monthlyChallenge.goalCountTarget}</Text>
                     </View>
                     <View style={styles.missionTrack}>
@@ -650,7 +521,7 @@ export default function MicroGoalsScreen() {
 
             {/* Badges Cabinet */}
             <View style={styles.glassCard}>
-              <Text style={styles.sectionTitle}>Badge Cabinet</Text>
+              <Text style={styles.sectionTitle}>Milestones</Text>
               <View style={styles.badgesGrid}>
                 {BADGES_DEFINITIONS.map(badge => {
                   const isEarned = badgesEarned.some(b => b.badgeId === badge.id);
@@ -676,7 +547,7 @@ export default function MicroGoalsScreen() {
           <View style={styles.tabSection}>
             {/* Short Stats Summary */}
             <View style={styles.glassCard}>
-              <Text style={styles.sectionTitle}>Wellbeing Impact Analytics</Text>
+              <Text style={styles.sectionTitle}>Your progress</Text>
               <View style={styles.analyticsRow}>
                 <View style={styles.analyticBlock}>
                   <Text style={styles.analyticVal}>{(weeklySummary as any)?.completionRate ? `${Math.round((weeklySummary as any).completionRate)}%` : "0%"}</Text>
@@ -755,14 +626,14 @@ export default function MicroGoalsScreen() {
         )}
       </ScrollView>
 
-      {/* DETAIL DRAWER / POPUP */}
+      {/* Goal details */}
       <Modal visible={isDetailsVisible} transparent animationType="slide">
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             {selectedGoal && (
               <View style={{ width: '100%' }}>
                 <View style={styles.modalHeader}>
-                  <Text style={styles.modalTitle}>Goal Details</Text>
+                  <Text style={styles.modalTitle}>About this task</Text>
                   <TouchableOpacity onPress={() => setIsDetailsVisible(false)}>
                     <Ionicons name="close" size={24} color={Colors.text} />
                   </TouchableOpacity>
@@ -771,31 +642,15 @@ export default function MicroGoalsScreen() {
                 <Text style={styles.detailsTitle}>{selectedGoal.goalTitle}</Text>
                 <Text style={styles.detailsDesc}>{selectedGoal.goalDescription}</Text>
 
-                <View style={styles.detailCard}>
-                  <Ionicons name="leaf-outline" size={20} color={Colors.primary} style={{ marginRight: 8 }} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.detailLabel}>Category</Text>
-                    <Text style={styles.detailVal}>{selectedGoal.category}</Text>
-                  </View>
-                </View>
-
-                <View style={styles.detailCard}>
-                  <Ionicons name="help-circle-outline" size={20} color={Colors.primary} style={{ marginRight: 8 }} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.detailLabel}>Clinical Benefit</Text>
-                    <Text style={styles.detailVal}>Helps to calm cortisol and lower physical distress.</Text>
-                  </View>
-                </View>
-
                 <View style={styles.modalActions}>
                   <Button
-                    title="Schedule Reminder"
+                    title="Set a reminder"
                     onPress={handleOpenRelativeScheduling}
                     style={styles.actionBtn}
                     variant="primary"
                   />
                   <Button
-                    title="Mark Completed Now"
+                    title="Mark as done"
                     onPress={() => {
                       setIsDetailsVisible(false);
                       handleTriggerComplete(selectedGoal);
@@ -810,18 +665,18 @@ export default function MicroGoalsScreen() {
         </View>
       </Modal>
 
-      {/* SMART RELATIVE SCHEDULING MODAL */}
+      {/* Reminder scheduling */}
       <Modal visible={isScheduleVisible} transparent animationType="slide">
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Smart Schedule</Text>
+              <Text style={styles.modalTitle}>Set a reminder</Text>
               <TouchableOpacity onPress={() => setIsScheduleVisible(false)}>
                 <Ionicons name="close" size={24} color={Colors.text} />
               </TouchableOpacity>
             </View>
 
-            <Text style={styles.checkinSubtitle}>Choose relative delay from current time. Reminders will notify you automatically.</Text>
+            <Text style={styles.checkinSubtitle}>When would you like a reminder?</Text>
 
             <View style={styles.relativeGrid}>
               {[
@@ -877,12 +732,12 @@ export default function MicroGoalsScreen() {
         </View>
       </Modal>
 
-      {/* POST-COMPLETION FEELING INPUT */}
+      {/* Quick post-task check-in */}
       <Modal visible={isFeelingVisible} transparent animationType="fade">
         <View style={styles.feelingOverlay}>
           <View style={styles.feelingModalContent}>
-            <Text style={styles.feelingPromptTitle}>Reflective Moment</Text>
-            <Text style={styles.feelingPromptDesc}>How do you feel after completing this wellness action?</Text>
+            <Text style={styles.feelingPromptTitle}>How did that feel?</Text>
+            <Text style={styles.feelingPromptDesc}>There’s no right answer. Just choose what feels closest.</Text>
 
             <View style={styles.feelingActionRow}>
               {[
@@ -910,22 +765,22 @@ export default function MicroGoalsScreen() {
             <View style={{ alignItems: 'center', marginBottom: 12 }}>
               <MitraAvatar state="celebrating" size="md" />
             </View>
-            <Text style={styles.celebrationTitle}>Brilliant Job!</Text>
+            <Text style={styles.celebrationTitle}>Nice work!</Text>
             <Text style={styles.celebrationMessage}>
-              You earned <Text style={{ fontWeight: 'bold', color: Colors.primary }}>+{rewardData?.xp} XP</Text> and <Text style={{ fontWeight: 'bold', color: '#D97706' }}>+{rewardData?.coins} Coins</Text>!
+              You earned <Text style={{ fontWeight: 'bold', color: '#D97706' }}>{rewardData?.coins} Calm Points</Text> for completing this task.
             </Text>
 
             {rewardData?.levelUp && (
               <View style={styles.levelUpNotice}>
                 <Ionicons name="trophy" size={24} color="#F59E0B" style={{ marginRight: 8 }} />
-                <Text style={styles.levelUpText}>LEVELED UP! Reached Level {rewardData.newLevel}</Text>
+                <Text style={styles.levelUpText}>A new milestone is within reach.</Text>
               </View>
             )}
 
             {rewardData?.perfectDay && (
               <View style={styles.perfectDayNotice}>
                 <Ionicons name="star" size={24} color="#10B981" style={{ marginRight: 8 }} />
-                <Text style={styles.perfectDayText}>PERFECT DAY BONUS! +100 XP</Text>
+                <Text style={styles.perfectDayText}>You earned a bonus for completing today’s goals.</Text>
               </View>
             )}
 
@@ -982,78 +837,115 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     marginTop: 2,
   },
-  gamificationHub: {
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
-    borderRadius: 24,
-    padding: Theme.spacing.md + 2,
+  todayOverview: {
     width: '100%',
-    borderWidth: 1.5,
-    borderColor: 'rgba(255, 255, 255, 0.7)',
-    ...Theme.shadows.tertiary,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: Theme.spacing.lg,
+    borderWidth: 1,
+    borderColor: '#E6EAF2',
     marginBottom: Theme.spacing.md,
+    ...Theme.shadows.tertiary,
   },
-  xpRow: {
+  todayOverviewTop: {
     flexDirection: 'row',
     alignItems: 'center',
-    width: '100%',
-    marginBottom: Theme.spacing.md,
+    gap: 10,
   },
-  levelBadge: {
-    backgroundColor: Colors.primary,
-    borderRadius: 12,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    marginRight: 10,
-  },
-  levelText: {
-    color: Colors.white,
-    fontFamily: Theme.fontFamily.bold,
-    fontSize: 12,
-  },
-  xpTrack: {
-    flex: 1,
-    height: 24,
-    backgroundColor: '#F3E8FF',
-    borderRadius: 12,
-    overflow: 'hidden',
-    justifyContent: 'center',
-    position: 'relative',
-  },
-  xpBar: {
-    height: '100%',
-    backgroundColor: '#8B5CF6',
-    position: 'absolute',
-    left: 0,
-    top: 0,
-  },
-  xpProgressLabel: {
-    alignSelf: 'center',
+  todayEyebrow: {
     fontFamily: Theme.fontFamily.bold,
     fontSize: 10,
-    color: Colors.text,
-    zIndex: 1,
+    letterSpacing: 1.2,
+    color: '#75829A',
+    marginBottom: 3,
   },
-  economyRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    width: '100%',
-  },
-  ecoItem: {
-    alignItems: 'center',
-  },
-  ecoIcon: {
-    fontSize: 22,
-  },
-  ecoVal: {
+  todayOverviewTitle: {
     fontFamily: Theme.fontFamily.bold,
-    fontSize: 14,
+    fontSize: 20,
     color: Colors.text,
+  },
+  pointsPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    backgroundColor: '#FFF8E7',
+    borderRadius: 14,
+  },
+  pointsPillText: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: 11,
+    color: '#8B6518',
+  },
+  todayProgressRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 18,
+    marginBottom: 7,
+  },
+  todayProgressLabel: {
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: 12,
+    color: Colors.textSecondary,
+  },
+  todayProgressPercent: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: 12,
+    color: Colors.primary,
+  },
+  todayProgressTrack: {
+    height: 8,
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: '#EEF1F6',
+  },
+  todayProgressFill: {
+    height: '100%',
+    borderRadius: 8,
+    backgroundColor: Colors.primary,
+  },
+  streakPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 5,
+    marginTop: 13,
+  },
+  streakPillText: {
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: 11,
+    color: '#7D6857',
+  },
+  todayTasksHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 6,
+    marginBottom: 2,
+  },
+  todayTasksTitle: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: 18,
+    color: Colors.text,
+  },
+  todayTasksSubtitle: {
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: 12,
+    lineHeight: 17,
+    color: Colors.textSecondary,
     marginTop: 2,
   },
-  ecoLbl: {
-    fontFamily: Theme.fontFamily.medium,
-    fontSize: 9,
-    color: Colors.textSecondary,
+  taskCountPill: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: 10,
+    color: '#54627A',
+    backgroundColor: '#EEF2F8',
+    overflow: 'hidden',
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+    borderRadius: 12,
   },
   verticalDivider: {
     width: 1,
@@ -1152,32 +1044,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: Colors.text,
   },
-  progressBarRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    width: '100%',
-    marginBottom: Theme.spacing.xs,
-  },
-  progressTitle: {
-    fontFamily: Theme.fontFamily.bold,
-    fontSize: 12,
-    color: Colors.text,
-  },
-  progressValText: {
-    fontFamily: Theme.fontFamily.bold,
-    fontSize: 11,
-    color: Colors.primary,
-  },
-  progressTrack: {
-    height: 8,
-    backgroundColor: '#FAF9FF',
-    borderRadius: 4,
-    overflow: 'hidden',
-  },
-  progressBar: {
-    height: '100%',
-    backgroundColor: Colors.primary,
-  },
   sectionTitle: {
     fontFamily: Theme.fontFamily.bold,
     fontSize: 15,
@@ -1199,10 +1065,10 @@ const styles = StyleSheet.create({
   goalCard: {
     flexDirection: 'row',
     backgroundColor: Colors.white,
-    padding: Theme.spacing.md,
-    borderRadius: 20,
+    padding: Theme.spacing.md + 2,
+    borderRadius: 18,
     borderWidth: 1,
-    borderColor: '#EBE9FE',
+    borderColor: '#E5EAF2',
     ...Theme.shadows.tertiary,
     alignItems: 'center',
   },
@@ -1240,18 +1106,9 @@ const styles = StyleSheet.create({
     fontSize: 8,
     fontFamily: Theme.fontFamily.bold,
   },
-  diffIndicator: {
-    borderRadius: 6,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-  },
-  diffIndicatorText: {
-    fontSize: 8,
-    fontFamily: Theme.fontFamily.bold,
-  },
   goalTitleText: {
     fontFamily: Theme.fontFamily.bold,
-    fontSize: 13,
+    fontSize: 15,
     color: Colors.text,
     marginTop: 2,
   },
@@ -1260,9 +1117,10 @@ const styles = StyleSheet.create({
   },
   goalDescText: {
     fontFamily: Theme.fontFamily.medium,
-    fontSize: 10,
+    fontSize: 12,
     color: Colors.textSecondary,
-    marginTop: 2,
+    lineHeight: 17,
+    marginTop: 4,
   },
   scheduledRow: {
     flexDirection: 'row',
@@ -1270,22 +1128,9 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   scheduledText: {
-    fontSize: 9,
-    color: '#6D28D9',
-    fontFamily: Theme.fontFamily.bold,
-  },
-  xpRewardBadge: {
-    backgroundColor: '#FAF5FF',
-    borderRadius: 12,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderWidth: 1,
-    borderColor: '#E8DFFA',
-  },
-  xpRewardText: {
-    color: Colors.primary,
-    fontSize: 10,
-    fontFamily: Theme.fontFamily.bold,
+    fontSize: 11,
+    color: '#68758A',
+    fontFamily: Theme.fontFamily.medium,
   },
   smallCircleButton: {
     width: 32,

@@ -21,7 +21,7 @@ import {
   ActivityIndicator,
   Animated,
 } from "react-native";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
@@ -33,7 +33,7 @@ import { Colors } from "@/constants/Colors";
 import { Theme } from "@/constants/Theme";
 import { useThemeColors } from "@/context/MoodThemeContext";
 import { useAvatar } from "@/context/AvatarContext";
-import { MitraAvatar, AvatarState } from "@/components/avatar/MitraAvatar";
+import { EmotyAvatar, MitraAvatar, AvatarState } from "@/components/avatar/EmotyAvatar";
 import { CalmPointToken } from "@/components/svg/system";
 import { getLocalDateString } from "@/utils/date";
 
@@ -75,6 +75,7 @@ const REFLECTION_OPTIONS: ReflectionOption[] = [
 
 export default function MitraGoalScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ start?: string }>();
   const insets = useSafeAreaInsets();
   const colors = useThemeColors();
   const { avatarName, avatarGender } = useAvatar();
@@ -88,6 +89,7 @@ export default function MitraGoalScreen() {
   // Animations
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(15)).current;
+  const autoStartHandledRef = useRef(false);
 
   // Convex Queries & Mutations
   const suggestedQuery = useQuery(api.microGoals.getMitraSuggestedGoal, { dateStr: todayStr });
@@ -120,13 +122,13 @@ export default function MitraGoalScreen() {
       setStep("all_completed");
     } else if (suggestedQuery.status === "active") {
       setActiveGoalId(suggestedQuery._id as Id<"microGoals">);
-      setStep("suggesting");
+      setStep(params.start === "1" && autoStartHandledRef.current ? "performing" : "suggesting");
     } else {
       // Suggested unpersisted goal
       setStep("suggesting");
     }
     animateIn();
-  }, [suggestedQuery]);
+  }, [suggestedQuery, params.start]);
 
   // Android Back Handler
   useEffect(() => {
@@ -178,6 +180,27 @@ export default function MitraGoalScreen() {
       setIsSubmitting(false);
     }
   };
+
+  // Home's Start action uses the same accepted-goal flow and API as this screen's CTA.
+  useEffect(() => {
+    if (
+      params.start !== "1" ||
+      suggestedQuery === undefined ||
+      suggestedQuery === null ||
+      suggestedQuery.status === "all_completed" ||
+      autoStartHandledRef.current
+    ) {
+      return;
+    }
+    autoStartHandledRef.current = true;
+    if (suggestedQuery.status === "active") {
+      setActiveGoalId(suggestedQuery._id as Id<"microGoals">);
+      setStep("performing");
+      animateIn();
+      return;
+    }
+    void handleAcceptGoal();
+  }, [params.start, suggestedQuery]);
 
   // User chooses: [Not now]
   const handleNotNow = async () => {

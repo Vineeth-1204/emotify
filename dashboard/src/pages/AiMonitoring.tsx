@@ -412,7 +412,7 @@ export default function AiMonitoring() {
             AI Safety &amp; Companion Logs
           </h1>
           <p style={{ color: "var(--text-secondary)", fontSize: "0.95rem", margin: 0 }}>
-            Inspect full patient companion conversations, chat history, and crisis telemetry.
+            Review companion conversations, chat history and safety events.
           </p>
         </div>
 
@@ -463,7 +463,7 @@ export default function AiMonitoring() {
               transition: "all 0.2s ease",
             }}
           >
-            <Activity size={14} /> Telemetry Audit Stream
+            <Activity size={14} /> Monitoring activity
           </button>
         </div>
       </div>
@@ -743,7 +743,7 @@ export default function AiMonitoring() {
           )}
         </div>
       ) : (
-        /* Telemetry Stream View */
+        /* Monitoring records view */
         <div className="glass-panel" style={{ padding: 0, overflow: "hidden" }}>
           
           <div
@@ -757,7 +757,7 @@ export default function AiMonitoring() {
           >
             <h2 style={{ fontSize: "0.95rem", display: "flex", alignItems: "center", gap: 10, margin: 0, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--text-primary)" }}>
               <BrainCircuit size={18} color="var(--accent-primary)" />
-              AI Telemetry Risk Stream
+              AI safety records
             </h2>
             <span
               style={{
@@ -775,7 +775,7 @@ export default function AiMonitoring() {
               }}
             >
               <Activity size={12} />
-              LIVE TELEMETRY
+              Recent records
             </span>
           </div>
 
@@ -808,7 +808,7 @@ export default function AiMonitoring() {
 
           {telemetryLogs === undefined ? (
             <div style={{ padding: "52px 24px", textAlign: "center", color: "var(--text-secondary)", fontSize: "0.9rem" }}>
-              Loading telemetry logs...
+              Loading monitoring records...
             </div>
           ) : telemetryLogs.length === 0 ? (
             <div style={{ padding: "64px 24px", textAlign: "center" }}>

@@ -43,6 +43,9 @@
     "signOutConfirmMessage": "உங்கள் கணக்கிலிருந்து வெளியேற விரும்புகிறீர்களா?"
   },
   "home": {
+    "checkInCompactTitle": "தினசரி மனநிலை பதிவு",
+    "checkInMoodToday": "இன்று {{mood}}",
+    "goalSuggestedCopy": "இன்றைக்கு {{companionName}} ஒரு சிறிய செயல்பாட்டைத் தேர்ந்தெடுத்துள்ளார்.",
     "greetingMorning": "காலை வணக்கம்",
     "greetingAfternoon": "மதிய வணக்கம்",
     "greetingEvening": "மாலை வணக்கம்",
@@ -72,7 +75,7 @@
     "moodStreakDays": "{{count}} நாள் தொடர் பதிவு",
     "moodStreakToday": "இன்று பதிவு செய்யப்பட்டது",
     "checkInCompletedTitle": "தினசரி பதிவு முடிந்தது",
-    "checkInCompletedDesc": "இன்று நீங்கள் {{mood}} எனப் பதிவு செய்துள்ளீர்கள். மித்ரா உங்களுடன் இருக்கிறார்.",
+    "checkInCompletedDesc": "இன்று நீங்கள் {{mood}} எனப் பதிவு செய்துள்ளீர்கள். எமோட்டி (Emoty) உங்களுடன் இருக்கிறார்.",
     "updateCheckIn": "பதிவை மாற்றவும்",
     "metricsTitle": "நல்வாழ்வு சமநிலை",
     "metricsSubtitle": "சமீபத்திய பதிவுகளின் அடிப்படையில் ரகசிய குறியீடுகள்",
@@ -109,6 +112,7 @@
     "calmResetAction": "அமைதியான சுவாசம்"
   },
   "profile": {
+    "companionPersonalizedSubtitle": "உங்களுக்கு தேவைப்படும் நேரத்தில் துணையாக இருக்கும் நண்பர்.",
     "title": "சுயவிவரம்",
     "subtitle": "கணக்கு மற்றும் விருப்பத்தேர்வுகள்",
     "headerStatus": "நீங்கள் சிறப்பாக செயல்படுகிறீர்கள் — தொடர்ந்து செல்லுங்கள்",
@@ -128,7 +132,7 @@
     "avatarGirl": "பெண்",
     "avatarBoy": "ஆண்",
     "companionNameLabel": "தோழனின் பெயர்",
-    "companionNameHelper": "இயல்புநிலை மித்ரா (Mitra).",
+    "companionNameHelper": "இயல்புநிலை எமோட்டி (Emoty).",
     "renameModalTitle": "தோழனுக்குப் பெயரிடுங்கள்",
     "renameModalSubtitle": "உங்கள் தோழனுக்கு தனிப்பட்ட மற்றும் பிடித்தமான பெயரை வைக்கவும்.",
     "renameInputPlaceholder": "தோழன் பெயரை உள்ளிடவும்...",
@@ -179,6 +183,11 @@
     "signOutBtn": "வெளியேறு"
   },
   "tools": {
+    "howImFeelingTitle": "எனக்கு எப்படி இருக்கிறது",
+    "howImFeelingDesc": "உங்கள் உணர்வுகளையும் அவை உடலில் எங்கு தெரிகின்றன என்பதையும் ஆராயுங்கள்.",
+    "howImFeelingTag": "உடல் கவனம்",
+    "companionNameTitle": "{{companionName}}",
+    "companionNameDesc": "ஆதரவு தேவைப்பட்டால் {{companionName}} உடன் பேசுங்கள்.",
     "title": "சிகிச்சை மையம்",
     "subtitle": "உங்கள் மன உறுதிக்கு ஏற்ற கருவிகள்.",
     "catAll": "அனைத்தும்",
@@ -235,6 +244,16 @@
     "emergencyContactHelpline": "உதவி எண்களைப் பார்க்கவும்"
   },
   "companion": {
+    "emergencyBannerSupportDesc": "{{name}} உங்களுக்கு ஆதரவாக இருப்பார்; ஆனால் அவசர உதவிக்கு மாற்றாக இருக்க முடியாது. நீங்கள் மிகவும் சிரமமாக உணர்ந்தால், இலவச ரகசிய உதவி 24/7 கிடைக்கும்.",
+    "quickActionTellMore": "மேலும் சொல்லுங்கள்",
+    "quickActionBreathe": "மூச்சுப் பயிற்சி",
+    "quickActionReflect": "சிந்திக்கலாம்",
+    "quickActionGratitude": "நன்றியுணர்வு",
+    "quickActionTellMoreMessage": "என் மனதில் இருப்பதைப் பற்றி இன்னும் பேச விரும்புகிறேன்.",
+    "quickActionBreatheMessage": "சிறிது நேரம் மூச்சுப் பயிற்சி செய்ய விரும்புகிறேன்.",
+    "quickActionReflectMessage": "என்ன நடந்தது, அது என்னை எப்படி பாதித்தது என்று சிந்திக்க விரும்புகிறேன்.",
+    "quickActionGratitudeMessage": "நான் நன்றியுடன் நினைக்கும் ஒரு சிறிய விஷயத்தைப் பற்றி சிந்திக்க விரும்புகிறேன்.",
+    "quickActionStartBreathing": "மூச்சுப் பயிற்சியைத் தொடங்குங்கள்",
     "chatTitle": "{{name}} தோழன்",
     "chatSubtitle": "பாதுகாப்பான, ரகசியமான, கனிவான உரையாடல்",
     "inputPlaceholder": "{{name}} இடம் செய்தி அனுப்பவும்...",

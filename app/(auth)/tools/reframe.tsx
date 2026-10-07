@@ -25,7 +25,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAvatar } from "@/context/AvatarContext";
-import { MitraAvatar } from "@/components/avatar/MitraAvatar";
+import { EmotyAvatar, MitraAvatar } from "@/components/avatar/EmotyAvatar";
 import { BreathingPlayer } from "@/components/breathing/BreathingPlayer";
 import { BREATHING_PROTOCOLS } from "@/constants/BreathingProtocols";
 import { SensoryGroundingPlayer } from "@/components/grounding/SensoryGroundingPlayer";
@@ -743,7 +743,7 @@ export default function ReframeScreen() {
               <Text style={styles.headerBtnText}>Pause</Text>
             </TouchableOpacity>
 
-            <Text style={styles.headerTitle}>Reframing Thoughts</Text>
+            <Text style={styles.headerTitle}>Think Differently</Text>
 
             <View style={styles.headerBtn} />
           </View>

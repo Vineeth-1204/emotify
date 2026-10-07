@@ -28,7 +28,7 @@ describe("Student Authentication & Registration Suite (Priority 2)", () => {
     expect(regRes.user!.screeningComplete).toBe(false);
 
     // Verify record in Convex database
-    const dbUser = await t.query(api.users.getByClerkId, {
+    const dbUser = await t.withIdentity({ subject: regRes.user!.id }).query(api.users.getByClerkId, {
       clerkId: regRes.user!.id,
     });
     expect(dbUser).toBeDefined();
@@ -104,7 +104,7 @@ describe("Student Authentication & Registration Suite (Priority 2)", () => {
       password: "password123",
     });
 
-    const user = await t.query(api.users.getByClerkId, {
+    const user = await t.withIdentity({ subject: regRes.user!.id }).query(api.users.getByClerkId, {
       clerkId: regRes.user!.id,
     });
 
@@ -124,7 +124,7 @@ describe("Student Authentication & Registration Suite (Priority 2)", () => {
     const userId = regRes.user!.id;
 
     // Complete onboarding with demographics
-    await t.mutation(api.users.completeOnboarding, {
+    await t.withIdentity({ subject: userId }).mutation(api.users.completeOnboarding, {
       userId,
       alias: "Karan J",
       age: 21,
@@ -137,7 +137,7 @@ describe("Student Authentication & Registration Suite (Priority 2)", () => {
       emergencyContactPhone: "9899999999",
     });
 
-    const user = await t.query(api.users.getByClerkId, { clerkId: userId });
+    const user = await t.withIdentity({ subject: userId }).query(api.users.getByClerkId, { clerkId: userId });
     expect(user?.onboardingComplete).toBe(true);
     expect(user?.screeningComplete).toBe(false);
     expect(user?.year).toBe("3rd Year");
@@ -155,7 +155,7 @@ describe("Student Authentication & Registration Suite (Priority 2)", () => {
 
     const userId = regRes.user!.id;
 
-    await t.mutation(api.users.completeOnboarding, {
+    await t.withIdentity({ subject: userId }).mutation(api.users.completeOnboarding, {
       userId,
       alias: "Pooja",
       age: 19,
@@ -167,9 +167,9 @@ describe("Student Authentication & Registration Suite (Priority 2)", () => {
     });
 
     // Mark screening complete
-    await t.mutation(api.users.markScreeningComplete, { clerkId: userId });
+    await t.withIdentity({ subject: userId }).mutation(api.users.markScreeningComplete, { clerkId: userId });
 
-    const user = await t.query(api.users.getByClerkId, { clerkId: userId });
+    const user = await t.withIdentity({ subject: userId }).query(api.users.getByClerkId, { clerkId: userId });
     expect(user?.onboardingComplete).toBe(true);
     expect(user?.screeningComplete).toBe(true);
   });
@@ -201,10 +201,25 @@ describe("Student Authentication & Registration Suite (Priority 2)", () => {
     const t = convexTest(schema, modules);
 
     // Seed admin
-    await t.mutation(api.users.seedAdmin, {});
+    const adminId = await t.run(async (ctx) => {
+      return await ctx.db.insert("users", {
+        clerkId: "seed-admin",
+        full_name: "Admin User",
+        mobile_number: "1234567890",
+        role: "admin",
+        status: "active",
+        is_first_login: false,
+      });
+    });
+
+    // Admin lists patients (with admin identity)
+    const adminClient = t.withIdentity({
+      subject: adminId,
+      role: "admin",
+    });
 
     // Get admin user from DB
-    const admin = await t.query(api.users.getByClerkId, { clerkId: "seed-admin" });
+    const admin = await adminClient.query(api.users.getByClerkId, { clerkId: "seed-admin" });
     expect(admin).toBeDefined();
 
     // Register a student
@@ -212,12 +227,6 @@ describe("Student Authentication & Registration Suite (Priority 2)", () => {
       full_name: "Student Aakash",
       mobile_number: "9889012345",
       password: "password123",
-    });
-
-    // Admin lists patients (with admin identity)
-    const adminClient = t.withIdentity({
-      subject: admin!._id,
-      role: "admin",
     });
 
     const patients = await adminClient.query(api.users.listPatients, {});
@@ -233,19 +242,29 @@ describe("Student Authentication & Registration Suite (Priority 2)", () => {
     const t = convexTest(schema, modules);
 
     // Seed admin
-    await t.mutation(api.users.seedAdmin, {});
-    const admin = await t.query(api.users.getByClerkId, { clerkId: "seed-admin" });
-
-    // Register a student
-    await t.mutation(api.users.registerStudent, {
-      full_name: "Private Student",
-      mobile_number: "9890123456",
-      password: "supersecretpassword",
+    const adminId = await t.run(async (ctx) => {
+      return await ctx.db.insert("users", {
+        clerkId: "seed-admin",
+        full_name: "Admin User",
+        mobile_number: "1234567890",
+        role: "admin",
+        status: "active",
+        is_first_login: false,
+      });
     });
 
     const adminClient = t.withIdentity({
-      subject: admin!._id,
+      subject: adminId,
       role: "admin",
+    });
+
+    const admin = await adminClient.query(api.users.getByClerkId, { clerkId: "seed-admin" });
+
+    // Register a student
+    const regRes = await t.mutation(api.users.registerStudent, {
+      full_name: "Private Student",
+      mobile_number: "9890123456",
+      password: "supersecretpassword",
     });
 
     const patients = await adminClient.query(api.users.listPatients, {});
@@ -258,7 +277,7 @@ describe("Student Authentication & Registration Suite (Priority 2)", () => {
     expect(student.biometricToken).toBeUndefined();
 
     // Also verify getByClerkId does not expose secrets
-    const userViaQuery = await t.query(api.users.getByClerkId, { clerkId: student._id });
+    const userViaQuery = await adminClient.query(api.users.getByClerkId, { clerkId: student._id });
     expect(userViaQuery.password_hash).toBeUndefined();
     expect(userViaQuery.temp_password).toBeUndefined();
     expect(userViaQuery.biometricToken).toBeUndefined();

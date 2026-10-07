@@ -65,7 +65,7 @@ describe("Priority 6: Mitra Human Avatar & Student Home Suite", () => {
     });
 
     expect(prefs).toBeDefined();
-    expect(prefs.name).toBe("Mitra");
+    expect(prefs.name).toBe("Emoty");
     expect(prefs.avatarGender).toBe("female");
   });
 
@@ -80,7 +80,7 @@ describe("Priority 6: Mitra Human Avatar & Student Home Suite", () => {
     });
 
     expect(updated.avatarGender).toBe("male");
-    expect(updated.name).toBe("Mitra");
+    expect(updated.name).toBe("Emoty");
 
     const fetched = await asStudentA.query(api.users.getMitraPreferences, {
       userId: studentAId,
@@ -147,12 +147,12 @@ describe("Priority 6: Mitra Human Avatar & Student Home Suite", () => {
       name: "    ",
     });
 
-    expect(updated.name).toBe("Mitra");
+    expect(updated.name).toBe("Emoty");
 
     const fetched = await asStudentA.query(api.users.getMitraPreferences, {
       userId: studentAId,
     });
-    expect(fetched.name).toBe("Mitra");
+    expect(fetched.name).toBe("Emoty");
   });
 
   // TEST 7: Invalid avatar value falls back safely to "female"
@@ -274,7 +274,7 @@ describe("Priority 6: Mitra Human Avatar & Student Home Suite", () => {
       userId: studentAId,
     });
     expect(prefs).toBeDefined();
-    expect(prefs.name).toBe("Mitra");
+    expect(prefs.name).toBe("Emoty");
     expect(prefs.avatarGender).toBe("female");
   });
 

@@ -250,7 +250,7 @@ export default function PatientsList() {
     const name = fullName || "Unknown User";
     setConfirmConfig({
       title: "Delete User Profile?",
-      message: `Permanently delete "${name}"? This will erase all clinical screenings, telemetry logs, and sessions.`,
+      message: `Permanently delete "${name}"? This will erase all clinical screenings, wellbeing check-ins, and sessions.`,
       confirmText: "Delete Permanently",
       isDanger: true,
       onConfirm: async () => {
@@ -297,14 +297,14 @@ export default function PatientsList() {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
         <div>
           <h1 style={{ fontSize: "2rem", marginBottom: 6, color: "var(--text-primary)", letterSpacing: "-0.03em" }}>
-            Patient Directory
+            Students
           </h1>
           <p style={{ color: "var(--text-secondary)", fontSize: "0.95rem" }}>
-            Manage access, credentials, and clinical state for all registered users.
+            Manage access and view records for registered students.
           </p>
         </div>
         <button className="btn btn-primary" onClick={() => setShowAddModal(true)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "11px 20px" }}>
-          <UserPlus size={16} /> Add User
+          <UserPlus size={16} /> Add Student
         </button>
       </div>
 
@@ -331,7 +331,7 @@ export default function PatientsList() {
           whiteSpace: "nowrap",
         }}>
           <Users size={13} />
-          {isLoading ? "â€”" : patients?.length ?? 0} USERS
+          {isLoading ? "â€”" : patients?.length ?? 0} STUDENTS
         </span>
       </div>
 
@@ -347,7 +347,7 @@ export default function PatientsList() {
           borderBottom: "1px solid var(--border-color)",
           gap: 12,
         }}>
-          {["Patient", "Mobile / Login", "Status", "Role", "Actions"].map((h, i) => (
+          {["Student", "Mobile / Login", "Status", "Role", "Actions"].map((h, i) => (
             <span key={h} style={{
               fontSize: "0.68rem", fontWeight: 700, textTransform: "uppercase" as const,
               letterSpacing: "0.08em", color: "var(--text-secondary)",
@@ -359,12 +359,12 @@ export default function PatientsList() {
         {/* Rows */}
         {isLoading ? (
           <div style={{ padding: "56px 24px", textAlign: "center", color: "var(--text-secondary)", fontSize: "0.9rem" }}>
-            Loading directory...
+            Loading students...
           </div>
         ) : isEmpty ? (
           <div style={{ padding: "64px 24px", textAlign: "center" }}>
             <Users size={40} style={{ color: "var(--border-color)", margin: "0 auto 12px", display: "block" }} />
-            <p style={{ color: "var(--text-secondary)", fontSize: "0.9rem" }}>No users found. Add a user to get started.</p>
+            <p style={{ color: "var(--text-secondary)", fontSize: "0.9rem" }}>No students found. Add a student to get started.</p>
           </div>
         ) : patients!.map((patient: any, idx: number) => {
           const isActive = (patient.status || "active") === "active";
@@ -429,7 +429,7 @@ export default function PatientsList() {
                   background: "var(--surface-hover)", border: "1px solid var(--border-color)",
                   padding: "3px 10px", borderRadius: 20, textTransform: "capitalize",
                 }}>
-                  {patient.role}
+                  {patient.role === "patient" ? "Student" : patient.role}
                 </span>
               </div>
 
@@ -472,7 +472,7 @@ export default function PatientsList() {
               className="btn btn-secondary"
               style={{ padding: "8px 24px", fontSize: "0.85rem", display: "inline-flex", alignItems: "center", gap: "8px" }}
             >
-              {loadingMore ? "Loading more patients..." : "Load More Patients"}
+              {loadingMore ? "Loading more students..." : "Load More Students"}
             </button>
           </div>
         )}

@@ -129,6 +129,9 @@ export function Questionnaire({
                   selectedValue === option.value && styles.optionBtnSelected,
                 ]}
                 activeOpacity={0.7}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: selectedValue === option.value }}
+                accessibilityLabel={`${option.label}, ${selectedValue === option.value ? 'selected' : 'not selected'}`}
               >
                 <Text
                   style={[

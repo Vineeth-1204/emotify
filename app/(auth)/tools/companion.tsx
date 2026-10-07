@@ -34,9 +34,13 @@ import { BlurView } from "expo-blur";
 import { useAvatar } from "@/context/AvatarContext";
 import { useLanguage } from "@/context/LanguageContext";
 import { useVoice } from "@/context/VoiceContext";
-import { MitraAvatar, AvatarState } from "@/components/avatar/MitraAvatar";
+import { EmotyAvatar, AvatarState } from "@/components/avatar/EmotyAvatar";
 import { ShieldSafetyIcon } from "@/components/svg/system";
 import { getLocalDateString } from "@/utils/date";
+import { COMPANION_QUICK_ACTIONS, type CompanionQuickAction } from "@/convex/companionQuickActions";
+import { resolveActionNavigation, ACTION_ROUTE_MAP } from "@/convex/emotyActionRouter";
+import { type EmotyAction } from "@/convex/emotyContract";
+import { resolveAvatarPresentationState } from "@/common/avatarPresentation";
 
 const { width } = Dimensions.get("window");
 
@@ -74,26 +78,24 @@ function formatTime(timestamp: number) {
   return `${hours}:${minutesStr} ${ampm}`;
 }
 
-const getContextualSuggestions = (messages: any[]) => {
-  const defaultChips = ["Tell me more", "Breathe", "Reflect", "Gratitude"];
-  if (!messages || messages.length === 0) return defaultChips;
-  const lastMsg = messages[messages.length - 1]?.content?.toLowerCase() || "";
-  if (lastMsg.includes("stress") || lastMsg.includes("anxious") || lastMsg.includes("panic")) {
-    return ["Breathe", "Tell me more", "Reflect"];
-  }
-  if (lastMsg.includes("sad") || lastMsg.includes("lonely") || lastMsg.includes("cry")) {
-    return ["Tell me more", "Calm Music", "Gratitude"];
-  }
-  if (lastMsg.includes("happy") || lastMsg.includes("good") || lastMsg.includes("great")) {
-    return ["Gratitude", "Motivate me", "Reflect"];
-  }
-  return defaultChips;
+const QUICK_ACTION_LABEL_KEYS: Record<CompanionQuickAction, string> = {
+  continue_conversation: "companion.quickActionTellMore",
+  breathing_support: "companion.quickActionBreathe",
+  reflection: "companion.quickActionReflect",
+  gratitude: "companion.quickActionGratitude",
+};
+
+const QUICK_ACTION_MESSAGE_KEYS: Record<CompanionQuickAction, string> = {
+  continue_conversation: "companion.quickActionTellMoreMessage",
+  breathing_support: "companion.quickActionBreatheMessage",
+  reflection: "companion.quickActionReflectMessage",
+  gratitude: "companion.quickActionGratitudeMessage",
 };
 
 // Bouncing typing indicator dots
 function TypingIndicator() {
   const { avatarName } = useAvatar();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const dot1 = useRef(new Animated.Value(0)).current;
   const dot2 = useRef(new Animated.Value(0)).current;
   const dot3 = useRef(new Animated.Value(0)).current;
@@ -201,7 +203,7 @@ export default function AICompanionScreen() {
     avatarGender,
   } = useAvatar();
 
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const {
     voiceEnabled,
     setVoiceEnabled,
@@ -228,6 +230,8 @@ export default function AICompanionScreen() {
   const [reactions, setReactions] = useState<Record<string, string>>({});
   const [showActionsSheet, setShowActionsSheet] = useState(false);
   const [dailyMoodSubmitted, setDailyMoodSubmitted] = useState(false);
+  const [breathingPromptMessageId, setBreathingPromptMessageId] = useState<string | null>(null);
+  const [actionByMessageId, setActionByMessageId] = useState<Record<string, EmotyAction>>({});
 
   // Stop voice playback on unmount / navigation
   useEffect(() => {
@@ -244,13 +248,21 @@ export default function AICompanionScreen() {
   const todayDateStr = useMemo(() => getLocalDateString(), []);
   const todayCheckin = useQuery(api.microGoals.getTodayCheckin, { dateStr: todayDateStr });
 
-  // Dynamic Mitra Avatar state computation
+  // AI-3 Step 6A: Dynamic Mitra Avatar state computation using authoritative resolver
   const currentMitraState: AvatarState = useMemo(() => {
-    if (isSafetyActive || showSafetyBanner) return "supportive";
-    if (isListening) return "listening";
-    if (isSpeaking || isVoicePlaying) return "encouraging";
-    if (isAiLoading || isLoadingVoice) return "thinking";
-    return avatarState || "calm";
+    return resolveAvatarPresentationState({
+      safetyState: isSafetyActive || showSafetyBanner ? "crisis" : "normal",
+      isSafetyActive: isSafetyActive || showSafetyBanner,
+      activeAppState: isListening
+        ? "listening"
+        : isSpeaking || isVoicePlaying
+        ? "speaking"
+        : isAiLoading || isLoadingVoice
+        ? "thinking"
+        : null,
+      explicitAvatarState: avatarState,
+      defaultState: "calm",
+    });
   }, [isSafetyActive, showSafetyBanner, isListening, isSpeaking, isVoicePlaying, isAiLoading, isLoadingVoice, avatarState]);
 
   // Auto scroll to end when messages list updates or keyboard shows
@@ -350,7 +362,7 @@ export default function AICompanionScreen() {
     });
   };
 
-  const handleSend = async (textToSend: string) => {
+  const handleSend = async (textToSend: string, quickAction?: CompanionQuickAction) => {
     const cleanedText = textToSend.trim();
     if (!cleanedText || isAiLoading) return;
 
@@ -368,18 +380,34 @@ export default function AICompanionScreen() {
     // Generate unique local message IDs for user and expected AI response
     const userMessageId = Math.random().toString(36).slice(2, 11);
     const aiMessageId = Math.random().toString(36).slice(2, 11);
+    if (quickAction === "breathing_support") setBreathingPromptMessageId(aiMessageId);
 
     try {
       const aiResponseText = await generateAIResponse({
         userMessageId,
         aiMessageId,
         content: cleanedText,
+        screen: "companion",
+        ...(quickAction ? {
+          quickAction,
+          language: ["en", "hi", "ta", "te"].includes(language) ? language as "en" | "hi" | "ta" | "te" : "en",
+        } : {}),
       });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
 
+      // AI-3 Step 5: Record validated non-none action for user CTA execution
+      const aiContract = aiResponseText as any;
+      if (aiContract?.action && aiContract.action.type && aiContract.action.type !== "none") {
+        setActionByMessageId((prev) => ({
+          ...prev,
+          [aiMessageId]: aiContract.action,
+        }));
+      }
+
       // Play synthesized voice in background if voice output is enabled
-      if (voiceEnabled && aiResponseText) {
-        speakText(aiResponseText, aiMessageId).catch((ttsErr) => {
+      const responseText = typeof aiResponseText === "string" ? aiResponseText : (aiResponseText as any)?.response;
+      if (voiceEnabled && responseText) {
+        speakText(responseText, aiMessageId).catch((ttsErr) => {
           console.warn("ElevenLabs voice generation fallback:", ttsErr);
         });
       }
@@ -450,7 +478,7 @@ export default function AICompanionScreen() {
         {!isUser && (
           <View style={styles.bubbleAvatarContainer}>
             {showAiAvatar ? (
-              <MitraAvatar
+              <EmotyAvatar
                 state={isAiLoading && index === (messages?.length ?? 0) - 1 ? "thinking" : "calm"}
                 size="xs"
               />
@@ -522,6 +550,44 @@ export default function AICompanionScreen() {
                   {formatTime(item.createdAt)}
                 </Text>
               </View>
+              {/* AI-3 Step 5 Action Router CTA Button */}
+              {actionByMessageId[item.messageId] ? (
+                (() => {
+                  const action = actionByMessageId[item.messageId];
+                  const routeInfo = ACTION_ROUTE_MAP[action.type];
+                  const label = action.label || routeInfo?.title || "Open Tool";
+                  return (
+                    <TouchableOpacity
+                      style={[styles.breathingActionCta, { backgroundColor: colors.primary, marginTop: 8 }]}
+                      onPress={() => {
+                        const target = resolveActionNavigation(action, isSafetyActive ? "crisis" : "normal");
+                        if (target?.pathname) {
+                          router.push(target.pathname as any);
+                        }
+                      }}
+                      accessibilityRole="button"
+                      accessibilityLabel={label}
+                    >
+                      <Ionicons
+                        name={action.type === "open_counsellor_request" ? "medkit" : action.type === "start_breathing" ? "play" : "arrow-forward-circle"}
+                        size={13}
+                        color="#FFFFFF"
+                      />
+                      <Text style={styles.breathingActionCtaText}>{label}</Text>
+                    </TouchableOpacity>
+                  );
+                })()
+              ) : item.messageId === breathingPromptMessageId ? (
+                <TouchableOpacity
+                  style={[styles.breathingActionCta, { backgroundColor: colors.primary }]}
+                  onPress={() => router.push("/(auth)/tools/breathing" as any)}
+                  accessibilityRole="button"
+                  accessibilityLabel={t("companion.quickActionStartBreathing")}
+                >
+                  <Ionicons name="play" size={13} color="#FFFFFF" />
+                  <Text style={styles.breathingActionCtaText}>{t("companion.quickActionStartBreathing")}</Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
           )}
         </TouchableOpacity>
@@ -529,14 +595,9 @@ export default function AICompanionScreen() {
     );
   };
 
-  const handleSuggestionPress = (sug: string) => {
+  const handleSuggestionPress = (quickAction: CompanionQuickAction) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-    if (sug.includes("Breathe") || sug.includes("Breathing")) {
-      router.push("/(auth)/tools/jpmr");
-    } else {
-      const text = sug.replace(/[^\w\s\']/g, "").trim();
-      handleSend(text);
-    }
+    handleSend(t(QUICK_ACTION_MESSAGE_KEYS[quickAction]), quickAction);
   };
 
   const handleLongPressMessage = (msg: any) => {
@@ -644,7 +705,7 @@ export default function AICompanionScreen() {
               </Text>
             </View>
             <Text style={styles.safetyBannerText}>
-              {t("companion.emergencyBannerDesc", { name: avatarName })}
+              {t("companion.emergencyBannerSupportDesc", { name: avatarName })}
             </Text>
             <View style={styles.safetyBtnRow}>
               <TouchableOpacity
@@ -707,7 +768,10 @@ export default function AICompanionScreen() {
     );
   };
 
-  const suggestions = React.useMemo(() => getContextualSuggestions(messages || []), [messages]);
+  const suggestions = React.useMemo(
+    () => COMPANION_QUICK_ACTIONS.map((action) => ({ action, label: t(QUICK_ACTION_LABEL_KEYS[action]) })),
+    [t],
+  );
 
   if (messages === undefined) {
     return (
@@ -756,7 +820,7 @@ export default function AICompanionScreen() {
             </TouchableOpacity>
 
             <View style={styles.avatarBox}>
-              <MitraAvatar gender={avatarGender} state={currentMitraState} size="xs" />
+              <EmotyAvatar gender={avatarGender} state={currentMitraState} size="xs" />
               <View style={[styles.statusDot, { backgroundColor: colors.success }]} />
             </View>
 
@@ -837,7 +901,7 @@ export default function AICompanionScreen() {
           <View style={styles.emptyStateContainer}>
             <View style={styles.emptyCard}>
               <View style={{ marginBottom: 16 }}>
-                <MitraAvatar state={currentMitraState} size="lg" />
+                <EmotyAvatar state={currentMitraState} size="lg" />
               </View>
               <Text style={[styles.emptyTitle, { color: colors.text }]}>{emptyTitle}</Text>
               <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
@@ -907,9 +971,9 @@ export default function AICompanionScreen() {
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.suggestionsScroll}
           >
-            {suggestions.map((sug, i) => (
+            {suggestions.map(({ action, label }) => (
               <TouchableOpacity
-                key={`sug-${i}`}
+                key={action}
                 style={[
                   styles.suggestionChip,
                   {
@@ -917,9 +981,9 @@ export default function AICompanionScreen() {
                     backgroundColor: colors.white,
                   },
                 ]}
-                onPress={() => handleSuggestionPress(sug)}
+                onPress={() => handleSuggestionPress(action)}
               >
-                <Text style={[styles.suggestionChipText, { color: colors.primary }]}>{sug}</Text>
+                <Text style={[styles.suggestionChipText, { color: colors.primary }]}>{label}</Text>
               </TouchableOpacity>
             ))}
           </ScrollView>
@@ -1381,6 +1445,21 @@ const styles = StyleSheet.create({
   suggestionChipText: {
     fontFamily: Theme.fontFamily.bold,
     fontSize: 11,
+  },
+  breathingActionCta: {
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginTop: 8,
+  },
+  breathingActionCtaText: {
+    color: "#FFFFFF",
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: 12,
   },
   checkInCard: {
     backgroundColor: "rgba(255, 255, 255, 0.9)",

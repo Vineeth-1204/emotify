@@ -1,7 +1,37 @@
 import { v, ConvexError } from "convex/values";
 import { mutation, query, action } from "./_generated/server";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
+import {
+  getQuickActionFallback,
+  getQuickActionModelGuidance,
+  type CompanionQuickAction,
+} from "./companionQuickActions";
+import {
+  validateEmotyResponse,
+  getSafeStructuredFallback,
+  extractJsonFromModelText,
+  getGeminiModels,
+  type EmotyResponseContract,
+} from "./emotyContract";
+import {
+  formatEmotyContextPrompt,
+  type EmotyContext,
+} from "./emotyContext";
+import {
+  buildModularEmotyPrompt,
+  enforceConversationalGuardrails,
+} from "./emotyIntent";
+import {
+  classifyServerSafety,
+  getControlledCrisisResponse,
+  getControlledThirdPartyResponse,
+} from "./emotySafety";
+import { sanitizePlainText } from "./sanitizer";
+import { validateAndResolveAction } from "./emotyActionRouter";
+import { resolveAvatarPresentationState } from "./emotyAvatar";
+import { detectMemoryCandidate } from "./emotyMemory";
+import { buildStructuredFallbackResponse } from "./emotyFallback";
 
 function sanitizeInput(input: string): string {
   // Limit length to 1000 characters
@@ -20,30 +50,16 @@ function sanitizeOutput(output: string): string {
     lower.includes("systeminstruction") ||
     lower.includes("system instruction") ||
     lower.includes("you are a caring ai companion") ||
+    lower.includes("you are emoty") ||
     lower.includes("critical: keep your responses") ||
+    lower.includes("critical requirement:") ||
     lower.includes("system prompt")
   ) {
     return "I am here as your companion to support you. Let me know how I can help!";
   }
-  return output;
+  return sanitizePlainText(output);
 }
 
-function getMockAIResponse(userMessage: string): string {
-  const msg = userMessage.toLowerCase();
-  if (msg.includes("stressed") || msg.includes("anxious") || msg.includes("worry") || msg.includes("panic")) {
-    return "I hear you, and it's completely valid to feel stressed. Take a deep breath. Would you like to try the JPMR deep physical relaxation tool under the 'Relax Now' tab, or just talk more about what's on your mind? I'm here for you.";
-  }
-  if (msg.includes("sad") || msg.includes("depressed") || msg.includes("lonely") || msg.includes("crying")) {
-    return "I'm so sorry you're feeling this way, but please know you're not alone. I'm here to listen. What is one small thing that usually brings you a bit of comfort when you feel down?";
-  }
-  if (msg.includes("happy") || msg.includes("good") || msg.includes("great") || msg.includes("nice")) {
-    return "That's wonderful to hear! I'm so glad things are going well for you. Tell me more about what made today feel good!";
-  }
-  if (msg.includes("hello") || msg.includes("hi") || msg.includes("hey") || msg.includes("anybody")) {
-    return "Hello! I'm Emoty, your caring AI companion. How are you feeling today? Feel free to share anything that's on your mind.";
-  }
-  return "Thank you for sharing that with me. I'm here as your companion to listen and support you. Tell me more about how that makes you feel, or what's bothering you most.";
-}
 
 /** Get full conversation history for the authenticated patient */
 export const getConversationHistory = query({
@@ -130,6 +146,60 @@ export const createMessage = mutation({
   },
 });
 
+/** Log a companion message with strict session ownership enforcement (remediates EMOT-SEC-11) */
+export const logMessage = mutation({
+  args: {
+    messageId: v.optional(v.string()),
+    userId: v.optional(v.string()),
+    role: v.string(), // "user" | "assistant"
+    content: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity || !identity.subject) {
+      throw new Error("Unauthenticated: Valid session required to log companion messages.");
+    }
+    const callerId = identity.subject;
+
+    // Caller cannot inject message into another student's conversation
+    if (args.userId && args.userId !== callerId) {
+      throw new Error("Unauthorized: Cannot inject messages into another user's chat log.");
+    }
+
+    // Inspect caller role: Counselors and Admins cannot inject messages into companion chat
+    const caller = await ctx.db
+      .query("users")
+      .withIndex("by_clerkId", (q) => q.eq("clerkId", callerId))
+      .first();
+
+    let userRole = caller?.role;
+    if (!userRole) {
+      try {
+        const u = await ctx.db.get(callerId as Id<"users">);
+        if (u) userRole = u.role;
+      } catch (e) { }
+    }
+
+    if (userRole === "counsellor" || userRole === "admin") {
+      throw new Error("Unauthorized: Staff members cannot inject messages into student AI companion chat.");
+    }
+
+    const messageId = args.messageId || `msg_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    const createdAt = Date.now();
+
+    return await ctx.db.insert("aiCompanionLogs", {
+      messageId,
+      userId: callerId,
+      role: args.role,
+      content: args.content,
+      createdAt,
+    });
+  },
+});
+
+/** Aliases for compatibility */
+export const getMessages = getConversationHistory;
+
 /** Delete all conversation history for the authenticated patient */
 export const clearConversation = mutation({
   args: {},
@@ -159,6 +229,8 @@ export const clearConversation = mutation({
     return { success: true };
   },
 });
+
+export const clearHistory = clearConversation;
 
 /** Count messages sent by this user today */
 export const getTodayMessageCount = query({
@@ -197,10 +269,13 @@ export const getTodayMessageCount = query({
   },
 });
 
-async function fetchGeminiWithFallback(apiKeys: string | string[], payload: any, timeoutMs = 45000): Promise<any> {
+async function fetchGeminiWithFallback(
+  apiKeys: string | string[],
+  payload: any,
+  timeoutMs = 12000
+): Promise<{ json: any; model: string }> {
   const keys = (Array.isArray(apiKeys) ? apiKeys : [apiKeys]).filter((k): k is string => Boolean(k) && typeof k === "string");
-  // gemini-3.1-flash-lite first (faster, lower latency), gemini-3.5-flash as fallback
-  const models = ["gemini-3.1-flash-lite", "gemini-3.5-flash"];
+  const models = getGeminiModels();
   let lastError: any = null;
 
   for (const apiKey of keys) {
@@ -224,7 +299,8 @@ async function fetchGeminiWithFallback(apiKeys: string | string[], payload: any,
           clearTimeout(timeoutId);
 
           if (response.ok) {
-            return await response.json();
+            const json = await response.json();
+            return { json, model };
           }
 
           const status = response.status;
@@ -265,19 +341,23 @@ export const generateAIResponse = action({
     userMessageId: v.string(),
     aiMessageId: v.string(),
     content: v.string(),
+    screen: v.optional(v.string()),
+    clientContext: v.optional(v.any()),
+    quickAction: v.optional(v.union(
+      v.literal("continue_conversation"),
+      v.literal("breathing_support"),
+      v.literal("reflection"),
+      v.literal("gratitude"),
+    )),
+    language: v.optional(v.union(v.literal("en"), v.literal("hi"), v.literal("ta"), v.literal("te"))),
   },
   handler: async (ctx, args) => {
+    const startTime = Date.now();
     const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Unauthenticated");
+    if (!identity) throw new ConvexError("Unauthenticated");
 
     // Sanitize client input
     const sanitizedInputContent = sanitizeInput(args.content);
-
-    // Check message count limit (20 per day)
-    const todayCount = await ctx.runQuery(api.companion.getTodayMessageCount);
-    if (todayCount >= 20) {
-      throw new ConvexError("You have reached your daily limit of 20 messages. Please chat with Mitra again tomorrow.");
-    }
 
     // 1. Save user message first (immediate visual feedback on query)
     await ctx.runMutation(api.companion.createMessage, {
@@ -286,88 +366,333 @@ export const generateAIResponse = action({
       content: sanitizedInputContent,
     });
 
-    // 2. Fetch recent conversation history to build context (last 20 messages)
-    const recentDocs: any[] = await ctx.runQuery(api.companion.getLatestMessages, { limit: 20 });
+    // 2. SERVER SAFETY GATE: Authoritative deterministic check
+    // CRITICAL SAFETY INVARIANT: Safety evaluation MUST run BEFORE rate-limit rejection.
+    // An urgent crisis disclosure must NEVER be dropped or blocked by a rate limit.
+    const safetyResult = classifyServerSafety(sanitizedInputContent);
 
-    // Sort in ascending order (chronological) for the LLM context
-    const chronologicalHistory = [...recentDocs].reverse();
+    // CRISIS PATH: Explicit self-directed crisis -> MUST NOT call Gemini
+    if (safetyResult.state === "crisis" && safetyResult.isSelfCrisis) {
+      // Trigger deduplicated safety alert for counselors
+      await ctx.runMutation(api.alerts.createSafetyAlertWithDeduplication, {
+        type: "suicideRisk",
+      });
 
-    // 3. Map messages to Gemini API format (role: "user" | "model")
-    const geminiContents = chronologicalHistory.map((msg) => ({
-      role: msg.role === "user" ? "user" : "model",
-      parts: [{ text: msg.content }],
-    }));
+      // Controlled safety response
+      const crisisContract = getControlledCrisisResponse();
+      const actionValidation = validateAndResolveAction(crisisContract.action, "crisis");
+      crisisContract.action = actionValidation.valid ? actionValidation.action : { type: "none" };
 
-    // Retrieve Gemini API Key from DB (apiKeys table) & Environment Variable
-    const dbKey = await ctx.runQuery(api.cbt.getActiveApiKey);
-    const envKey = process.env.GEMINI_API_KEY || null;
-    const apiKeys = Array.from(new Set([dbKey, envKey].filter(Boolean) as string[]));
-
-    if (apiKeys.length === 0) {
-      console.warn("No GEMINI_API_KEY found in DB or env. Falling back to local mock response.");
-      const mockText = getMockAIResponse(sanitizedInputContent);
       await ctx.runMutation(api.companion.createMessage, {
         messageId: args.aiMessageId,
         role: "assistant",
-        content: mockText,
+        content: crisisContract.response,
       });
-      return mockText;
-    }
 
-    const systemInstruction = {
-      parts: [
-        {
-          text: `You are a caring AI companion and well-wisher.
- 
-Your goal is to support users emotionally through friendly conversations.
- 
-You listen carefully, respond kindly, encourage healthy habits, and help users reflect.
- 
-You are not a doctor, therapist, or crisis counselor.
- 
-Understand user's language automatically and detect language from incoming messages. Always reply in the same language used by the user. If the user mixes languages (e.g. Spanglish or Hinglish), respond naturally in the same mixed style.
- 
-Maintain conversational memory from previous messages. Be warm, friendly, and human-like. Avoid robotic responses. Use natural conversation. Remember recent context from chat history. Keep responses natural, supportive, and engaging.
- 
-CRITICAL: Keep your responses highly concise and brief (typically 2 to 3 sentences maximum). Avoid long paragraphs or essays. Respond in a casual, conversational tone, like a supportive friend sending a text message.`
-        }
-      ]
-    };
-
-    try {
-      // 4. Send query to Gemini API with fallback & retry
-      const resJson = await fetchGeminiWithFallback(apiKeys, {
-        contents: geminiContents,
-        systemInstruction: systemInstruction,
-      }, 25000);
-
-      const generatedText = resJson.candidates?.[0]?.content?.parts?.[0]?.text;
-
-      if (!generatedText) {
-        throw new Error("Gemini API returned an empty or invalid response structure.");
+      // Record safe telemetry
+      try {
+        await ctx.runMutation(api.emotyTelemetry.recordTelemetry, {
+          durationMs: Date.now() - startTime,
+          path: "crisis",
+          mode: crisisContract.mode,
+          actionType: crisisContract.action.type,
+          avatarState: crisisContract.avatarState,
+          safetyCategory: safetyResult.category,
+          geminiCalled: false,
+          geminiSuccess: false,
+          fallbackUsed: false,
+        });
+      } catch (tErr) {
+        console.warn("Safety telemetry write error:", tErr);
       }
 
-      // Clean and sanitize output response
-      const cleanText = sanitizeOutput(generatedText.trim());
+      return crisisContract;
+    }
 
-      // 5. Save assistant response in Convex
+    // THIRD-PARTY CONCERN PATH: Student reports friend in crisis -> Controlled supportive guidance
+    if (safetyResult.category === "third_party") {
+      const thirdPartyContract = getControlledThirdPartyResponse();
       await ctx.runMutation(api.companion.createMessage, {
         messageId: args.aiMessageId,
         role: "assistant",
-        content: cleanText,
+        content: thirdPartyContract.response,
       });
 
-      return cleanText;
-    } catch (err: any) {
-      console.warn("Gemini API call failed or timed out. Falling back to offline response logic:", err?.message || err);
-      const mockText = getMockAIResponse(sanitizedInputContent);
+      // Record safe telemetry
+      try {
+        await ctx.runMutation(api.emotyTelemetry.recordTelemetry, {
+          durationMs: Date.now() - startTime,
+          path: "third_party",
+          mode: thirdPartyContract.mode,
+          actionType: thirdPartyContract.action.type,
+          avatarState: thirdPartyContract.avatarState,
+          safetyCategory: safetyResult.category,
+          geminiCalled: false,
+          geminiSuccess: false,
+          fallbackUsed: false,
+        });
+      } catch (tErr) {
+        console.warn("Third-party telemetry write error:", tErr);
+      }
 
-      await ctx.runMutation(api.companion.createMessage, {
-        messageId: args.aiMessageId,
-        role: "assistant",
-        content: mockText,
+      return thirdPartyContract;
+    }
+
+    // 3. SERVER-AUTHORITATIVE RATE LIMITING (Burst, Daily, Concurrency)
+    // Non-crisis AI generation is strictly gated to protect student wellbeing and prevent abuse.
+    const rateCheck = await ctx.runMutation(api.emotyRateLimiter.checkAndAcquireRateLimit);
+    if (!rateCheck.allowed) {
+      try {
+        await ctx.runMutation(api.emotyTelemetry.recordTelemetry, {
+          durationMs: Date.now() - startTime,
+          path: "rate_limited",
+          mode: "guidance",
+          actionType: "none",
+          avatarState: "calm",
+          safetyCategory: safetyResult.category,
+          geminiCalled: false,
+          geminiSuccess: false,
+          fallbackUsed: true,
+          fallbackReason: "RATE_LIMITED",
+          errorCode: rateCheck.reason,
+        });
+      } catch (tErr) {
+        console.warn("Rate-limit telemetry write error:", tErr);
+      }
+
+      throw new ConvexError(rateCheck.message || "Rate limit exceeded. Please chat again shortly.");
+    }
+
+    try {
+      // Deterministic non-sensitive memory candidate detection from user input (AI-3 Step 7)
+      const memoryCandidate = detectMemoryCandidate(sanitizedInputContent);
+      if (memoryCandidate) {
+        try {
+          await ctx.runMutation(api.emotyMemory.recordUserPreference, {
+            category: memoryCandidate.category,
+            key: memoryCandidate.key,
+            value: memoryCandidate.value,
+            source: memoryCandidate.source,
+          });
+        } catch (memErr) {
+          console.warn("Memory candidate storage rejected by policy:", memErr);
+        }
+      }
+
+      // Fetch authoritative, bounded Emoty context with server-derived safety state
+      const emotyContext: EmotyContext = await ctx.runQuery(api.emotyContext.getAuthoritativeEmotyContext, {
+        screen: args.screen,
+        clientContext: args.clientContext,
+        excludeMessageId: args.userMessageId,
+        language: args.language,
+        safetyState: safetyResult.state,
       });
-      return mockText;
+
+      // Retrieve Gemini API Key from DB (apiKeys table) & Environment Variable
+      const dbKey = await ctx.runQuery(internal.cbt.getActiveApiKeyInternal);
+      const envKey = process.env.GEMINI_API_KEY || null;
+      const apiKeys = Array.from(new Set([dbKey, envKey].filter(Boolean) as string[]));
+
+      if (apiKeys.length === 0) {
+        console.warn("No GEMINI_API_KEY found in DB or env. Falling back to multi-turn safe structured fallback.");
+        const fallbackContract = buildStructuredFallbackResponse({
+          userMessage: sanitizedInputContent,
+          context: emotyContext,
+          quickAction: args.quickAction,
+          language: args.language,
+        });
+        await ctx.runMutation(api.companion.createMessage, {
+          messageId: args.aiMessageId,
+          role: "assistant",
+          content: fallbackContract.response,
+        });
+
+        try {
+          await ctx.runMutation(api.emotyTelemetry.recordTelemetry, {
+            durationMs: Date.now() - startTime,
+            path: "fallback",
+            mode: fallbackContract.mode,
+            actionType: fallbackContract.action.type,
+            avatarState: fallbackContract.avatarState,
+            safetyCategory: safetyResult.category,
+            geminiCalled: false,
+            geminiSuccess: false,
+            fallbackUsed: true,
+            fallbackReason: "NO_API_KEY",
+          });
+        } catch (tErr) {
+          console.warn("Telemetry write error:", tErr);
+        }
+
+        return fallbackContract;
+      }
+
+      const { prompt: fullPrompt } = buildModularEmotyPrompt({
+        context: emotyContext,
+        currentUserMessage: sanitizedInputContent,
+        quickAction: args.quickAction,
+      });
+
+      const geminiContents = [
+        {
+          role: "user",
+          parts: [{ text: fullPrompt }],
+        },
+      ];
+
+      try {
+        // Send query to Gemini API with fallback & retry requesting structured JSON
+        const res = await fetchGeminiWithFallback(
+          apiKeys,
+          {
+            contents: geminiContents,
+            generationConfig: {
+              responseMimeType: "application/json",
+              maxOutputTokens: 2048,
+            },
+          },
+          12000
+        );
+
+        const generatedRawText = res.json?.candidates?.[0]?.content?.parts?.[0]?.text;
+
+        let contract: EmotyResponseContract;
+        let isContractInvalid = false;
+        let isParseError = false;
+
+        try {
+          const parsed = extractJsonFromModelText(generatedRawText);
+          const validation = validateEmotyResponse(parsed);
+          if (validation.success) {
+            contract = validation.data;
+          } else if (
+            parsed &&
+            typeof parsed === "object" &&
+            typeof (parsed as any).response === "string" &&
+            (parsed as any).response.trim().length > 0
+          ) {
+            contract = {
+              mode: "emotional_support",
+              response: (parsed as any).response.trim(),
+              action: { type: "none" },
+              avatarState: "supportive",
+            };
+          } else {
+            console.warn("Emoty response contract validation failed:", validation.error);
+            isContractInvalid = true;
+            contract = getSafeStructuredFallback();
+          }
+        } catch (parseErr: any) {
+          console.warn("Emoty response JSON parsing failed:", parseErr?.message || parseErr);
+          if (generatedRawText && typeof generatedRawText === "string" && generatedRawText.trim().length > 10) {
+            contract = {
+              mode: "emotional_support",
+              response: sanitizeOutput(generatedRawText),
+              action: { type: "none" },
+              avatarState: "supportive",
+            };
+          } else {
+            isParseError = true;
+            contract = getSafeStructuredFallback();
+          }
+        }
+
+        // Apply Conversational Guardrails (out-of-scope boundaries, question count, action sanity)
+        contract = enforceConversationalGuardrails(contract, sanitizedInputContent, emotyContext);
+
+        // Action Router validation - ensure action is strictly allowlisted
+        const actionValidation = validateAndResolveAction(contract.action, safetyResult.state);
+        if (actionValidation.valid) {
+          contract.action = actionValidation.action;
+        } else {
+          console.warn("Emoty action rejected by Action Router:", actionValidation.rejectionReason);
+          contract.action = actionValidation.fallbackAction;
+        }
+
+        // Avatar presentation state normalization
+        contract.avatarState = resolveAvatarPresentationState({
+          safetyState: safetyResult.state,
+          mode: contract.mode,
+          action: contract.action,
+          explicitAvatarState: contract.avatarState,
+          defaultState: "calm",
+        });
+
+        // Clean and sanitize the response text
+        contract.response = sanitizeOutput(contract.response);
+
+        // Save assistant response in Convex (aiCompanionLogs)
+        await ctx.runMutation(api.companion.createMessage, {
+          messageId: args.aiMessageId,
+          role: "assistant",
+          content: contract.response,
+        });
+
+        // Record privacy-safe telemetry
+        try {
+          await ctx.runMutation(api.emotyTelemetry.recordTelemetry, {
+            durationMs: Date.now() - startTime,
+            path: isContractInvalid || isParseError ? "fallback" : "gemini",
+            mode: contract.mode,
+            actionType: contract.action.type,
+            avatarState: contract.avatarState,
+            safetyCategory: safetyResult.category,
+            geminiCalled: true,
+            geminiSuccess: !isContractInvalid && !isParseError,
+            fallbackUsed: isContractInvalid || isParseError,
+            fallbackReason: isParseError ? "PARSE_ERROR" : isContractInvalid ? "CONTRACT_INVALID" : undefined,
+            model: res.model,
+          });
+        } catch (tErr) {
+          console.warn("Telemetry write error:", tErr);
+        }
+
+        return contract;
+      } catch (err: any) {
+        const isTimeout = err?.name === "AbortError" || err?.message?.includes("abort") || err?.message?.includes("timed out");
+        console.warn("Gemini API call failed or timed out. Falling back to multi-turn structured response logic.");
+
+        const fallbackContract = buildStructuredFallbackResponse({
+          userMessage: sanitizedInputContent,
+          context: emotyContext,
+          quickAction: args.quickAction,
+          language: args.language,
+        });
+
+        await ctx.runMutation(api.companion.createMessage, {
+          messageId: args.aiMessageId,
+          role: "assistant",
+          content: fallbackContract.response,
+        });
+
+        try {
+          await ctx.runMutation(api.emotyTelemetry.recordTelemetry, {
+            durationMs: Date.now() - startTime,
+            path: "fallback",
+            mode: fallbackContract.mode,
+            actionType: fallbackContract.action.type,
+            avatarState: fallbackContract.avatarState,
+            safetyCategory: safetyResult.category,
+            geminiCalled: true,
+            geminiSuccess: false,
+            fallbackUsed: true,
+            fallbackReason: isTimeout ? "PROVIDER_TIMEOUT" : "PROVIDER_ERROR",
+            errorCode: err?.message ? String(err.message).slice(0, 100) : "UNKNOWN",
+            model: getGeminiModels()[0] || "gemini-3.5-flash-lite",
+          });
+        } catch (tErr) {
+          console.warn("Telemetry write error:", tErr);
+        }
+
+        return fallbackContract;
+      }
+    } finally {
+      // ALWAYS release in-flight concurrency lock
+      try {
+        await ctx.runMutation(api.emotyRateLimiter.releaseRateLimit);
+      } catch (relErr) {
+        console.warn("Failed to release rate limit lock:", relErr);
+      }
     }
   },
 });

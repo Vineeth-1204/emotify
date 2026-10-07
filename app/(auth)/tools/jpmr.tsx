@@ -15,7 +15,7 @@ import Svg, { Circle, Path, G } from "react-native-svg";
 import * as SecureStore from "expo-secure-store";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAvatar } from "@/context/AvatarContext";
-import { MitraAvatar } from "@/components/avatar/MitraAvatar";
+import { EmotyAvatar, MitraAvatar } from "@/components/avatar/EmotyAvatar";
 import { CalmPointToken } from "@/components/svg/system";
 import { JPMR_STEPS, JPMRStep, JPMRMediaViewer, PlayState } from "@/components/jpmr";
 

@@ -6,7 +6,7 @@ import { createPortal } from "react-dom";
 import {
   ArrowLeft, User, Phone, Calendar, Heart, Shield, TrendingUp, AlertTriangle,
   Brain, Smile, CheckCircle, HelpCircle, MessageSquare, Award, Clock, ArrowRight,
-  Unlock, RefreshCw, Compass, Wind
+  Unlock, RefreshCw, Compass, Wind, CheckSquare
 } from "lucide-react";
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
@@ -74,7 +74,7 @@ export default function PatientDetail() {
   const navigate = useNavigate();
 
   // Tab state: "screenings" | "timeline" | "cbt" | "somatic" | "gamification"
-  const [activeTab, setActiveTab] = useState<"screenings" | "timeline" | "cbt" | "somatic" | "gamification">("screenings");
+  const [activeTab, setActiveTab] = useState<"screenings" | "timeline" | "care" | "cbt" | "somatic" | "gamification">("screenings");
   const [selectedSession, setSelectedSession] = useState<any | null>(null);
 
   // Unblock modal state
@@ -96,6 +96,35 @@ export default function PatientDetail() {
     api.insights.getCounselorStudentDailyCheckins,
     id ? { userId: id, lookbackDays: 14 } : "skip"
   );
+
+  // Load patient counselor requests
+  const studentCounsellorRequests = useQuery(
+    api.counsellorRequests.getStudentCounsellorRequests,
+    id ? { userId: id } : "skip"
+  );
+  // Load patient appointments
+  const studentAppointments = useQuery(
+    api.appointments.getTwoWayAppointmentsForPatient,
+    id ? { userId: id } : "skip"
+  );
+  // Load patient follow-ups
+  const studentFollowUps = useQuery(
+    api.followUps.getStudentFollowUps,
+    id ? { userId: id } : "skip"
+  );
+  const markFollowUpCompleteMutation = useMutation(api.followUps.markComplete);
+  const [completingFollowUpId, setCompletingFollowUpId] = useState<string | null>(null);
+
+  const handleMarkFollowUpComplete = async (followUpId: any) => {
+    try {
+      setCompletingFollowUpId(String(followUpId));
+      await markFollowUpCompleteMutation({ id: followUpId });
+    } catch (e: any) {
+      alert("Error completing follow-up: " + (e.message || e.toString()));
+    } finally {
+      setCompletingFollowUpId(null);
+    }
+  };
 
   const unblockPatientMutation = useMutation(api.triage.unblockPatient);
   const triggerScreeningMutation = useMutation(api.triage.triggerScreeningTest);
@@ -156,7 +185,7 @@ export default function PatientDetail() {
   if (patient === null) {
     return (
       <div style={{ display: "flex", minHeight: "60vh", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "16px" }}>
-        <p style={{ color: "var(--danger)", fontSize: "1.2rem" }}>Patient not found.</p>
+        <p style={{ color: "var(--danger)", fontSize: "1.2rem" }}>Student not found.</p>
         <button className="btn btn-secondary" onClick={() => navigate("/patients")}>
           <ArrowLeft size={16} /> Back to Directory
         </button>
@@ -410,7 +439,7 @@ export default function PatientDetail() {
                 onClick={() => setShowUnblockModal(true)}
                 style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "8px 14px", fontSize: "0.85rem" }}
               >
-                <Unlock size={14} /> Unblock Patient
+                <Unlock size={14} /> Review triage actions
               </button>
             )}
           </div>
@@ -419,8 +448,23 @@ export default function PatientDetail() {
         {/* Stats Strip */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, background: "#f8fafc", padding: "12px 16px", borderRadius: 12, border: "1px solid var(--border-color)" }}>
           {[
-            { label: "AI Risk Score", val: "Low (12/100)", color: "var(--accent-primary)" },
-            { label: "Assigned Counsellor", val: "Priyanka R.", color: "var(--text-primary)" },
+            {
+              label: "Counselor Request",
+              val: studentCounsellorRequests && studentCounsellorRequests.length > 0
+                ? (studentCounsellorRequests[0].status || "Pending").toUpperCase()
+                : "None",
+              color: studentCounsellorRequests && studentCounsellorRequests.length > 0 && studentCounsellorRequests[0].status === "pending"
+                ? "var(--warning, #eab308)"
+                : "var(--accent-primary, #3b82f6)",
+            },
+            {
+              label: "Upcoming Consultation",
+              val: (() => {
+                const upcoming = studentAppointments?.find((a: any) => a.status === "accepted" || a.status === "pending");
+                return upcoming ? `${upcoming.date} at ${upcoming.time}` : "None scheduled";
+              })(),
+              color: "var(--text-primary)",
+            },
             { label: "Latest PHQ-9", val: testResults[0] ? `${testResults[0].phq9_total} / 27` : "—", color: "var(--warning)" },
             { label: "Latest GAD-7", val: testResults[0] ? `${testResults[0].gad7_total} / 21` : "—", color: "var(--success)" },
           ].map(({ label, val, color }) => (
@@ -438,6 +482,7 @@ export default function PatientDetail() {
         {([
           { key: "screenings", label: "📋 Clinical Assessments" },
           { key: "timeline",   label: "⏱️ Clinical Timeline" },
+          { key: "care",       label: "🗓️ Counselor Care & Follow-ups" },
           { key: "cbt",        label: "🧠 AI CBT & Recovery" },
           { key: "somatic",   label: "🧘 Somatic & Sensory Interventions" },
           { key: "gamification", label: "🏆 Gamification" },
@@ -531,7 +576,7 @@ export default function PatientDetail() {
                   <TrendingUp size={20} color="var(--accent-primary)" />
                   Clinical Score Trends
                 </h3>
-                <span className="hud-tag">TELEMETRY</span>
+                <span className="hud-tag">Screening trends</span>
               </div>
               <div style={{ height: "300px", width: "100%" }}>
                 {chartData.length > 0 ? (
@@ -639,12 +684,12 @@ export default function PatientDetail() {
                     Daily Wellness Check-ins
                   </h3>
                   <span style={{ fontSize: "0.78rem", color: "var(--text-secondary)", fontStyle: "italic" }}>
-                    Student-reported wellness telemetry — non-diagnostic (Past {dailyCheckinTelemetry?.lookbackDays || 14} days)
+                    Student-reported wellbeing check-ins — non-diagnostic (Past {dailyCheckinTelemetry?.lookbackDays || 14} days)
                   </span>
                 </div>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                <span className="hud-tag">TELEMETRY</span>
+                <span className="hud-tag">Daily check-ins</span>
                 {dailyCheckinTelemetry && (
                   <span style={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>
                     Total Lifetime Check-ins: <strong style={{ color: "var(--text-primary)" }}>{dailyCheckinTelemetry.totalCheckins}</strong>
@@ -656,7 +701,7 @@ export default function PatientDetail() {
             <div style={{ padding: "20px 24px" }}>
               {dailyCheckinTelemetry === undefined ? (
                 <div style={{ padding: "20px", textAlign: "center", color: "var(--text-secondary)", fontStyle: "italic" }}>
-                  Loading daily check-in telemetry...
+                  Loading daily check-ins...
                 </div>
               ) : dailyCheckinTelemetry.checkins.length === 0 ? (
                 <div style={{ padding: "30px 20px", textAlign: "center", color: "var(--text-secondary)", fontStyle: "italic" }}>
@@ -728,6 +773,244 @@ export default function PatientDetail() {
             maxHeight="750px"
             showHeader={true}
           />
+        </div>
+      )}
+
+      {/* RENDER TAB: CARE JOURNEY (REQUESTS, APPOINTMENTS & FOLLOW-UPS) */}
+      {activeTab === "care" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+          {/* Care Pipeline Provenance Tracker (Factual) */}
+          <div className="glass-panel" style={{ padding: "18px 24px", background: "rgba(255, 255, 255, 0.02)" }}>
+            <h3 style={{ fontSize: "1.1rem", margin: "0 0 12px 0", color: "var(--text-primary)", fontWeight: 700, display: "flex", alignItems: "center", gap: "8px" }}>
+              <Compass size={18} color="var(--accent-primary)" />
+              Care Journey Pipeline
+            </h3>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap", fontSize: "0.85rem" }}>
+              <div style={{ padding: "6px 12px", borderRadius: "8px", background: "#f1f5f9", border: "1px solid #cbd5e1" }}>
+                <strong>1. Screening:</strong> {testResults && testResults.length > 0 ? `PHQ-9: ${testResults[0].phq9_total}, GAD-7: ${testResults[0].gad7_total}` : "No tests"}
+              </div>
+              <span style={{ color: "var(--text-secondary)" }}>→</span>
+              <div style={{ padding: "6px 12px", borderRadius: "8px", background: triageBg, border: `1px solid ${triageBorder}`, color: triageTextColor }}>
+                <strong>2. Triage:</strong> {currentLevel.replace(/_/g, " ").toUpperCase()}
+              </div>
+              <span style={{ color: "var(--text-secondary)" }}>→</span>
+              <div style={{ padding: "6px 12px", borderRadius: "8px", background: "#f8fafc", border: "1px solid var(--border-color)" }}>
+                <strong>3. Request:</strong> {studentCounsellorRequests && studentCounsellorRequests.length > 0 ? studentCounsellorRequests[0].status || "pending" : "None"}
+              </div>
+              <span style={{ color: "var(--text-secondary)" }}>→</span>
+              <div style={{ padding: "6px 12px", borderRadius: "8px", background: "#f8fafc", border: "1px solid var(--border-color)" }}>
+                <strong>4. Appointment:</strong> {studentAppointments && studentAppointments.length > 0 ? `${studentAppointments[0].status} (${studentAppointments[0].date})` : "None"}
+              </div>
+              <span style={{ color: "var(--text-secondary)" }}>→</span>
+              <div style={{ padding: "6px 12px", borderRadius: "8px", background: "#f8fafc", border: "1px solid var(--border-color)" }}>
+                <strong>5. Follow-up:</strong> {studentFollowUps && studentFollowUps.length > 0 ? (studentFollowUps.some((f: any) => !f.completed) ? "Active pending" : "Completed") : "None"}
+              </div>
+            </div>
+          </div>
+
+          {/* Section 1: Counselor Requests */}
+          <div className="glass-panel" style={{ padding: 0, overflow: "hidden" }}>
+            <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border-color)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <MessageSquare size={18} color="#06b6d4" />
+                <h3 style={{ fontSize: "1.05rem", margin: 0, color: "var(--text-primary)", fontWeight: 700 }}>
+                  Counselor Consultation Requests
+                </h3>
+              </div>
+              <span style={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>
+                {studentCounsellorRequests?.length ?? 0} request(s) recorded
+              </span>
+            </div>
+            <div style={{ overflowX: "auto" }}>
+              {studentCounsellorRequests === undefined ? (
+                <div style={{ padding: "24px", textAlign: "center", color: "var(--text-secondary)" }}>Loading requests...</div>
+              ) : studentCounsellorRequests.length === 0 ? (
+                <div style={{ padding: "24px", textAlign: "center", color: "var(--text-secondary)" }}>No counselor consultation requests recorded.</div>
+              ) : (
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Request Date</th>
+                      <th>Source Type</th>
+                      <th>Status</th>
+                      <th>Originating Triage / Attempt</th>
+                      <th>Counselor Notes</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {studentCounsellorRequests.map((req: any) => (
+                      <tr key={req._id}>
+                        <td>{new Date(req.timestamp).toLocaleString()}</td>
+                        <td>
+                          <span style={{ textTransform: "capitalize" }}>
+                            {(req.sourceType || "self_initiated").replace(/_/g, " ")}
+                          </span>
+                        </td>
+                        <td>
+                          <span className={`badge ${req.status === 'completed' ? 'badge-green' : req.status === 'scheduled' ? 'badge-purple' : 'badge-orange'}`}>
+                            {req.status || "pending"}
+                          </span>
+                        </td>
+                        <td>
+                          {req.triageId ? (
+                            <span style={{ fontSize: "0.75rem", padding: "2px 6px", borderRadius: "4px", background: "rgba(139,92,246,0.1)", border: "1px solid rgba(139,92,246,0.25)", color: "#8b5cf6" }}>
+                              Triage #{String(req.triageId).slice(-6)}
+                            </span>
+                          ) : req.attemptId ? (
+                            <span style={{ fontSize: "0.75rem", padding: "2px 6px", borderRadius: "4px", background: "rgba(37,99,235,0.1)", border: "1px solid rgba(37,99,235,0.25)", color: "var(--accent-primary)" }}>
+                              Attempt #{String(req.attemptId).slice(-6)}
+                            </span>
+                          ) : (
+                            <span style={{ color: "var(--text-secondary)", fontSize: "0.85rem" }}>Direct</span>
+                          )}
+                        </td>
+                        <td style={{ maxWidth: "250px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {req.notes || "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+
+          {/* Section 2: Appointments */}
+          <div className="glass-panel" style={{ padding: 0, overflow: "hidden" }}>
+            <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border-color)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <Calendar size={18} color="var(--accent-primary)" />
+                <h3 style={{ fontSize: "1.05rem", margin: 0, color: "var(--text-primary)", fontWeight: 700 }}>
+                  Appointments & Consultations
+                </h3>
+              </div>
+              <span style={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>
+                {studentAppointments?.length ?? 0} appointment(s)
+              </span>
+            </div>
+            <div style={{ overflowX: "auto" }}>
+              {studentAppointments === undefined ? (
+                <div style={{ padding: "24px", textAlign: "center", color: "var(--text-secondary)" }}>Loading appointments...</div>
+              ) : studentAppointments.length === 0 ? (
+                <div style={{ padding: "24px", textAlign: "center", color: "var(--text-secondary)" }}>No appointments scheduled or recorded.</div>
+              ) : (
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Title</th>
+                      <th>Date & Time</th>
+                      <th>Status</th>
+                      <th>Provenance</th>
+                      <th>Attended</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {studentAppointments.map((appt: any) => (
+                      <tr key={appt._id}>
+                        <td style={{ fontWeight: 600, color: "var(--text-primary)" }}>{appt.title}</td>
+                        <td>{appt.date} at {appt.time}</td>
+                        <td>
+                          <span className={`badge ${appt.status === 'accepted' ? 'badge-green' : appt.status === 'completed' ? 'badge-purple' : appt.status === 'rejected' || appt.status === 'cancelled' ? 'badge-red' : 'badge-orange'}`}>
+                            {appt.status}
+                          </span>
+                        </td>
+                        <td>
+                          {appt.counsellorRequestId ? (
+                            <span style={{ fontSize: "0.75rem", padding: "2px 6px", borderRadius: "4px", background: "rgba(6,182,212,0.1)", border: "1px solid rgba(6,182,212,0.25)", color: "#0891b2" }}>
+                              From Request #{String(appt.counsellorRequestId).slice(-6)}
+                            </span>
+                          ) : (
+                            <span style={{ color: "var(--text-secondary)", fontSize: "0.85rem" }}>Direct</span>
+                          )}
+                        </td>
+                        <td>{appt.attended ? appt.attended.toUpperCase() : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+
+          {/* Section 3: Care Follow-ups */}
+          <div className="glass-panel" style={{ padding: 0, overflow: "hidden" }}>
+            <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border-color)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <CheckSquare size={18} color="#10b981" />
+                <h3 style={{ fontSize: "1.05rem", margin: 0, color: "var(--text-primary)", fontWeight: 700 }}>
+                  Care Follow-ups
+                </h3>
+              </div>
+              <span style={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>
+                {studentFollowUps?.length ?? 0} follow-up(s)
+              </span>
+            </div>
+            <div style={{ overflowX: "auto" }}>
+              {studentFollowUps === undefined ? (
+                <div style={{ padding: "24px", textAlign: "center", color: "var(--text-secondary)" }}>Loading follow-ups...</div>
+              ) : studentFollowUps.length === 0 ? (
+                <div style={{ padding: "24px", textAlign: "center", color: "var(--text-secondary)" }}>No follow-ups recorded.</div>
+              ) : (
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Type</th>
+                      <th>Due Date</th>
+                      <th>Status</th>
+                      <th>Originating Appointment</th>
+                      <th>Staff Notes</th>
+                      <th style={{ textAlign: "right" }}>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {studentFollowUps.map((fu: any) => (
+                      <tr key={fu._id}>
+                        <td style={{ textTransform: "capitalize", fontWeight: 600, color: "var(--text-primary)" }}>
+                          {fu.type.replace(/_/g, " ")}
+                        </td>
+                        <td>{new Date(fu.dueDate).toLocaleDateString()}</td>
+                        <td>
+                          {fu.status === "completed" || fu.completed ? (
+                            <span className="badge badge-green">Completed</span>
+                          ) : (
+                            <span className="badge" style={{ background: "rgba(234, 179, 8, 0.15)", color: "#ca8a04", border: "1px solid rgba(234, 179, 8, 0.3)" }}>Pending</span>
+                          )}
+                        </td>
+                        <td>
+                          {fu.appointmentId ? (
+                            <span style={{ fontSize: "0.75rem", padding: "2px 6px", borderRadius: "4px", background: "rgba(59,130,246,0.1)", border: "1px solid rgba(59,130,246,0.25)", color: "var(--accent-primary)" }}>
+                              Appointment #{String(fu.appointmentId).slice(-6)}
+                            </span>
+                          ) : (
+                            <span style={{ color: "var(--text-secondary)", fontSize: "0.85rem" }}>Standalone</span>
+                          )}
+                        </td>
+                        <td style={{ maxWidth: "250px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {fu.notes || "—"}
+                        </td>
+                        <td style={{ textAlign: "right" }}>
+                          {fu.status !== "completed" && !fu.completed ? (
+                            <button
+                              className="btn btn-secondary"
+                              style={{ padding: "4px 10px", fontSize: "0.82rem", display: "inline-flex", alignItems: "center", gap: "4px" }}
+                              onClick={() => handleMarkFollowUpComplete(fu._id)}
+                              disabled={completingFollowUpId === String(fu._id)}
+                            >
+                              <CheckSquare size={13} /> {completingFollowUpId === String(fu._id) ? "..." : "Complete"}
+                            </button>
+                          ) : (
+                            <span style={{ fontSize: "0.82rem", color: "var(--text-secondary)" }}>
+                              Done {fu.completedAt ? new Date(fu.completedAt).toLocaleDateString() : ""}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
@@ -1404,8 +1687,8 @@ export default function PatientDetail() {
                   <Unlock size={22} />
                 </div>
                 <div>
-                  <h3 style={{ fontSize: "1.3rem", margin: 0, color: "var(--text-primary)" }}>Unblock Patient Triage</h3>
-                  <span style={{ fontSize: "0.85rem", color: "var(--text-secondary)" }}>Patient: <strong>{patient.full_name}</strong></span>
+                  <h3 style={{ fontSize: "1.3rem", margin: 0, color: "var(--text-primary)" }}>Triage actions</h3>
+                  <span style={{ fontSize: "0.85rem", color: "var(--text-secondary)" }}>Student: <strong>{patient.full_name}</strong></span>
                 </div>
               </div>
               <button
@@ -1419,7 +1702,7 @@ export default function PatientDetail() {
             </div>
 
             <p style={{ fontSize: "0.95rem", color: "var(--text-secondary)", margin: "8px 0 16px 0", lineHeight: 1.5 }}>
-              Choose an unblock action to restore standard app access after the patient has met with their counsellor:
+              Choose an action to update the student’s triage status and app access after counsellor review:
             </p>
 
             <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>

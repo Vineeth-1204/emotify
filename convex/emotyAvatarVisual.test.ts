@@ -47,7 +47,10 @@ describe("AI-3 Step 6B: Avatar Visual Replacement (AVATAR-VISUAL-01 to AVATAR-VI
 
     // Must use React Native Image component with cover resizeMode
     expect(componentCode).toContain("<Image");
-    expect(componentCode).toContain("source={CANONICAL_EMOTY_BOY_AVATAR}");
+    // Character artwork comes from the per-gender registry; the canonical character is the male entry
+    expect(componentCode).toContain("source={imageSource}");
+    expect(componentCode).toContain("male: { base: CANONICAL_EMOTY_BOY_AVATAR }");
+    expect(componentCode).toContain("getEmotyCharacter(effectiveGender)");
     expect(componentCode).toContain('resizeMode="cover"');
     // Must NOT contain old SVG human face geometry
     expect(componentCode).not.toContain("hairHighlight: hairGirlHighlight");
@@ -357,9 +360,7 @@ describe("AI-3 Step 6C: Avatar Hero Refinement (HERO-01 to HERO-08)", () => {
 
   test("HERO-03: Breathing state animation uses subtle, slow somatic pacing without exaggerated scale fluctuation", () => {
     // Subtle somatic expansion (1.025) and contraction (0.985) over 4000ms cycles
-    expect(componentCode).toContain("toValue: 1.025");
-    expect(componentCode).toContain("toValue: 0.985");
-    expect(componentCode).toContain("duration: 4000");
+    expect(componentCode).toContain("to(v.scale, 1.025, 4000), to(v.scale, 0.985, 4000)");
     // Exaggerated bouncing scale (1.08 / 0.95) is eliminated
     expect(componentCode).not.toContain("toValue: 1.08");
     expect(componentCode).not.toContain("toValue: 0.95");
@@ -367,16 +368,20 @@ describe("AI-3 Step 6C: Avatar Hero Refinement (HERO-01 to HERO-08)", () => {
 
   test("HERO-04: Listening state animation maintains a calm, stable presence with subdued tilt", () => {
     // Gentle head tilt (1.4deg for hero) with high damping to prevent robotic wobble
-    expect(componentCode).toContain("isHero ? ['0deg', '1.4deg'] : ['0deg', '2.0deg']");
-    expect(componentCode).toContain("tension: 60");
-    expect(componentCode).toContain("friction: 8");
+    expect(componentCode).toContain("springTo(v.tilt, 2)");
+    // No lean or sway anywhere goes beyond 3 degrees
+    const tilts = [...componentCode.matchAll(/(?:to|springTo)\(v\.tilt, (-?[\d.]+)/g)].map((m) => Math.abs(Number(m[1])));
+    expect(tilts.length).toBeGreaterThan(0);
+    expect(Math.max(...tilts)).toBeLessThanOrEqual(3);
     // Old harsh tilt (2.8deg) is eliminated
     expect(componentCode).not.toContain("outputRange: ['0deg', '2.8deg']");
   });
 
   test("HERO-05: Celebrating state animation uses subtle positive elevation without exaggerated bouncing", () => {
     // Restrained elevation (-6) with gentle settling
-    expect(componentCode).toContain("toValue: -6");
+    // Hop height scales with avatar size and is capped (amp <= 4px, hop <= 2 * amp)
+    expect(componentCode).toContain("Math.max(1, Math.min(4, size * 0.03))");
+    expect(componentCode).toContain("springTo(v.lift, -amp * 2)");
     expect(componentCode).toContain("tension: 70");
     expect(componentCode).toContain("friction: 7");
     // Harsh spring bounce (-12) is eliminated
@@ -385,9 +390,10 @@ describe("AI-3 Step 6C: Avatar Hero Refinement (HERO-01 to HERO-08)", () => {
 
   test("HERO-06: Reduced-motion strictly zeroes all animated values and halts motion loops", () => {
     expect(componentCode).toContain("if (reduceMotion) {");
-    expect(componentCode).toContain("breathAnim.setValue(1);");
-    expect(componentCode).toContain("bounceAnim.setValue(0);");
-    expect(componentCode).toContain("swayAnim.setValue(0);");
+    expect(componentCode).toContain("scaleAnim.setValue(1);");
+    expect(componentCode).toContain("liftAnim.setValue(0);");
+    expect(componentCode).toContain("tiltAnim.setValue(0);");
+    expect(componentCode).toContain("enterAnim.setValue(1);");
     expect(componentCode).toContain("return;");
   });
 
@@ -421,5 +427,34 @@ describe("AI-3 Step 6C: Avatar Hero Refinement (HERO-01 to HERO-08)", () => {
     expect(componentCode).toContain("fallbackInitial");
     expect(componentCode).toContain("width: innerSize");
     expect(componentCode).toContain("height: innerSize");
+  });
+});
+
+describe("Emoty feels alive without demanding attention", () => {
+  const componentCode = fs.readFileSync(path.resolve(__dirname, "../components/avatar/EmotyAvatar.tsx"), "utf-8");
+
+  test("ambient motion settles: only thinking and breathing pacing loop for as long as the state lasts", () => {
+    const cycles = [...componentCode.matchAll(/cycles: (-?\d+)/g)].map((m) => Number(m[1]));
+    expect(cycles.filter((c) => c === -1)).toHaveLength(2);
+    expect(cycles.filter((c) => c !== -1).every((c) => c >= 1 && c <= 4)).toBe(true);
+    expect(componentCode).toContain("settleToRest(");
+  });
+
+  test("all motion runs on the native driver", () => {
+    expect(componentCode).not.toContain("useNativeDriver: false");
+  });
+
+  test("the speaking halo only pulses while speaking", () => {
+    expect(componentCode).toContain("if (!speaking) {");
+    expect(componentCode).toContain("opacity: haloAnim");
+  });
+
+  test("expression frames are optional and blinking only runs when a blink frame exists", () => {
+    expect(componentCode).toContain("character.expressions?.[state] ?? character.base");
+    expect(componentCode).toContain("if (!character.blink || reduceMotion) return;");
+  });
+
+  test("the female character has its own registry slot", () => {
+    expect(componentCode).toMatch(/female: (null|\{ base: require\('@\/assets\/emoty_girl_avatar\.jpg'\) \})/);
   });
 });

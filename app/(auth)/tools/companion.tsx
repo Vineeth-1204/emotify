@@ -809,7 +809,7 @@ export default function AICompanionScreen() {
             </TouchableOpacity>
 
             <View style={styles.avatarBox}>
-              <EmotyAvatar gender={avatarGender} state={currentEmotyState} size="xs" />
+              <EmotyAvatar gender={avatarGender} state={currentEmotyState} size="xs" speaking={isSpeaking || isVoicePlaying} />
               <View style={[styles.statusDot, { backgroundColor: colors.success }]} />
             </View>
 
@@ -890,7 +890,7 @@ export default function AICompanionScreen() {
           <View style={styles.emptyStateContainer}>
             <View style={styles.emptyCard}>
               <View style={{ marginBottom: 16 }}>
-                <EmotyAvatar state={currentEmotyState} size="lg" />
+                <EmotyAvatar gender={avatarGender} state={currentEmotyState} size="lg" speaking={isSpeaking || isVoicePlaying} />
               </View>
               <Text style={[styles.emptyTitle, { color: colors.text }]}>{emptyTitle}</Text>
               <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>

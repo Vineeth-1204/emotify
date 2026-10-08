@@ -41,7 +41,7 @@ export type EmotyScene =
   | { scene: "checkin"; selectedMood?: CheckinMood | null }
   | { scene: "screening_intro"; answered: number; total: number; forcedRetest?: boolean }
   | { scene: "screening_submitting" }
-  | { scene: "reframe"; step: string }
+  | { scene: "reframe"; step: string; opening?: boolean }
   | { scene: "small_steps"; checkedIn: boolean; total: number; completed: number }
   | { scene: "companion" }
   | { scene: "safety" };
@@ -78,6 +78,7 @@ export const EMOTY_LINES = {
   screeningProgress: "Nice progress. Pick up wherever you left off.",
   screeningReady: "All done! Submit whenever you're ready.",
   screeningSubmitting: "Saving your answers. This only takes a moment.",
+  reframeOpening: "What's on your mind? Pick a starting point, or put it in your own words.",
   reframeBalanced: "Take your time. There's no perfect answer here.",
   reframeBelief: "Even a small shift counts.",
   reframeEmotionAfter: "Notice how you feel now, whatever it is.",
@@ -137,6 +138,7 @@ function sceneMoodAndLine(input: EmotyScene): { mood: EmotyMood; line: string | 
       if (input.step === "safety_mode") return { mood: "concerned", line: EMOTY_LINES.concerned };
       if (input.step === "completed") return { mood: "celebrating", line: EMOTY_LINES.reframeCompleted };
       if (input.step === "recovery_coach") return { mood: "celebrating", line: null };
+      if (input.opening && input.step === "understanding") return { mood: "greeting", line: EMOTY_LINES.reframeOpening };
       if (input.step === "balanced_thought") return { mood: "thinking", line: EMOTY_LINES.reframeBalanced };
       if (input.step === "belief") return { mood: "encouraging", line: EMOTY_LINES.reframeBelief };
       if (input.step === "emotion_after") return { mood: "listening", line: EMOTY_LINES.reframeEmotionAfter };

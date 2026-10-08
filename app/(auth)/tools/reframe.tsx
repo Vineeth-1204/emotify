@@ -199,6 +199,15 @@ function IntensitySelector({ value, onChange }: IntensitySelectorProps) {
   );
 }
 
+// Optional shortcuts on the opening screen. They only pre-fill the text box; the student
+// still writes and sends their own thought through the existing flow.
+const REFRAME_STARTERS = [
+  { label: "Something is stressing me", prefill: "Something is stressing me: ", icon: "cloud-outline" },
+  { label: "I'm being hard on myself", prefill: "I keep telling myself that ", icon: "chatbubble-ellipses-outline" },
+  { label: "I'm worried about something", prefill: "I'm worried that ", icon: "help-circle-outline" },
+  { label: "I'll write it myself", prefill: "", icon: "create-outline" },
+] as const;
+
 export default function ReframeScreen() {
   const router = useRouter();
   const { user } = useAppAuth();
@@ -235,6 +244,7 @@ export default function ReframeScreen() {
   const [supportTab, setSupportTab] = useState<string | null>(null);
 
   const scrollRef = useRef<ScrollView>(null);
+  const chatInputRef = useRef<TextInput>(null);
 
   // Initial session fetch
   useEffect(() => {
@@ -512,9 +522,13 @@ export default function ReframeScreen() {
 
   const { currentStep, conversation, sessionStatus } = activeSession;
   const progress = getProgressPercent(currentStep);
+  // Opening state: the student hasn't shared anything yet in this session.
+  const isOpening =
+    currentStep === "understanding" && !aiLoading && !conversation.some((msg: any) => msg.role === "user");
   const reframePresence = getEmotyPresence({
     scene: "reframe",
     step: sessionStatus === "safety_mode" ? "safety_mode" : currentStep,
+    opening: isOpening,
     safetyActive: isSafetyActive,
   });
 
@@ -761,7 +775,7 @@ export default function ReframeScreen() {
           <View style={styles.progressContainer}>
             <View style={[styles.progressBar, { width: `${progress}%` }]} />
           </View>
-          {reframePresence.line && (
+          {reframePresence.line && !isOpening && (
             <EmotyPresence presence={reframePresence} size="xs" style={{ marginTop: 12 }} />
           )}
         </View>
@@ -774,7 +788,31 @@ export default function ReframeScreen() {
             contentContainerStyle={styles.chatContent}
             showsVerticalScrollIndicator={false}
           >
-            {conversation.map((msg: any, i: number) => {
+            {isOpening && (
+              <View style={styles.openingContainer}>
+                <EmotyPresence presence={reframePresence} layout="stacked" size="md" />
+                <View style={styles.starterList}>
+                  {REFRAME_STARTERS.map((starter) => (
+                    <TouchableOpacity
+                      key={starter.label}
+                      style={styles.starterChip}
+                      onPress={() => {
+                        setInputText(starter.prefill);
+                        setTimeout(() => chatInputRef.current?.focus(), 50);
+                      }}
+                      accessibilityRole="button"
+                      accessibilityLabel={starter.label}
+                      activeOpacity={0.8}
+                    >
+                      <Ionicons name={starter.icon as any} size={18} color={Colors.primary} />
+                      <Text style={styles.starterChipText}>{starter.label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            )}
+
+            {!isOpening && conversation.map((msg: any, i: number) => {
               const isUser = msg.role === "user";
               return (
                 <View
@@ -962,6 +1000,7 @@ export default function ReframeScreen() {
             ) : (
               <View style={styles.inputBar}>
                 <TextInput
+                  ref={chatInputRef}
                   style={[styles.textInput, { maxHeight: 100 }]}
                   value={inputText}
                   onChangeText={setInputText}
@@ -1123,6 +1162,31 @@ const styles = StyleSheet.create({
   },
   assistantMessageText: {
     color: Colors.text
+  },
+  openingContainer: {
+    alignItems: "center",
+    paddingTop: 24,
+    gap: 20,
+  },
+  starterList: {
+    width: "100%",
+    gap: 10,
+  },
+  starterChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    backgroundColor: Colors.white,
+  },
+  starterChipText: {
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: 15,
+    color: Colors.text,
   },
   loadingBubble: {
     flexDirection: "row",

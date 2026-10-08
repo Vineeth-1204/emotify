@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Tabs, useRouter } from "expo-router";
 import { useThemeColors } from "@/context/MoodThemeContext";
+import { Colors } from "@/constants/Colors";
 import { Theme } from "@/constants/Theme";
 import { Ionicons } from "@expo/vector-icons";
 import { useAppAuth } from "@/utils/auth";
@@ -64,8 +65,10 @@ export default function TabLayout() {
   };
 
   if (isEmergency) {
+    // Safety screen keeps the base palette; the decorative mood theme never applies here.
+    const safetyColors = Colors;
     return (
-      <View style={[styles.container, { padding: Theme.spacing.xl, paddingTop: 80, backgroundColor: colors.white }]}>
+      <View style={[styles.container, { padding: Theme.spacing.xl, paddingTop: 80, backgroundColor: safetyColors.white }]}>
         <TouchableOpacity
           style={styles.closeButton}
           onPress={() => {
@@ -75,13 +78,13 @@ export default function TabLayout() {
           }}
           activeOpacity={0.7}
         >
-          <Ionicons name="close" size={28} color={colors.textSecondary} />
+          <Ionicons name="close" size={28} color={safetyColors.textSecondary} />
         </TouchableOpacity>
         <View style={{ alignItems: 'center', marginBottom: 20 }}>
           <EmotyPresence presence={getEmotyPresence({ scene: "safety" })} layout="stacked" size="md" />
         </View>
-        <Text style={[styles.emergencyTitle, { color: colors.error, textAlign: 'center' }]}>Safety Priority</Text>
-        <Text style={[styles.emergencyText, { color: colors.text, textAlign: 'center', marginVertical: Theme.spacing.xl, fontSize: 18 }]}>
+        <Text style={[styles.emergencyTitle, { color: safetyColors.error, textAlign: 'center' }]}>Safety Priority</Text>
+        <Text style={[styles.emergencyText, { color: safetyColors.text, textAlign: 'center', marginVertical: Theme.spacing.xl, fontSize: 18 }]}>
           We're concerned for your safety. If you're in danger now, please call emergency services immediately.
         </Text>
         
@@ -113,7 +116,7 @@ export default function TabLayout() {
             size="lg" 
           />
           <View style={{ height: 40 }} />
-          <Text style={{ color: colors.textSecondary, textAlign: 'center', marginBottom: 10 }}>Or try a grounding exercise:</Text>
+          <Text style={{ color: safetyColors.textSecondary, textAlign: 'center', marginBottom: 10 }}>Or try a grounding exercise:</Text>
           <Button 
             title="5-4-3-2-1 Sensory Grounding" 
             onPress={() => router.push({

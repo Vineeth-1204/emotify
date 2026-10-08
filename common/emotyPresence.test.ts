@@ -91,6 +91,12 @@ describe("Emoty presence model", () => {
 
   test("Think Differently steps", () => {
     expect(getEmotyPresence({ scene: "reframe", step: "understanding" })).toMatchObject({ avatarState: "listening", line: null });
+    expect(getEmotyPresence({ scene: "reframe", step: "understanding", opening: true })).toMatchObject({
+      avatarState: "happy",
+      line: EMOTY_LINES.reframeOpening,
+    });
+    // The opening line belongs to the first step only
+    expect(getEmotyPresence({ scene: "reframe", step: "balanced_thought", opening: true }).line).toBe(EMOTY_LINES.reframeBalanced);
     expect(getEmotyPresence({ scene: "reframe", step: "balanced_thought" }).avatarState).toBe("thinking");
     expect(getEmotyPresence({ scene: "reframe", step: "completed" }).avatarState).toBe("celebrating");
     expect(getEmotyPresence({ scene: "reframe", step: "safety_mode" }).avatarState).toBe("supportive");

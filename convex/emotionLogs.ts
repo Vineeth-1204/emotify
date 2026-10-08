@@ -89,7 +89,7 @@ export const getRecent = query({
 /**
  * Phase 3 — Post-Intervention Check
  * Patches postIntensity onto an existing emotionLog record after genuine intervention completion.
- * Used only when the user provides a post-intervention self-report through the Mitra follow-up step.
+ * Used only when the user provides a post-intervention self-report through the Emoty follow-up step.
  * Does NOT create a new record. Does NOT accept clinical scores.
  */
 export const recordPostIntensity = mutation({

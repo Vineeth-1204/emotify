@@ -42,7 +42,7 @@ import { resolveActionNavigation, ACTION_ROUTE_MAP } from "@/convex/emotyActionR
 import { classifyServerSafety } from "@/convex/emotySafety";
 import { CRISIS_RESOURCES, HELPLINE_DIAL_URL } from "@/common/crisisResources";
 import { type EmotyAction } from "@/convex/emotyContract";
-import { resolveAvatarPresentationState } from "@/common/avatarPresentation";
+import { getEmotyPresence } from "@/common/emotyPresence";
 
 const { width } = Dimensions.get("window");
 
@@ -238,11 +238,11 @@ export default function AICompanionScreen() {
   const todayDateStr = useMemo(() => getLocalDateString(), []);
   const todayCheckin = useQuery(api.microGoals.getTodayCheckin, { dateStr: todayDateStr });
 
-  // AI-3 Step 6A: Dynamic Mitra Avatar state computation using authoritative resolver
-  const currentMitraState: AvatarState = useMemo(() => {
-    return resolveAvatarPresentationState({
-      safetyState: isSafetyActive || showSafetyBanner ? "crisis" : "normal",
-      isSafetyActive: isSafetyActive || showSafetyBanner,
+  // Emoty's expression in chat comes from the shared presence model (safety-first resolver underneath)
+  const currentEmotyState: AvatarState = useMemo(() => {
+    return getEmotyPresence({
+      scene: "companion",
+      safetyActive: isSafetyActive || showSafetyBanner,
       activeAppState: isListening
         ? "listening"
         : isSpeaking || isVoicePlaying
@@ -251,8 +251,7 @@ export default function AICompanionScreen() {
         ? "thinking"
         : null,
       explicitAvatarState: avatarState,
-      defaultState: "calm",
-    });
+    }).avatarState;
   }, [isSafetyActive, showSafetyBanner, isListening, isSpeaking, isVoicePlaying, isAiLoading, isLoadingVoice, avatarState]);
 
   // Auto scroll to end when messages list updates or keyboard shows
@@ -810,7 +809,7 @@ export default function AICompanionScreen() {
             </TouchableOpacity>
 
             <View style={styles.avatarBox}>
-              <EmotyAvatar gender={avatarGender} state={currentMitraState} size="xs" />
+              <EmotyAvatar gender={avatarGender} state={currentEmotyState} size="xs" />
               <View style={[styles.statusDot, { backgroundColor: colors.success }]} />
             </View>
 
@@ -891,7 +890,7 @@ export default function AICompanionScreen() {
           <View style={styles.emptyStateContainer}>
             <View style={styles.emptyCard}>
               <View style={{ marginBottom: 16 }}>
-                <EmotyAvatar state={currentMitraState} size="lg" />
+                <EmotyAvatar state={currentEmotyState} size="lg" />
               </View>
               <Text style={[styles.emptyTitle, { color: colors.text }]}>{emptyTitle}</Text>
               <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>

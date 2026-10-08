@@ -1,6 +1,6 @@
 import React from "react";
 import { View, Text, StyleSheet, ScrollView, ActivityIndicator, TouchableOpacity, Alert, Dimensions, Animated, Modal, TextInput, Image, Linking } from "react-native";
-import { useRouter, useFocusEffect } from "expo-router";
+import { useRouter, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useAppAuth } from "@/utils/auth";
 import { useQuery, useMutation, useConvexAuth } from "convex/react";
 import { api } from "@/convex/_generated/api";
@@ -10,7 +10,9 @@ import {
   getDailyCheckinNextStep,
   getEmotionMapPrimaryForDailyMood,
 } from "@/common/phase6EmotionEntry";
-import { getCurrentMitraAction } from "@/common/homeMitraAction";
+import { getCurrentEmotyAction } from "@/common/homeEmotyAction";
+import { getEmotyPresence, type CheckinMood } from "@/common/emotyPresence";
+import { EmotyPresence } from "@/components/avatar/EmotyPresence";
 import { useThemeColors, useStyles } from "@/context/MoodThemeContext";
 import { Button } from "@/components/ui/Button";
 import { getDisplayLevel } from "@/utils/triage";
@@ -220,11 +222,13 @@ export default function DashboardScreen() {
   const [overallProgress, setOverallProgress] = React.useState(0);
   const colors = useThemeColors();
   const styles = useStyles(stylesFactory as any) as any;
-  const { avatarState, setAvatarState, ageCohort, getDialogue, avatarName, avatarGender } = useAvatar();
+  const { setAvatarState, ageCohort, getDialogue, avatarName, avatarGender, isSafetyActive } = useAvatar();
   const { t } = useLanguage();
+  // Set when the student arrives here straight from finishing the screening.
+  const { from: arrivedFrom } = useLocalSearchParams<{ from?: string }>();
 
   const todayCheckin = useQuery(api.microGoals.getTodayCheckin, { dateStr: getLocalDateString() });
-  const suggestedGoal = useQuery(api.microGoals.getMitraSuggestedGoal, { dateStr: getLocalDateString() });
+  const suggestedGoal = useQuery(api.microGoals.getEmotySuggestedGoal, { dateStr: getLocalDateString() });
   const submitMorningCheckin = useMutation(api.microGoals.submitMorningCheckin);
 
   // Phase 5: Local session dismissal state for guided follow-ups (respects user agency without database clutter)
@@ -316,7 +320,7 @@ export default function DashboardScreen() {
     }
   };
 
-  // Phase 5: Determine single primary Mitra next action derived from existing state
+  // Phase 5: Determine single primary Emoty next action derived from existing state
   const todayDateStr = getLocalDateString();
   const hasLoggedEmotionToday = React.useMemo(() => {
     if (!recentEmotions || recentEmotions.length === 0) return false;
@@ -326,8 +330,8 @@ export default function DashboardScreen() {
     return latestDateStr === todayDateStr;
   }, [recentEmotions, todayDateStr]);
 
-  const currentMitraAction = React.useMemo(() => {
-    return getCurrentMitraAction({
+  const currentEmotyAction = React.useMemo(() => {
+    return getCurrentEmotyAction({
       hasCheckedInToday,
       hasLoggedEmotionToday,
       dismissedEmotionFollowup,
@@ -474,6 +478,19 @@ export default function DashboardScreen() {
 
   const isSevere = latestTriage && ["severe", "suicide_flag", "psychosis_flag"].includes(latestTriage.level);
 
+  const homePresence = getEmotyPresence({
+    scene: "home",
+    action: currentEmotyAction,
+    highRisk: !!isSevere,
+    justScreened: arrivedFrom === "screening" && currentEmotyAction === "checkin",
+    safetyActive: isSafetyActive,
+  });
+  const checkinPresence = getEmotyPresence({
+    scene: "checkin",
+    selectedMood: selectedHomeCard as CheckinMood | null,
+    safetyActive: isSafetyActive,
+  });
+
   // Active emotion mapping for display
   const activeEmotion = recentEmotions && recentEmotions.length > 0 ? recentEmotions[0].emotion : null;
   const activeEmotionObj = EMOTIONS.find(e => e.id === activeEmotion);
@@ -525,7 +542,7 @@ export default function DashboardScreen() {
       title: 'Small Steps', 
       sub: 'Habits', 
       renderIcon: (c: string) => <HabitMicrogoalIcon size={24} color={c} />, 
-      route: '/(auth)/tools/mitra-goal', 
+      route: '/(auth)/tools/emoty-goal', 
       locked: !isScreeningComplete 
     }
   ];
@@ -564,7 +581,7 @@ export default function DashboardScreen() {
         allowUpdate: true,
       });
 
-      // Update Mitra Avatar state using authoritative presentation resolver
+      // Update Emoty Avatar state using authoritative presentation resolver
       setAvatarState(resolveAvatarPresentationState({ userEmotion: emotionId, defaultState: "listening" }));
 
       await SecureStore.setItemAsync(`last_checkin_date_${user.id}`, todayStr);
@@ -702,14 +719,14 @@ export default function DashboardScreen() {
         )}
 
         {/* Emoty Interactive Hero Card */}
-        <View style={styles.mitraHeroCard}>
+        <View style={styles.emotyHeroCard}>
           <LinearGradient
             colors={['#FFFFFF', '#F8FAFC'] as any}
             style={StyleSheet.absoluteFill}
           />
-          <View style={styles.mitraHeroContent}>
+          <View style={styles.emotyHeroContent}>
             <TouchableOpacity
-              style={styles.mitraAvatarCol}
+              style={styles.emotyAvatarCol}
               activeOpacity={0.8}
               onPress={() => router.push('/(auth)/tools/companion' as any)}
               accessibilityRole="button"
@@ -717,7 +734,7 @@ export default function DashboardScreen() {
             >
               <EmotyAvatar 
                 gender={avatarGender}
-                state={avatarState} 
+                state={homePresence.avatarState} 
                 size={ageCohort === "13-18" ? "md" : "sm"} 
               />
               <View style={[styles.avatarNameBadge, { backgroundColor: colors.primary + '15' }]}>
@@ -725,24 +742,26 @@ export default function DashboardScreen() {
               </View>
             </TouchableOpacity>
 
-            <View style={styles.mitraBubbleCol}>
-              <View style={styles.mitraSpeechBubble}>
+            <View style={styles.emotyBubbleCol}>
+              <View style={styles.emotySpeechBubble}>
                 {/* Contextual Speech Text */}
-                <Text style={styles.mitraSpeechText}>
-                  {currentMitraAction === "checkin"
+                <Text style={styles.emotySpeechText}>
+                  {homePresence.line
+                    ? homePresence.line
+                    : currentEmotyAction === "checkin"
                     ? `${getGreeting()}, ${alias}. Take a moment to check in with how you're feeling today.`
-                    : currentMitraAction === "emotion_followup"
+                    : currentEmotyAction === "emotion_followup"
                     ? emotionFollowupCopy
-                    : currentMitraAction === "goal_suggestion"
+                    : currentEmotyAction === "goal_suggestion"
                     ? t("home.goalSuggestedCopy", { companionName: avatarName })
                     : "You're all caught up for today! Feel free to rest, or explore any tool below whenever you like."}
                 </Text>
 
-                {/* Primary Mitra Next Action (At most ONE at a time) */}
-                {currentMitraAction === "emotion_followup" && (
-                  <View style={styles.mitraContextualActionRow}>
+                {/* Primary Emoty Next Action (At most ONE at a time) */}
+                {currentEmotyAction === "emotion_followup" && (
+                  <View style={styles.emotyContextualActionRow}>
                     <TouchableOpacity
-                      style={[styles.mitraActionBtnPrimary, { backgroundColor: colors.primary }]}
+                      style={[styles.emotyActionBtnPrimary, { backgroundColor: colors.primary }]}
                       activeOpacity={0.85}
                       onPress={() => router.push({
                         pathname: '/(auth)/tools/emotion-map',
@@ -752,68 +771,68 @@ export default function DashboardScreen() {
                       accessibilityLabel="Talk to me about how you feel"
                     >
                       <Ionicons name="chatbubbles" size={13} color="#FFFFFF" />
-                      <Text style={styles.mitraActionBtnTextPrimary}>Talk to me</Text>
+                      <Text style={styles.emotyActionBtnTextPrimary}>Talk to me</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
-                      style={styles.mitraActionBtnSecondary}
+                      style={styles.emotyActionBtnSecondary}
                       activeOpacity={0.7}
                       onPress={() => setDismissedEmotionFollowup(true)}
                       accessibilityRole="button"
                       accessibilityLabel="Maybe later"
                     >
-                      <Text style={[styles.mitraActionBtnTextSecondary, { color: colors.textSecondary }]}>Maybe later</Text>
+                      <Text style={[styles.emotyActionBtnTextSecondary, { color: colors.textSecondary }]}>Maybe later</Text>
                     </TouchableOpacity>
                   </View>
                 )}
 
-                {currentMitraAction === "goal_suggestion" && suggestedGoal && (
-                  <View style={styles.mitraGoalContainer}>
-                    <View style={styles.mitraGoalTitleRow}>
+                {currentEmotyAction === "goal_suggestion" && suggestedGoal && (
+                  <View style={styles.emotyGoalContainer}>
+                    <View style={styles.emotyGoalTitleRow}>
                       <Ionicons name="sparkles" size={13} color="#16A34A" />
-                      <Text style={[styles.mitraGoalPillTitle, { color: '#15803D' }]} numberOfLines={2}>
+                      <Text style={[styles.emotyGoalPillTitle, { color: '#15803D' }]} numberOfLines={2}>
                         {suggestedGoal.goalTitle}
                       </Text>
                     </View>
                     {!!suggestedGoal.goalDescription && (
-                      <Text style={styles.mitraGoalDescription} numberOfLines={2}>
+                      <Text style={styles.emotyGoalDescription} numberOfLines={2}>
                         {suggestedGoal.goalDescription}
                       </Text>
                     )}
-                    <View style={styles.mitraContextualActionRow}>
+                    <View style={styles.emotyContextualActionRow}>
                       <TouchableOpacity
-                        style={[styles.mitraActionBtnPrimary, { backgroundColor: '#16A34A' }]}
+                        style={[styles.emotyActionBtnPrimary, { backgroundColor: '#16A34A' }]}
                         activeOpacity={0.85}
                         onPress={() => router.push({
-                          pathname: '/(auth)/tools/mitra-goal',
+                          pathname: '/(auth)/tools/emoty-goal',
                           params: { start: '1' },
                         } as any)}
                         accessibilityRole="button"
                         accessibilityLabel={`Start: ${suggestedGoal.goalTitle}`}
                       >
-                        <Text style={styles.mitraActionBtnTextPrimary}>Start</Text>
+                        <Text style={styles.emotyActionBtnTextPrimary}>Start</Text>
                         <Ionicons name="arrow-forward" size={12} color="#FFFFFF" />
                       </TouchableOpacity>
                       <TouchableOpacity
-                        style={styles.mitraActionBtnSecondary}
+                        style={styles.emotyActionBtnSecondary}
                         activeOpacity={0.7}
                         onPress={() => setDismissedGoalFollowup(true)}
                         accessibilityRole="button"
                         accessibilityLabel="Not now"
                       >
-                        <Text style={[styles.mitraActionBtnTextSecondary, { color: colors.textSecondary }]}>Not now</Text>
+                        <Text style={[styles.emotyActionBtnTextSecondary, { color: colors.textSecondary }]}>Not now</Text>
                       </TouchableOpacity>
                     </View>
                   </View>
                 )}
 
-                {currentMitraAction === "all_caught_up" && (
-                  <View style={[styles.mitraGoalPill, {
+                {currentEmotyAction === "all_caught_up" && (
+                  <View style={[styles.emotyGoalPill, {
                     backgroundColor: '#F0FDF4',
                     borderColor: '#BBF7D0',
                     borderWidth: 1,
                   }]}>
                     <Ionicons name="checkmark-circle" size={12} color="#16A34A" />
-                    <Text style={[styles.mitraGoalPillTitle, { color: '#15803D' }]}>
+                    <Text style={[styles.emotyGoalPillTitle, { color: '#15803D' }]}>
                       {suggestedGoal?.status === "all_completed"
                         ? "Today's activity complete. Nice work!"
                         : "You're all caught up for today."}
@@ -948,6 +967,7 @@ export default function DashboardScreen() {
             {/* Daily mood confirmation */}
             {selectedHomeCard && (
               <View style={styles.intensityContainer}>
+                <EmotyPresence presence={checkinPresence} size="xs" style={{ marginTop: 14 }} />
                 <Button
                   title={isSubmittingCheckIn ? t("common.saving") : t("common.confirm")}
                   onPress={() => {
@@ -1142,7 +1162,7 @@ export default function DashboardScreen() {
               <TouchableOpacity
                 style={styles.habitsEmptyCard}
                 activeOpacity={0.85}
-                onPress={() => router.push('/(auth)/tools/mitra-goal' as any)}
+                onPress={() => router.push('/(auth)/tools/emoty-goal' as any)}
                 accessibilityRole="button"
                 accessibilityLabel="Start a small step today"
               >
@@ -1472,7 +1492,7 @@ function stylesFactory(colors: any) {
     fontFamily: Theme.fontFamily.bold,
     fontSize: 13,
   },
-  mitraHeroCard: {
+  emotyHeroCard: {
     borderRadius: 20,
     padding: Theme.spacing.md,
     marginBottom: Theme.spacing.lg,
@@ -1482,12 +1502,12 @@ function stylesFactory(colors: any) {
     backgroundColor: '#FFFFFF',
     ...Theme.shadows.primary,
   } as const,
-  mitraHeroContent: {
+  emotyHeroContent: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 14,
   } as const,
-  mitraAvatarCol: {
+  emotyAvatarCol: {
     alignItems: 'center',
     justifyContent: 'center',
   } as const,
@@ -1515,7 +1535,7 @@ function stylesFactory(colors: any) {
     fontFamily: Theme.fontFamily.bold,
     fontSize: 11,
   },
-  mitraGoalPill: {
+  emotyGoalPill: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
@@ -1525,20 +1545,20 @@ function stylesFactory(colors: any) {
     marginTop: 8,
     alignSelf: 'stretch',
   } as const,
-  mitraGoalPillTitle: {
+  emotyGoalPillTitle: {
     fontFamily: Theme.fontFamily.bold,
     fontSize: 12,
     lineHeight: 17,
     flex: 1,
   },
-  mitraGoalDescription: {
+  emotyGoalDescription: {
     fontFamily: Theme.fontFamily.regular,
     fontSize: 12,
     lineHeight: 17,
     color: '#3F5F4B',
     marginTop: 2,
   },
-  mitraGoalPillAction: {
+  emotyGoalPillAction: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 2,
@@ -1547,15 +1567,15 @@ function stylesFactory(colors: any) {
     paddingVertical: 2,
     borderRadius: 6,
   } as const,
-  mitraGoalPillActionText: {
+  emotyGoalPillActionText: {
     fontFamily: Theme.fontFamily.bold,
     fontSize: 11,
     color: '#16A34A',
   },
-  mitraBubbleCol: {
+  emotyBubbleCol: {
     flex: 1,
   } as const,
-  mitraSpeechBubble: {
+  emotySpeechBubble: {
     backgroundColor: colors.surface,
     paddingHorizontal: 12,
     paddingVertical: 10,
@@ -1564,19 +1584,19 @@ function stylesFactory(colors: any) {
     borderColor: colors.border,
     marginBottom: 6,
   } as const,
-  mitraSpeechText: {
+  emotySpeechText: {
     fontFamily: Theme.fontFamily.medium,
     fontSize: 13,
     color: colors.text,
     lineHeight: 18,
   },
-  mitraContextualActionRow: {
+  emotyContextualActionRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
     marginTop: 8,
   } as const,
-  mitraActionBtnPrimary: {
+  emotyActionBtnPrimary: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
@@ -1585,21 +1605,21 @@ function stylesFactory(colors: any) {
     borderRadius: 10,
     ...Theme.shadows.tertiary,
   } as const,
-  mitraActionBtnTextPrimary: {
+  emotyActionBtnTextPrimary: {
     fontFamily: Theme.fontFamily.bold,
     fontSize: 12,
     color: '#FFFFFF',
   },
-  mitraActionBtnSecondary: {
+  emotyActionBtnSecondary: {
     paddingHorizontal: 10,
     paddingVertical: 7,
     borderRadius: 10,
   } as const,
-  mitraActionBtnTextSecondary: {
+  emotyActionBtnTextSecondary: {
     fontFamily: Theme.fontFamily.medium,
     fontSize: 12,
   },
-  mitraGoalContainer: {
+  emotyGoalContainer: {
     marginTop: 8,
     backgroundColor: '#F0FDF4',
     borderColor: '#BBF7D0',
@@ -1607,7 +1627,7 @@ function stylesFactory(colors: any) {
     borderRadius: 12,
     padding: 10,
   } as const,
-  mitraGoalTitleRow: {
+  emotyGoalTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,

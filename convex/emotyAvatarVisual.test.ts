@@ -36,13 +36,13 @@ describe("AI-3 Step 6B: Avatar Visual Replacement (AVATAR-VISUAL-01 to AVATAR-VI
     expect(buf[1]).toBe(0xd8);
     expect(buf[2]).toBe(0xff);
 
-    // 3. MitraAvatar component explicitly references this canonical asset
+    // 3. EmotyAvatar component explicitly references this canonical asset
     const componentCode = fs.readFileSync(avatarComponentPath, "utf-8");
     expect(componentCode).toContain("assets/emoty_boy_avatar.jpg");
     expect(componentCode).toContain("CANONICAL_EMOTY_BOY_AVATAR");
   });
 
-  test("AVATAR-VISUAL-02: MitraAvatar renders the new character asset via Image component", () => {
+  test("AVATAR-VISUAL-02: EmotyAvatar renders the new character asset via Image component", () => {
     const componentCode = fs.readFileSync(avatarComponentPath, "utf-8");
 
     // Must use React Native Image component with cover resizeMode

@@ -1,11 +1,16 @@
-import { v } from "convex/values";
-import { internalMutation } from "./_generated/server";
+import { v, type ObjectType } from "convex/values";
+import { internalMutation, type QueryCtx, type MutationCtx } from "./_generated/server";
 import { mutation, query } from "./functions";
 import type { Id } from "./_generated/dataModel";
 import { signJwt, verifyPassword, hashPassword, generateTemporaryPassword, readUnverifiedSessionId } from "./authHelpers";
 import { internal } from "./_generated/api";
 import { logAuditEvent } from "./audit";
 import { assertCanAccessStudent, requireAdmin, getAuthenticatedUser } from "./authz";
+import {
+  getCompanionDisplayName,
+  readStoredEmotyPreferences,
+  storedEmotyPreferencesPatch,
+} from "../common/companionName";
 
 function sanitizeUser(u: any) {
   if (!u) return null;
@@ -663,7 +668,7 @@ export const completeOnboarding = mutation({
     consentTimestamp: v.number(),
     emergencyContactName: v.optional(v.string()),
     emergencyContactPhone: v.optional(v.string()),
-    mitraPreferences: v.optional(
+    emotyPreferences: v.optional(
       v.object({
         name: v.optional(v.string()),
         avatarGender: v.optional(v.string()),
@@ -710,25 +715,25 @@ export const completeOnboarding = mutation({
     }
     if (!user) throw new Error("User not found.");
 
-    // Process optional mitraPreferences or keep existing/default
-    let validatedMitra = user.mitraPreferences;
-    if (args.mitraPreferences) {
-      let g = (args.mitraPreferences.avatarGender || "female").toLowerCase().trim();
+    // Process optional Emoty preferences or keep existing/default
+    let validatedPrefs = readStoredEmotyPreferences(user);
+    if (args.emotyPreferences) {
+      let g = (args.emotyPreferences.avatarGender || "female").toLowerCase().trim();
       if (g !== "female" && g !== "male") g = "female";
 
-      let rawName = args.mitraPreferences.name ? args.mitraPreferences.name.replace(/[\x00-\x1F\x7F]/g, "").trim() : "Emoty";
+      let rawName = args.emotyPreferences.name ? args.emotyPreferences.name.replace(/[\x00-\x1F\x7F]/g, "").trim() : "Emoty";
       if (rawName.length > 30) rawName = rawName.substring(0, 30).trim();
       const n = rawName.length > 0 ? rawName : "Emoty";
 
-      validatedMitra = {
+      validatedPrefs = {
         name: n,
         avatarGender: g,
         avatarVariant: "default",
         updatedAt: Date.now(),
       };
-    } else if (!validatedMitra) {
+    } else if (!validatedPrefs) {
       // Default to female + Emoty if none set
-      validatedMitra = {
+      validatedPrefs = {
         name: "Emoty",
         avatarGender: "female",
         avatarVariant: "default",
@@ -748,7 +753,7 @@ export const completeOnboarding = mutation({
       emergencyContactName: args.emergencyContactName,
       emergencyContactPhone: args.emergencyContactPhone,
       onboardingComplete: true,
-      mitraPreferences: validatedMitra,
+      ...storedEmotyPreferencesPatch(validatedPrefs),
       updated_at: Date.now(),
     });
 
@@ -1524,109 +1529,116 @@ export const redactLegacyTrashEntries = internalMutation({
 });
 
 // ==========================================
-// MITRA PREFERENCES (Priority 6)
+// EMOTY PREFERENCES (Priority 6)
 // ==========================================
 
-/** Get persistent Mitra preferences for student (with safe female + Mitra defaults) */
-export const getMitraPreferences = query({
-  args: { userId: v.optional(v.string()) },
-  handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) {
-      return {
-        name: "Emoty",
-        avatarGender: "female",
-        avatarVariant: "default",
-      };
-    }
-    const targetUserId = args.userId || identity.subject;
-    await assertCanAccessStudent(ctx, targetUserId);
+/** Get persistent Emoty preferences for student (with safe female + Emoty defaults) */
+const getEmotyPreferencesArgs = { userId: v.optional(v.string()) };
 
-    let user = null;
-    try {
-      user = await ctx.db.get(targetUserId as Id<"users">);
-    } catch (e) {}
-    if (!user) {
-      user = await ctx.db
-        .query("users")
-        .withIndex("by_clerkId", (q) => q.eq("clerkId", targetUserId))
-        .first();
-    }
-
-    const prefs = user?.mitraPreferences;
-    const name = prefs?.name && prefs.name.trim().length > 0 ? prefs.name.trim() : "Emoty";
-    const avatarGender =
-      prefs?.avatarGender === "male" || prefs?.avatarGender === "female"
-        ? prefs.avatarGender
-        : "female";
-
+async function getEmotyPreferencesHandler(ctx: QueryCtx, args: ObjectType<typeof getEmotyPreferencesArgs>) {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) {
     return {
-      name,
-      avatarGender,
-      avatarVariant: prefs?.avatarVariant || "default",
-      updatedAt: prefs?.updatedAt,
-    };
-  },
-});
-
-/** Update persistent Mitra preferences for student */
-export const updateMitraPreferences = mutation({
-  args: {
-    userId: v.optional(v.string()),
-    name: v.optional(v.string()),
-    avatarGender: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Unauthenticated");
-    const targetUserId = args.userId || identity.subject;
-    await assertCanAccessStudent(ctx, targetUserId);
-
-    let user = null;
-    try {
-      user = await ctx.db.get(targetUserId as Id<"users">);
-    } catch (e) {}
-    if (!user) {
-      user = await ctx.db
-        .query("users")
-        .withIndex("by_clerkId", (q) => q.eq("clerkId", targetUserId))
-        .first();
-    }
-    if (!user) throw new Error("User not found");
-
-    // Validate avatarGender: must be "female" or "male"
-    let validatedGender = user.mitraPreferences?.avatarGender || "female";
-    if (args.avatarGender !== undefined) {
-      const g = args.avatarGender.toLowerCase().trim();
-      if (g === "female" || g === "male") {
-        validatedGender = g;
-      } else {
-        validatedGender = "female";
-      }
-    }
-
-    // Validate and sanitize custom name (strip control characters, trim, max length 30)
-    let validatedName = user.mitraPreferences?.name || "Emoty";
-    if (args.name !== undefined) {
-      let clean = args.name.replace(/[\x00-\x1F\x7F]/g, "").trim();
-      if (clean.length > 30) clean = clean.substring(0, 30).trim();
-      validatedName = clean.length > 0 ? clean : "Emoty";
-    }
-
-    const updatedPrefs = {
-      name: validatedName,
-      avatarGender: validatedGender,
+      name: "Emoty",
+      avatarGender: "female",
       avatarVariant: "default",
-      updatedAt: Date.now(),
     };
+  }
+  const targetUserId = args.userId || identity.subject;
+  await assertCanAccessStudent(ctx, targetUserId);
 
-    await ctx.db.patch(user._id, {
-      mitraPreferences: updatedPrefs,
-    });
+  let user = null;
+  try {
+    user = await ctx.db.get(targetUserId as Id<"users">);
+  } catch (e) {}
+  if (!user) {
+    user = await ctx.db
+      .query("users")
+      .withIndex("by_clerkId", (q) => q.eq("clerkId", targetUserId))
+      .first();
+  }
 
-    return updatedPrefs;
-  },
-});
+  const prefs = readStoredEmotyPreferences(user);
+  const name = getCompanionDisplayName(prefs?.name);
+  const avatarGender =
+    prefs?.avatarGender === "male" || prefs?.avatarGender === "female"
+      ? prefs.avatarGender
+      : "female";
+
+  return {
+    name,
+    avatarGender,
+    avatarVariant: prefs?.avatarVariant || "default",
+    updatedAt: prefs?.updatedAt,
+  };
+}
+
+export const getEmotyPreferences = query({ args: getEmotyPreferencesArgs, handler: getEmotyPreferencesHandler });
+
+/** @deprecated Pre-Emoty name kept so installed app versions keep working. Remove once every client uses `getEmotyPreferences`. */
+export const getMitraPreferences = query({ args: getEmotyPreferencesArgs, handler: getEmotyPreferencesHandler });
+
+/** Update persistent Emoty preferences for student */
+const updateEmotyPreferencesArgs = {
+  userId: v.optional(v.string()),
+  name: v.optional(v.string()),
+  avatarGender: v.optional(v.string()),
+};
+
+async function updateEmotyPreferencesHandler(ctx: MutationCtx, args: ObjectType<typeof updateEmotyPreferencesArgs>) {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) throw new Error("Unauthenticated");
+  const targetUserId = args.userId || identity.subject;
+  await assertCanAccessStudent(ctx, targetUserId);
+
+  let user = null;
+  try {
+    user = await ctx.db.get(targetUserId as Id<"users">);
+  } catch (e) {}
+  if (!user) {
+    user = await ctx.db
+      .query("users")
+      .withIndex("by_clerkId", (q) => q.eq("clerkId", targetUserId))
+      .first();
+  }
+  if (!user) throw new Error("User not found");
+
+  // Validate avatarGender: must be "female" or "male"
+  const existingPrefs = readStoredEmotyPreferences(user);
+  let validatedGender = existingPrefs?.avatarGender || "female";
+  if (args.avatarGender !== undefined) {
+    const g = args.avatarGender.toLowerCase().trim();
+    if (g === "female" || g === "male") {
+      validatedGender = g;
+    } else {
+      validatedGender = "female";
+    }
+  }
+
+  // Validate and sanitize custom name (strip control characters, trim, max length 30)
+  let validatedName = getCompanionDisplayName(existingPrefs?.name);
+  if (args.name !== undefined) {
+    let clean = args.name.replace(/[\x00-\x1F\x7F]/g, "").trim();
+    if (clean.length > 30) clean = clean.substring(0, 30).trim();
+    validatedName = clean.length > 0 ? clean : "Emoty";
+  }
+
+  const updatedPrefs = {
+    name: validatedName,
+    avatarGender: validatedGender,
+    avatarVariant: "default",
+    updatedAt: Date.now(),
+  };
+
+  await ctx.db.patch(user._id, storedEmotyPreferencesPatch(updatedPrefs));
+
+  return updatedPrefs;
+}
+
+export const updateEmotyPreferences = mutation({ args: updateEmotyPreferencesArgs, handler: updateEmotyPreferencesHandler });
+
+/** @deprecated Pre-Emoty name kept so installed app versions keep working. Remove once every client uses `updateEmotyPreferences`. */
+export const updateMitraPreferences = mutation({ args: updateEmotyPreferencesArgs, handler: updateEmotyPreferencesHandler });
 
 /** Student: Update allowed profile information (alias, age, campus, department, year, demographic gender, emergency contacts) */
 export const updateStudentProfile = mutation({

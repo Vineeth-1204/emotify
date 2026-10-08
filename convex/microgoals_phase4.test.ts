@@ -14,7 +14,7 @@ import { determineIntervention } from "../common/emotionRouting";
 
 const modules = import.meta.glob("./**/*.ts");
 
-describe("Phase 4 — Mitra-Led MicroGoals & Contextual Reinforcement", () => {
+describe("Phase 4 — Emoty-Led MicroGoals & Contextual Reinforcement", () => {
   async function setupPhase4TestEnvironment() {
     const t = convexTest(schema, modules);
 
@@ -64,10 +64,10 @@ describe("Phase 4 — Mitra-Led MicroGoals & Contextual Reinforcement", () => {
     return { t, studentId, otherStudentId, studentSession, otherSession };
   }
 
-  // 1. Mitra can present an existing MicroGoal
-  test("1. Mitra can present an appropriate MicroGoal", async () => {
+  // 1. Emoty can present an existing MicroGoal
+  test("1. Emoty can present an appropriate MicroGoal", async () => {
     const { studentSession } = await setupPhase4TestEnvironment();
-    const suggested = await studentSession.query(api.microGoals.getMitraSuggestedGoal, {
+    const suggested = await studentSession.query(api.microGoals.getEmotySuggestedGoal, {
       dateStr: "2026-10-03",
     });
 
@@ -81,7 +81,7 @@ describe("Phase 4 — Mitra-Led MicroGoals & Contextual Reinforcement", () => {
   // 2. Goal comes from existing canonical MicroGoal engine
   test("2. Goal comes from existing canonical MicroGoal catalog & engine", async () => {
     const { studentSession } = await setupPhase4TestEnvironment();
-    const suggested = await studentSession.query(api.microGoals.getMitraSuggestedGoal, {
+    const suggested = await studentSession.query(api.microGoals.getEmotySuggestedGoal, {
       dateStr: "2026-10-03",
     });
 
@@ -95,12 +95,12 @@ describe("Phase 4 — Mitra-Led MicroGoals & Contextual Reinforcement", () => {
   test("3. No duplicate goal assignment is created when accepting multiple times", async () => {
     const { studentSession, t, studentId } = await setupPhase4TestEnvironment();
 
-    const accept1 = await studentSession.mutation(api.microGoals.acceptMitraGoal, {
+    const accept1 = await studentSession.mutation(api.microGoals.acceptEmotyGoal, {
       dateStr: "2026-10-03",
     });
     expect(accept1.id).toBeDefined();
 
-    const accept2 = await studentSession.mutation(api.microGoals.acceptMitraGoal, {
+    const accept2 = await studentSession.mutation(api.microGoals.acceptEmotyGoal, {
       goalId: accept1.goalId,
       dateStr: "2026-10-03",
     });
@@ -121,7 +121,7 @@ describe("Phase 4 — Mitra-Led MicroGoals & Contextual Reinforcement", () => {
   // 4. User can accept the goal
   test("4. User can accept the goal and obtain persisted goal record", async () => {
     const { studentSession } = await setupPhase4TestEnvironment();
-    const accepted = await studentSession.mutation(api.microGoals.acceptMitraGoal, {
+    const accepted = await studentSession.mutation(api.microGoals.acceptEmotyGoal, {
       dateStr: "2026-10-03",
     });
 
@@ -138,11 +138,11 @@ describe("Phase 4 — Mitra-Led MicroGoals & Contextual Reinforcement", () => {
     const initialXp = initialUser?.xp || 0;
     const initialCoins = initialUser?.coins || 0;
 
-    const accepted = await studentSession.mutation(api.microGoals.acceptMitraGoal, {
+    const accepted = await studentSession.mutation(api.microGoals.acceptEmotyGoal, {
       dateStr: "2026-10-03",
     });
 
-    const skipRes = await studentSession.mutation(api.microGoals.skipMitraGoal, {
+    const skipRes = await studentSession.mutation(api.microGoals.skipEmotyGoal, {
       id: accepted.id,
     });
     expect(skipRes.success).toBe(true);
@@ -163,12 +163,12 @@ describe("Phase 4 — Mitra-Led MicroGoals & Contextual Reinforcement", () => {
   test("6. Opening or viewing a goal does not mark it complete", async () => {
     const { studentSession, t } = await setupPhase4TestEnvironment();
 
-    const accepted = await studentSession.mutation(api.microGoals.acceptMitraGoal, {
+    const accepted = await studentSession.mutation(api.microGoals.acceptEmotyGoal, {
       dateStr: "2026-10-03",
     });
 
     // Student queries the goal
-    const queried = await studentSession.query(api.microGoals.getMitraSuggestedGoal, {
+    const queried = await studentSession.query(api.microGoals.getEmotySuggestedGoal, {
       dateStr: "2026-10-03",
     });
     expect(queried?.completed).toBe(false);
@@ -181,7 +181,7 @@ describe("Phase 4 — Mitra-Led MicroGoals & Contextual Reinforcement", () => {
   test("7. Genuine completion marks it complete with feelingAfter recorded", async () => {
     const { studentSession, t } = await setupPhase4TestEnvironment();
 
-    const accepted = await studentSession.mutation(api.microGoals.acceptMitraGoal, {
+    const accepted = await studentSession.mutation(api.microGoals.acceptEmotyGoal, {
       dateStr: "2026-10-03",
     });
 
@@ -202,7 +202,7 @@ describe("Phase 4 — Mitra-Led MicroGoals & Contextual Reinforcement", () => {
   test("8. Completion is idempotent — repeated completions do not award extra XP", async () => {
     const { studentSession, studentId, t } = await setupPhase4TestEnvironment();
 
-    const accepted = await studentSession.mutation(api.microGoals.acceptMitraGoal, {
+    const accepted = await studentSession.mutation(api.microGoals.acceptEmotyGoal, {
       dateStr: "2026-10-03",
     });
 
@@ -236,7 +236,7 @@ describe("Phase 4 — Mitra-Led MicroGoals & Contextual Reinforcement", () => {
     const xpBefore = userBefore?.xp || 0;
     const coinsBefore = userBefore?.coins || 0;
 
-    const accepted = await studentSession.mutation(api.microGoals.acceptMitraGoal, {
+    const accepted = await studentSession.mutation(api.microGoals.acceptEmotyGoal, {
       dateStr: "2026-10-03",
     });
 
@@ -258,7 +258,7 @@ describe("Phase 4 — Mitra-Led MicroGoals & Contextual Reinforcement", () => {
     const insightsBefore = await studentSession.query(api.insights.getDailyStats, {});
     const calmPointsBefore = insightsBefore.totalCalmPoints;
 
-    const accepted = await studentSession.mutation(api.microGoals.acceptMitraGoal, {
+    const accepted = await studentSession.mutation(api.microGoals.acceptEmotyGoal, {
       dateStr: "2026-10-03",
     });
 
@@ -280,7 +280,7 @@ describe("Phase 4 — Mitra-Led MicroGoals & Contextual Reinforcement", () => {
     const calmPointsBefore = insightsBefore.totalCalmPoints;
 
     // Accept but do NOT complete
-    await studentSession.mutation(api.microGoals.acceptMitraGoal, {
+    await studentSession.mutation(api.microGoals.acceptEmotyGoal, {
       dateStr: "2026-10-03",
     });
 
@@ -295,11 +295,11 @@ describe("Phase 4 — Mitra-Led MicroGoals & Contextual Reinforcement", () => {
     const insightsBefore = await studentSession.query(api.insights.getDailyStats, {});
     const calmPointsBefore = insightsBefore.totalCalmPoints;
 
-    const accepted = await studentSession.mutation(api.microGoals.acceptMitraGoal, {
+    const accepted = await studentSession.mutation(api.microGoals.acceptEmotyGoal, {
       dateStr: "2026-10-03",
     });
 
-    await studentSession.mutation(api.microGoals.skipMitraGoal, {
+    await studentSession.mutation(api.microGoals.skipEmotyGoal, {
       id: accepted.id,
     });
 
@@ -307,11 +307,11 @@ describe("Phase 4 — Mitra-Led MicroGoals & Contextual Reinforcement", () => {
     expect(insightsAfter.totalCalmPoints).toBe(calmPointsBefore);
   });
 
-  // 13. Post-goal Mitra state appears after genuine completion
-  test("13. Post-goal Mitra state reflects completion status", async () => {
+  // 13. Post-goal Emoty state appears after genuine completion
+  test("13. Post-goal Emoty state reflects completion status", async () => {
     const { studentSession } = await setupPhase4TestEnvironment();
 
-    const accepted = await studentSession.mutation(api.microGoals.acceptMitraGoal, {
+    const accepted = await studentSession.mutation(api.microGoals.acceptEmotyGoal, {
       dateStr: "2026-10-03",
     });
 
@@ -321,7 +321,7 @@ describe("Phase 4 — Mitra-Led MicroGoals & Contextual Reinforcement", () => {
       dateStr: "2026-10-03",
     });
 
-    const postState = await studentSession.query(api.microGoals.getMitraSuggestedGoal, {
+    const postState = await studentSession.query(api.microGoals.getEmotySuggestedGoal, {
       dateStr: "2026-10-03",
     });
 
@@ -337,7 +337,7 @@ describe("Phase 4 — Mitra-Led MicroGoals & Contextual Reinforcement", () => {
     const initialScreenings = await t.run(async (ctx) => ctx.db.query("screenings").collect());
     const initialTriages = await t.run(async (ctx) => ctx.db.query("triages").collect());
 
-    const accepted = await studentSession.mutation(api.microGoals.acceptMitraGoal, {
+    const accepted = await studentSession.mutation(api.microGoals.acceptEmotyGoal, {
       dateStr: "2026-10-03",
     });
 
@@ -358,7 +358,7 @@ describe("Phase 4 — Mitra-Led MicroGoals & Contextual Reinforcement", () => {
   test("15. Existing MicroGoal authorization allows student to access own goals", async () => {
     const { studentSession } = await setupPhase4TestEnvironment();
 
-    const accepted = await studentSession.mutation(api.microGoals.acceptMitraGoal, {
+    const accepted = await studentSession.mutation(api.microGoals.acceptEmotyGoal, {
       dateStr: "2026-10-03",
     });
 
@@ -372,7 +372,7 @@ describe("Phase 4 — Mitra-Led MicroGoals & Contextual Reinforcement", () => {
   test("16. Cross-user access is strictly rejected with Unauthorized", async () => {
     const { studentSession, otherSession } = await setupPhase4TestEnvironment();
 
-    const accepted = await studentSession.mutation(api.microGoals.acceptMitraGoal, {
+    const accepted = await studentSession.mutation(api.microGoals.acceptEmotyGoal, {
       dateStr: "2026-10-03",
     });
 
@@ -387,7 +387,7 @@ describe("Phase 4 — Mitra-Led MicroGoals & Contextual Reinforcement", () => {
 
     // Other user attempts to skip student's goal
     await expect(
-      otherSession.mutation(api.microGoals.skipMitraGoal, {
+      otherSession.mutation(api.microGoals.skipEmotyGoal, {
         id: accepted.id,
       })
     ).rejects.toThrow("Unauthorized");
@@ -483,7 +483,7 @@ describe("Phase 4 — Mitra-Led MicroGoals & Contextual Reinforcement", () => {
   // 24. Verify no fabricated social-proof number is displayed
   test("24. Goal object contains no fabricated social-proof number", async () => {
     const { studentSession } = await setupPhase4TestEnvironment();
-    const suggested = await studentSession.query(api.microGoals.getMitraSuggestedGoal, {
+    const suggested = await studentSession.query(api.microGoals.getEmotySuggestedGoal, {
       dateStr: "2026-10-03",
     });
 

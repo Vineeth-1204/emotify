@@ -43,7 +43,7 @@ import {
   GroundingIcon,
   JournalActivityIcon,
 } from "@/components/svg/activities";
-import { EmotyAvatar, MitraAvatar } from "@/components/avatar/EmotyAvatar";
+import { EmotyAvatar } from "@/components/avatar/EmotyAvatar";
 import { BreathingPlayer } from "@/components/breathing/BreathingPlayer";
 import { SensoryGroundingPlayer } from "@/components/grounding/SensoryGroundingPlayer";
 import { SENSORY_54321_PROTOCOL } from "@/constants/GroundingProtocols";
@@ -245,7 +245,7 @@ export default function EmotionMapScreen() {
   const [emotionLogId, setEmotionLogId] = useState<string | null>(null);
   // postIntensityValue: the user's self-reported feeling after intervention
   const [postIntensityValue, setPostIntensityValue] = useState<number>(5);
-  // postOutcome: simple 3-way result for mitra followup message
+  // postOutcome: simple 3-way result for Emoty followup message
   const [postOutcome, setPostOutcome] = useState<"better" | "same" | "worse" | null>(null);
   const [isSavingPost, setIsSavingPost] = useState(false);
 
@@ -254,10 +254,10 @@ export default function EmotionMapScreen() {
   // 2: Secondary emotion selection (scoped to primary)
   // 3: Body sensation
   // 4: Intensity
-  // 5: Intervention intro (Mitra recommends)
+  // 5: Intervention intro (Emoty recommends)
   // 6: Uncertain support (fallback activity)
   // 7: Post-intervention check ("How do you feel now?")
-  // 8: Mitra followup message
+  // 8: Emoty followup message
   const [step, setStep] = useState<number>(contextualPrimary ? 2 : 1);
 
   // History Tab States
@@ -518,7 +518,7 @@ export default function EmotionMapScreen() {
   };
 
   // Phase 3 — Save pending state before navigating away to JPMR/Reframe
-  // so the user returns to step 7 (post-intervention Mitra check) after completing the tool.
+  // so the user returns to step 7 (post-intervention Emoty check) after completing the tool.
   const savePendingAndNavigate = async (pathname: string, extraParams: Record<string, string> = {}) => {
     const currentEmotion = secondaryEmotion || primaryEmotion || strongestEmotion;
     if (emotionLogId && currentEmotion) {
@@ -741,11 +741,11 @@ export default function EmotionMapScreen() {
             {/* STEP 1: Broad emotional state (Primary Emotions) */}
             {step === 1 && (
               <View style={styles.stepCard}>
-                <View style={styles.mitraHeaderRow}>
-                  <MitraAvatar state="neutral" size="md" />
-                  <View style={styles.mitraSpeechBubble}>
-                    <Text style={styles.mitraSpeechText}>How are you feeling right now?</Text>
-                    <Text style={styles.mitraSubtext}>You can start with what feels closest.</Text>
+                <View style={styles.emotyHeaderRow}>
+                  <EmotyAvatar state="neutral" size="md" />
+                  <View style={styles.emotySpeechBubble}>
+                    <Text style={styles.emotySpeechText}>How are you feeling right now?</Text>
+                    <Text style={styles.emotySubtext}>You can start with what feels closest.</Text>
                   </View>
                 </View>
 
@@ -810,22 +810,22 @@ export default function EmotionMapScreen() {
             {/* STEP 2: Secondary Emotions */}
             {step === 2 && primaryEmotion && (
               <View style={styles.stepCard}>
-                <View style={styles.mitraHeaderRow}>
-                  <MitraAvatar state="listening" size="md" />
-                  <View style={styles.mitraSpeechBubble}>
+                <View style={styles.emotyHeaderRow}>
+                  <EmotyAvatar state="listening" size="md" />
+                  <View style={styles.emotySpeechBubble}>
                     {step2UncertaintyState === "normal" ? (
                       <>
-                        <Text style={styles.mitraSpeechText}>
+                        <Text style={styles.emotySpeechText}>
                           Got it. You're feeling {PRIMARY_EMOTIONS.find((e) => e.id === primaryEmotion)?.label.toLowerCase()}.
                         </Text>
-                        <Text style={styles.mitraSubtext}>What's closest to how you're feeling?</Text>
+                        <Text style={styles.emotySubtext}>What's closest to how you're feeling?</Text>
                       </>
                     ) : (
                       <>
-                        <Text style={styles.mitraSpeechText}>
+                        <Text style={styles.emotySpeechText}>
                           {UNCERTAINTY_REPHRASINGS[primaryEmotion].prompt}
                         </Text>
-                        <Text style={styles.mitraSubtext}>
+                        <Text style={styles.emotySubtext}>
                           {UNCERTAINTY_REPHRASINGS[primaryEmotion].examples}
                         </Text>
                       </>
@@ -914,13 +914,13 @@ export default function EmotionMapScreen() {
             {/* STEP 3: Body Sensation - Phase 2 rephrase/auto-advance */}
             {step === 3 && (
               <View style={styles.stepCard}>
-                <View style={styles.mitraHeaderRow}>
-                  <MitraAvatar state="listening" size="md" />
-                  <View style={styles.mitraSpeechBubble}>
+                <View style={styles.emotyHeaderRow}>
+                  <EmotyAvatar state="listening" size="md" />
+                  <View style={styles.emotySpeechBubble}>
                     {step3UncertaintyState === "normal" ? (
                       <>
-                        <Text style={styles.mitraSpeechText}>Where do you notice it most?</Text>
-                        <Text style={styles.mitraSubtext}>
+                        <Text style={styles.emotySpeechText}>Where do you notice it most?</Text>
+                        <Text style={styles.emotySubtext}>
                           {secondaryEmotion
                             ? `Where do you feel that sense of ${secondaryEmotion.toLowerCase()} in your body?`
                             : `Where do you notice that feeling in your body?`}
@@ -928,8 +928,8 @@ export default function EmotionMapScreen() {
                       </>
                     ) : (
                       <>
-                        <Text style={styles.mitraSpeechText}>{"That's okay."}</Text>
-                        <Text style={styles.mitraSubtext}>
+                        <Text style={styles.emotySpeechText}>{"That's okay."}</Text>
+                        <Text style={styles.emotySubtext}>
                           Sometimes feelings show up as a tight chest, a knot in the stomach, tense shoulders, or restless hands. Do you notice anything like that?
                         </Text>
                       </>
@@ -998,11 +998,11 @@ export default function EmotionMapScreen() {
             {/* STEP 4: Intensity */}
             {step === 4 && (
               <View style={styles.stepCard}>
-                <View style={styles.mitraHeaderRow}>
-                  <MitraAvatar state="neutral" size="md" />
-                  <View style={styles.mitraSpeechBubble}>
-                    <Text style={styles.mitraSpeechText}>How strong does it feel right now?</Text>
-                    <Text style={styles.mitraSubtext}>
+                <View style={styles.emotyHeaderRow}>
+                  <EmotyAvatar state="neutral" size="md" />
+                  <View style={styles.emotySpeechBubble}>
+                    <Text style={styles.emotySpeechText}>How strong does it feel right now?</Text>
+                    <Text style={styles.emotySubtext}>
                       {secondaryEmotion
                         ? `Rate the intensity of ${secondaryEmotion.toLowerCase()} on a scale from 1 to 10.`
                         : `Rate the intensity on a scale from 1 to 10.`}
@@ -1016,13 +1016,13 @@ export default function EmotionMapScreen() {
                 </View>
               </View>
             )}
-            {/* STEP 5: Mitra Intervention Intro — Phase 3 */}
+            {/* STEP 5: Emoty Intervention Intro — Phase 3 */}
             {step === 5 && routedIntervention && (
               <View style={styles.stepCard}>
-                <View style={styles.mitraHeaderRow}>
-                  <MitraAvatar state="supportive" size="md" />
-                  <View style={styles.mitraSpeechBubble}>
-                    <Text style={styles.mitraSpeechText}>{routedIntervention.transitionMessage}</Text>
+                <View style={styles.emotyHeaderRow}>
+                  <EmotyAvatar state="supportive" size="md" />
+                  <View style={styles.emotySpeechBubble}>
+                    <Text style={styles.emotySpeechText}>{routedIntervention.transitionMessage}</Text>
                   </View>
                 </View>
                 <View style={styles.interventionCard}>
@@ -1055,11 +1055,11 @@ export default function EmotionMapScreen() {
             {/* STEP 6: Uncertain Support — Phase 2. Local UI only, no DB record. 4-7-8 NOT offered. */}
             {step === 6 && (
               <View style={styles.stepCard}>
-                <View style={styles.mitraHeaderRow}>
-                  <MitraAvatar state="supportive" size="md" />
-                  <View style={styles.mitraSpeechBubble}>
-                    <Text style={styles.mitraSpeechText}>{"That's completely okay."}</Text>
-                    <Text style={styles.mitraSubtext}>You do not have to figure it out right now. Let us just do something that might help you feel a little more settled.</Text>
+                <View style={styles.emotyHeaderRow}>
+                  <EmotyAvatar state="supportive" size="md" />
+                  <View style={styles.emotySpeechBubble}>
+                    <Text style={styles.emotySpeechText}>{"That's completely okay."}</Text>
+                    <Text style={styles.emotySubtext}>You do not have to figure it out right now. Let us just do something that might help you feel a little more settled.</Text>
                   </View>
                 </View>
                 <View style={styles.fallbackActivityList}>
@@ -1096,11 +1096,11 @@ export default function EmotionMapScreen() {
             {/* STEP 7: Post-Intervention Check — Phase 3 */}
             {step === 7 && (
               <View style={styles.stepCard}>
-                <View style={styles.mitraHeaderRow}>
-                  <MitraAvatar state="calm" size="md" />
-                  <View style={styles.mitraSpeechBubble}>
-                    <Text style={styles.mitraSpeechText}>Nice. Take a moment.</Text>
-                    <Text style={styles.mitraSubtext}>How do you feel now compared to before?</Text>
+                <View style={styles.emotyHeaderRow}>
+                  <EmotyAvatar state="calm" size="md" />
+                  <View style={styles.emotySpeechBubble}>
+                    <Text style={styles.emotySpeechText}>Nice. Take a moment.</Text>
+                    <Text style={styles.emotySubtext}>How do you feel now compared to before?</Text>
                   </View>
                 </View>
                 <View style={styles.postCheckRow}>
@@ -1138,31 +1138,31 @@ export default function EmotionMapScreen() {
                 </TouchableOpacity>
               </View>
             )}
-            {/* STEP 8: Mitra Followup — Phase 3 */}
+            {/* STEP 8: Emoty Followup — Phase 3 */}
             {step === 8 && (
               <View style={styles.stepCard}>
-                <View style={styles.mitraHeaderRow}>
-                  <MitraAvatar
+                <View style={styles.emotyHeaderRow}>
+                  <EmotyAvatar
                     state={postOutcome === "better" ? "celebrating" : postOutcome === "worse" ? "supportive" : "calm"}
                     size="md"
                   />
-                  <View style={styles.mitraSpeechBubble}>
+                  <View style={styles.emotySpeechBubble}>
                     {postOutcome === "better" && (
                       <>
-                        <Text style={styles.mitraSpeechText}>Good. I am glad that helped a little.</Text>
-                        <Text style={styles.mitraSubtext}>Every small moment of care counts.</Text>
+                        <Text style={styles.emotySpeechText}>Good. I am glad that helped a little.</Text>
+                        <Text style={styles.emotySubtext}>Every small moment of care counts.</Text>
                       </>
                     )}
                     {postOutcome === "same" && (
                       <>
-                        <Text style={styles.mitraSpeechText}>{"That's okay."}</Text>
-                        <Text style={styles.mitraSubtext}>Sometimes it takes a little longer. You showed up for yourself today.</Text>
+                        <Text style={styles.emotySpeechText}>{"That's okay."}</Text>
+                        <Text style={styles.emotySubtext}>Sometimes it takes a little longer. You showed up for yourself today.</Text>
                       </>
                     )}
                     {postOutcome === "worse" && (
                       <>
-                        <Text style={styles.mitraSpeechText}>Thanks for telling me.</Text>
-                        <Text style={styles.mitraSubtext}>It is okay to feel that way. Rest if you need to. Your counsellor can help if things feel overwhelming.</Text>
+                        <Text style={styles.emotySpeechText}>Thanks for telling me.</Text>
+                        <Text style={styles.emotySubtext}>It is okay to feel that way. Rest if you need to. Your counsellor can help if things feel overwhelming.</Text>
                       </>
                     )}
                   </View>
@@ -1406,7 +1406,7 @@ export default function EmotionMapScreen() {
               subtitle={routedIntervention?.title || "Follow the rhythm to ease tension"}
               themeColor={Colors.primary}
               onComplete={(_result) => {
-                // Genuine completion — advance to Mitra post-intervention check
+                // Genuine completion — advance to Emoty post-intervention check
                 handleInlineInterventionComplete();
               }}
               onClose={() => {
@@ -1439,7 +1439,7 @@ export default function EmotionMapScreen() {
                   setShowGroundingModal(false);
                 }}
                 onComplete={(_logId) => {
-                  // Genuine completion — advance to Mitra post-intervention check
+                  // Genuine completion — advance to Emoty post-intervention check
                   handleInlineInterventionComplete();
                 }}
               />
@@ -1504,13 +1504,13 @@ const styles = StyleSheet.create({
     ...Theme.shadows.secondary,
     width: "100%",
   },
-  mitraHeaderRow: {
+  emotyHeaderRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
     marginBottom: Theme.spacing.lg,
   },
-  mitraSpeechBubble: {
+  emotySpeechBubble: {
     flex: 1,
     backgroundColor: "#F8FAFC",
     padding: Theme.spacing.md,
@@ -1518,13 +1518,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#E2E8F0",
   },
-  mitraSpeechText: {
+  emotySpeechText: {
     fontFamily: Theme.fontFamily.bold,
     fontSize: Theme.fontSize.md,
     color: Colors.text,
     marginBottom: 4,
   },
-  mitraSubtext: {
+  emotySubtext: {
     fontFamily: Theme.fontFamily.medium,
     fontSize: Theme.fontSize.xs,
     color: Colors.textSecondary,

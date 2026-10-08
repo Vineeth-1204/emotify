@@ -19,7 +19,7 @@ import { BREATHING_PROTOCOLS } from "../constants/BreathingProtocols";
 
 const modules = import.meta.glob("./**/*.ts");
 
-describe("Phase 5 — Unified Mitra / Home Experience Test Suite", () => {
+describe("Phase 5 — Unified Emoty / Home Experience Test Suite", () => {
   async function setupPhase5TestEnvironment() {
     const t = convexTest(schema, modules);
 
@@ -49,20 +49,20 @@ describe("Phase 5 — Unified Mitra / Home Experience Test Suite", () => {
     return { t, studentId, studentSession };
   }
 
-  // 1. Home renders Daily Check-in above Mitra
-  test("1. Home hierarchy contract: Daily Check-in is positioned above Mitra", () => {
+  // 1. Home renders Daily Check-in above Emoty
+  test("1. Home hierarchy contract: Daily Check-in is positioned above Emoty", () => {
     // In Home index.tsx, the JSX structure renders:
-    // Header -> Daily Check-in (Inline / Completed card) -> Safety Banner (if severe) -> Mitra Hero -> Secondary Tools
-    const homeSections = ["Header", "DailyCheckIn", "MitraHero", "SecondaryTools", "InsightsEntry"];
+    // Header -> Daily Check-in (Inline / Completed card) -> Safety Banner (if severe) -> Emoty Hero -> Secondary Tools
+    const homeSections = ["Header", "DailyCheckIn", "EmotyHero", "SecondaryTools", "InsightsEntry"];
     const dailyCheckInIndex = homeSections.indexOf("DailyCheckIn");
-    const mitraHeroIndex = homeSections.indexOf("MitraHero");
-    expect(dailyCheckInIndex).toBeLessThan(mitraHeroIndex);
+    const emotyHeroIndex = homeSections.indexOf("EmotyHero");
+    expect(dailyCheckInIndex).toBeLessThan(emotyHeroIndex);
     expect(dailyCheckInIndex).toBe(1);
-    expect(mitraHeroIndex).toBe(2);
+    expect(emotyHeroIndex).toBe(2);
   });
 
-  // 2. Mitra Hero renders correctly with real state
-  test("2. Mitra Hero renders correctly based on actual application state", async () => {
+  // 2. Emoty Hero renders correctly with real state
+  test("2. Emoty Hero renders correctly based on actual application state", async () => {
     const { studentSession } = await setupPhase5TestEnvironment();
     // Default state: not checked in today
     const checkin = await studentSession.query(api.microGoals.getTodayCheckin, {
@@ -71,11 +71,11 @@ describe("Phase 5 — Unified Mitra / Home Experience Test Suite", () => {
     expect(checkin).toBeNull();
   });
 
-  // 3. Home has at most one primary Mitra next action
-  test("3. Home presents at most ONE primary Mitra-led next action at any given time", () => {
+  // 3. Home has at most one primary Emoty next action
+  test("3. Home presents at most ONE primary Emoty-led next action at any given time", () => {
     type ActionType = "checkin" | "emotion_followup" | "goal_suggestion" | "all_caught_up";
     
-    function deriveMitraAction(state: {
+    function deriveEmotyAction(state: {
       hasCheckedInToday: boolean;
       hasLoggedEmotionToday: boolean;
       dismissedEmotionFollowup: boolean;
@@ -89,7 +89,7 @@ describe("Phase 5 — Unified Mitra / Home Experience Test Suite", () => {
     }
 
     // Every combination yields exactly ONE primary action
-    const s1 = deriveMitraAction({
+    const s1 = deriveEmotyAction({
       hasCheckedInToday: false,
       hasLoggedEmotionToday: false,
       dismissedEmotionFollowup: false,
@@ -98,7 +98,7 @@ describe("Phase 5 — Unified Mitra / Home Experience Test Suite", () => {
     });
     expect(s1).toBe("checkin");
 
-    const s2 = deriveMitraAction({
+    const s2 = deriveEmotyAction({
       hasCheckedInToday: true,
       hasLoggedEmotionToday: false,
       dismissedEmotionFollowup: false,
@@ -107,7 +107,7 @@ describe("Phase 5 — Unified Mitra / Home Experience Test Suite", () => {
     });
     expect(s2).toBe("emotion_followup");
 
-    const s3 = deriveMitraAction({
+    const s3 = deriveEmotyAction({
       hasCheckedInToday: true,
       hasLoggedEmotionToday: true,
       dismissedEmotionFollowup: false,
@@ -116,7 +116,7 @@ describe("Phase 5 — Unified Mitra / Home Experience Test Suite", () => {
     });
     expect(s3).toBe("goal_suggestion");
 
-    const s4 = deriveMitraAction({
+    const s4 = deriveEmotyAction({
       hasCheckedInToday: true,
       hasLoggedEmotionToday: true,
       dismissedEmotionFollowup: false,
@@ -136,8 +136,8 @@ describe("Phase 5 — Unified Mitra / Home Experience Test Suite", () => {
     expect(checkin).toBeNull();
   });
 
-  // 5. Daily Check-in completion can transition to Mitra without forcing emotion logging
-  test("5. Daily Check-in completion transitions to Mitra without forcing emotion logging", async () => {
+  // 5. Daily Check-in completion can transition to Emoty without forcing emotion logging
+  test("5. Daily Check-in completion transitions to Emoty without forcing emotion logging", async () => {
     const { studentSession, t } = await setupPhase5TestEnvironment();
     const todayStr = "2026-10-03";
 
@@ -168,7 +168,7 @@ describe("Phase 5 — Unified Mitra / Home Experience Test Suite", () => {
     const initialXp = initialUser?.xp ?? 0;
 
     // Simulate dismissing emotion followup and skipping goal
-    await studentSession.mutation(api.microGoals.skipMitraGoal, {
+    await studentSession.mutation(api.microGoals.skipEmotyGoal, {
       dateStr: "2026-10-03",
     });
 
@@ -248,7 +248,7 @@ describe("Phase 5 — Unified Mitra / Home Experience Test Suite", () => {
   // 11. MicroGoal suggestion uses the existing canonical engine
   test("11. MicroGoal suggestion uses existing canonical engine", async () => {
     const { studentSession } = await setupPhase5TestEnvironment();
-    const goal = await studentSession.query(api.microGoals.getMitraSuggestedGoal, {
+    const goal = await studentSession.query(api.microGoals.getEmotySuggestedGoal, {
       dateStr: "2026-10-03",
     });
 
@@ -262,7 +262,7 @@ describe("Phase 5 — Unified Mitra / Home Experience Test Suite", () => {
     const { studentSession, t, studentId } = await setupPhase5TestEnvironment();
     const todayStr = "2026-10-03";
 
-    await studentSession.mutation(api.microGoals.acceptMitraGoal, { dateStr: todayStr });
+    await studentSession.mutation(api.microGoals.acceptEmotyGoal, { dateStr: todayStr });
     const countAfterFirst = await t.run(async (ctx) => {
       const goals = await ctx.db
         .query("microGoals")
@@ -271,7 +271,7 @@ describe("Phase 5 — Unified Mitra / Home Experience Test Suite", () => {
       return goals.length;
     });
 
-    await studentSession.mutation(api.microGoals.acceptMitraGoal, { dateStr: todayStr });
+    await studentSession.mutation(api.microGoals.acceptEmotyGoal, { dateStr: todayStr });
     const countAfterSecond = await t.run(async (ctx) => {
       const goals = await ctx.db
         .query("microGoals")
@@ -288,7 +288,7 @@ describe("Phase 5 — Unified Mitra / Home Experience Test Suite", () => {
     const { studentSession } = await setupPhase5TestEnvironment();
     const todayStr = "2026-10-03";
 
-    const accepted = await studentSession.mutation(api.microGoals.acceptMitraGoal, { dateStr: todayStr });
+    const accepted = await studentSession.mutation(api.microGoals.acceptEmotyGoal, { dateStr: todayStr });
 
     const res1 = await studentSession.mutation(api.microGoals.completeGoalWithFeeling, {
       id: accepted.id,
@@ -335,7 +335,7 @@ describe("Phase 5 — Unified Mitra / Home Experience Test Suite", () => {
   });
 
   // 18. Profile remains accessible
-  test("18. Profile remains accessible with isolated student profile and Mitra avatar settings", async () => {
+  test("18. Profile remains accessible with isolated student profile and Emoty avatar settings", async () => {
     const { studentSession, studentId } = await setupPhase5TestEnvironment();
     const user = await studentSession.query(api.users.getByClerkId, {
       clerkId: studentId,
@@ -344,15 +344,15 @@ describe("Phase 5 — Unified Mitra / Home Experience Test Suite", () => {
     expect(user?.full_name).toBe("Phase 5 Student");
   });
 
-  // 19. Mitra preferences remain isolated from student gender
-  test("19. Mitra avatar preferences remain strictly isolated from student gender", async () => {
+  // 19. Emoty preferences remain isolated from student gender
+  test("19. Emoty avatar preferences remain strictly isolated from student gender", async () => {
     const { t, studentId } = await setupPhase5TestEnvironment();
     
-    // Mitra gender is a client-side or avatar context setting, not merged with patient demographics
+    // Emoty gender is a client-side or avatar context setting, not merged with patient demographics
     const user = await t.run(async (ctx) => ctx.db.get(studentId as Id<"users">));
     expect(user?.role).toBe("patient");
     // Verify no clinical field pollution
-    expect((user as any).mitraGender).toBeUndefined();
+    expect((user as any).emotyGender).toBeUndefined();
   });
 
   // 20. Android back navigation behaves correctly (contract verification)
@@ -363,7 +363,7 @@ describe("Phase 5 — Unified Mitra / Home Experience Test Suite", () => {
   });
 
   // 21. No duplicate navigation stack entries
-  test("21. No duplicate routes when launching guided Mitra actions", () => {
+  test("21. No duplicate routes when launching guided Emoty actions", () => {
     const canonicalRoutes = [
       "/(auth)/(tabs)",
       "/(auth)/tools/emotion-map",
@@ -371,7 +371,7 @@ describe("Phase 5 — Unified Mitra / Home Experience Test Suite", () => {
       "/(auth)/tools/grounding",
       "/(auth)/tools/jpmr",
       "/(auth)/tools/reframe",
-      "/(auth)/tools/mitra-goal",
+      "/(auth)/tools/emoty-goal",
       "/(auth)/tools/companion",
     ];
     const uniqueRoutes = new Set(canonicalRoutes);
@@ -379,8 +379,8 @@ describe("Phase 5 — Unified Mitra / Home Experience Test Suite", () => {
   });
 
   // 22. No clinical score dependency
-  test("22. Home Mitra orchestration does NOT read or depend on PHQ-9, GAD-7, or triage scores", () => {
-    // Mitra state derivation relies strictly on checkin state and goal state, NOT triage scores
+  test("22. Home Emoty orchestration does NOT read or depend on PHQ-9, GAD-7, or triage scores", () => {
+    // Emoty state derivation relies strictly on checkin state and goal state, NOT triage scores
     const derivationInputs = [
       "hasCheckedInToday",
       "hasLoggedEmotionToday",
@@ -430,7 +430,7 @@ describe("Phase 5 — Unified Mitra / Home Experience Test Suite", () => {
     const userBefore = await t.run(async (ctx) => ctx.db.get(studentId as Id<"users">));
     const xpBefore = userBefore?.xp || 0;
 
-    const accepted = await studentSession.mutation(api.microGoals.acceptMitraGoal, { dateStr: todayStr });
+    const accepted = await studentSession.mutation(api.microGoals.acceptEmotyGoal, { dateStr: todayStr });
     const completion = await studentSession.mutation(api.microGoals.completeGoalWithFeeling, {
       id: accepted.id,
       feelingAfter: "peaceful",
@@ -450,7 +450,7 @@ describe("Phase 5 — Unified Mitra / Home Experience Test Suite", () => {
   // 28. No fake social-proof values are introduced
   test("28. No fake social proof or fabricated stats are present", async () => {
     const { studentSession } = await setupPhase5TestEnvironment();
-    const goal = await studentSession.query(api.microGoals.getMitraSuggestedGoal, {
+    const goal = await studentSession.query(api.microGoals.getEmotySuggestedGoal, {
       dateStr: "2026-10-03",
     });
     expect(goal).not.toBeNull();

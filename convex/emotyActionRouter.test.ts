@@ -49,22 +49,22 @@ describe("AI-3 Step 5: Action Router Architecture (ACTION-01 to ACTION-29)", () 
     const result = validateAndResolveAction({ type: "show_today_goal" }, "normal");
     expect(result.valid).toBe(true);
     if (result.valid) {
-      expect(result.resolved.route).toBe("/(auth)/tools/mitra-goal");
+      expect(result.resolved.route).toBe("/(auth)/tools/emoty-goal");
       expect(result.resolved.kind).toBe("navigation");
     }
     const nav = resolveActionNavigation({ type: "show_today_goal" }, "normal");
-    expect(nav?.pathname).toBe("/(auth)/tools/mitra-goal");
+    expect(nav?.pathname).toBe("/(auth)/tools/emoty-goal");
   });
 
   test("ACTION-04: 'start_today_goal' resolves correctly", () => {
     const result = validateAndResolveAction({ type: "start_today_goal" }, "normal");
     expect(result.valid).toBe(true);
     if (result.valid) {
-      expect(result.resolved.route).toBe("/(auth)/tools/mitra-goal");
+      expect(result.resolved.route).toBe("/(auth)/tools/emoty-goal");
       expect(result.resolved.kind).toBe("navigation");
     }
     const nav = resolveActionNavigation({ type: "start_today_goal" }, "normal");
-    expect(nav?.pathname).toBe("/(auth)/tools/mitra-goal");
+    expect(nav?.pathname).toBe("/(auth)/tools/emoty-goal");
   });
 
   test("ACTION-05: 'start_breathing' resolves correctly", () => {

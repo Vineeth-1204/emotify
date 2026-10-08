@@ -343,12 +343,12 @@ describe("Priority 5 Step 3: Longitudinal Readiness & Screening Migration Suite"
     expect(res2.message).toContain("Already checked in today");
   });
 
-  test("LONG-08: Mitra AI chat isolation and exclusion from clinical timeline", async () => {
+  test("LONG-08: Emoty AI chat isolation and exclusion from clinical timeline", async () => {
     const { t, studentAId, counselorId } = await setupTestEnvironment();
     const sessionA = t.withIdentity({ subject: studentAId });
     const sessionCounselor = t.withIdentity({ subject: counselorId });
 
-    // Student A sends a private message to Mitra
+    // Student A sends a private message to Emoty
     await sessionA.mutation(internal.companion.createMessage, {
       messageId: "msg_priv_123",
       role: "user",

@@ -40,8 +40,6 @@ export interface EmotyAvatarProps {
   style?: any;
 }
 
-// Backward compatibility alias
-export type MitraAvatarProps = EmotyAvatarProps;
 
 export const SIZE_MAP: Record<string, number> = {
   xs: 32,
@@ -442,8 +440,6 @@ export const EmotyAvatar: React.FC<EmotyAvatarProps> = ({
   );
 };
 
-// Canonical backward compatibility export
-export const MitraAvatar = EmotyAvatar;
 
 const styles = StyleSheet.create({
   container: {

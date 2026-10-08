@@ -8,7 +8,7 @@ import type { Id } from "./_generated/dataModel";
 
 const modules = import.meta.glob("./**/*.ts");
 
-describe("Priority 6: Mitra Human Avatar & Student Home Suite", () => {
+describe("Priority 6: Emoty Human Avatar & Student Home Suite", () => {
   async function setupTestEnvironment() {
     const t = convexTest(schema, modules);
 
@@ -59,12 +59,12 @@ describe("Priority 6: Mitra Human Avatar & Student Home Suite", () => {
     return { t, studentAId, studentBId, counselorId };
   }
 
-  // TEST 1: New user receives Girl + Mitra defaults
-  test("MITRA-01: New user receives default Girl ('female') and 'Mitra' name", async () => {
+  // TEST 1: New user receives Girl + Emoty defaults
+  test("EMOTY-01: New user receives default Girl ('female') and 'Emoty' name", async () => {
     const { t, studentAId } = await setupTestEnvironment();
     const asStudentA = t.withIdentity({ subject: studentAId });
 
-    const prefs = await asStudentA.query(api.users.getMitraPreferences, {
+    const prefs = await asStudentA.query(api.users.getEmotyPreferences, {
       userId: studentAId,
     });
 
@@ -74,11 +74,11 @@ describe("Priority 6: Mitra Human Avatar & Student Home Suite", () => {
   });
 
   // TEST 2 & 3: User can select Girl or Boy
-  test("MITRA-02: User can select Boy avatar and persist preference", async () => {
+  test("EMOTY-02: User can select Boy avatar and persist preference", async () => {
     const { t, studentAId } = await setupTestEnvironment();
     const asStudentA = t.withIdentity({ subject: studentAId });
 
-    const updated = await asStudentA.mutation(api.users.updateMitraPreferences, {
+    const updated = await asStudentA.mutation(api.users.updateEmotyPreferences, {
       userId: studentAId,
       avatarGender: "male",
     });
@@ -86,85 +86,85 @@ describe("Priority 6: Mitra Human Avatar & Student Home Suite", () => {
     expect(updated.avatarGender).toBe("male");
     expect(updated.name).toBe("Emoty");
 
-    const fetched = await asStudentA.query(api.users.getMitraPreferences, {
+    const fetched = await asStudentA.query(api.users.getEmotyPreferences, {
       userId: studentAId,
     });
     expect(fetched.avatarGender).toBe("male");
   });
 
-  test("MITRA-03: User can select Girl avatar and persist preference", async () => {
+  test("EMOTY-03: User can select Girl avatar and persist preference", async () => {
     const { t, studentAId } = await setupTestEnvironment();
     const asStudentA = t.withIdentity({ subject: studentAId });
 
     // Set to male first
-    await asStudentA.mutation(api.users.updateMitraPreferences, {
+    await asStudentA.mutation(api.users.updateEmotyPreferences, {
       userId: studentAId,
       avatarGender: "male",
     });
 
     // Change back to female
-    const updated = await asStudentA.mutation(api.users.updateMitraPreferences, {
+    const updated = await asStudentA.mutation(api.users.updateEmotyPreferences, {
       userId: studentAId,
       avatarGender: "female",
     });
 
     expect(updated.avatarGender).toBe("female");
 
-    const fetched = await asStudentA.query(api.users.getMitraPreferences, {
+    const fetched = await asStudentA.query(api.users.getEmotyPreferences, {
       userId: studentAId,
     });
     expect(fetched.avatarGender).toBe("female");
   });
 
   // TEST 4 & 5: Custom companion name
-  test("MITRA-04: User can set and change companion custom name", async () => {
+  test("EMOTY-04: User can set and change companion custom name", async () => {
     const { t, studentAId } = await setupTestEnvironment();
     const asStudentA = t.withIdentity({ subject: studentAId });
 
-    const updated = await asStudentA.mutation(api.users.updateMitraPreferences, {
+    const updated = await asStudentA.mutation(api.users.updateEmotyPreferences, {
       userId: studentAId,
       name: "Aria",
     });
 
     expect(updated.name).toBe("Aria");
 
-    const fetched = await asStudentA.query(api.users.getMitraPreferences, {
+    const fetched = await asStudentA.query(api.users.getEmotyPreferences, {
       userId: studentAId,
     });
     expect(fetched.name).toBe("Aria");
 
     // Change name again
-    const updated2 = await asStudentA.mutation(api.users.updateMitraPreferences, {
+    const updated2 = await asStudentA.mutation(api.users.updateEmotyPreferences, {
       userId: studentAId,
       name: "Zephyr",
     });
     expect(updated2.name).toBe("Zephyr");
   });
 
-  // TEST 6: Missing name falls back safely to "Mitra"
-  test("MITRA-05: Missing or whitespace-only name falls back safely to 'Mitra'", async () => {
+  // TEST 6: Missing name falls back safely to "Emoty"
+  test("EMOTY-05: Missing or whitespace-only name falls back safely to 'Emoty'", async () => {
     const { t, studentAId } = await setupTestEnvironment();
     const asStudentA = t.withIdentity({ subject: studentAId });
 
-    const updated = await asStudentA.mutation(api.users.updateMitraPreferences, {
+    const updated = await asStudentA.mutation(api.users.updateEmotyPreferences, {
       userId: studentAId,
       name: "    ",
     });
 
     expect(updated.name).toBe("Emoty");
 
-    const fetched = await asStudentA.query(api.users.getMitraPreferences, {
+    const fetched = await asStudentA.query(api.users.getEmotyPreferences, {
       userId: studentAId,
     });
     expect(fetched.name).toBe("Emoty");
   });
 
   // TEST 7: Invalid avatar value falls back safely to "female"
-  test("MITRA-06: Invalid avatar value falls back safely to 'female'", async () => {
+  test("EMOTY-06: Invalid avatar value falls back safely to 'female'", async () => {
     const { t, studentAId } = await setupTestEnvironment();
     const asStudentA = t.withIdentity({ subject: studentAId });
 
-    const updated = await asStudentA.mutation(api.users.updateMitraPreferences, {
+    const updated = await asStudentA.mutation(api.users.updateEmotyPreferences, {
       userId: studentAId,
       avatarGender: "alien_monster",
     });
@@ -173,12 +173,12 @@ describe("Priority 6: Mitra Human Avatar & Student Home Suite", () => {
   });
 
   // TEST 8: Name validation strips control characters and enforces length
-  test("MITRA-07: Name validation strips control characters and enforces 30 character limit", async () => {
+  test("EMOTY-07: Name validation strips control characters and enforces 30 character limit", async () => {
     const { t, studentAId } = await setupTestEnvironment();
     const asStudentA = t.withIdentity({ subject: studentAId });
 
     const evilName = "Super\x00Companion\x1FName\x7FThatIsExtraordinarilyLongAndExceedsThirtyChars";
-    const updated = await asStudentA.mutation(api.users.updateMitraPreferences, {
+    const updated = await asStudentA.mutation(api.users.updateEmotyPreferences, {
       userId: studentAId,
       name: evilName,
     });
@@ -190,7 +190,7 @@ describe("Priority 6: Mitra Human Avatar & Student Home Suite", () => {
   });
 
   // TEST 9 & 10: Changing avatar or name does NOT create new conversation or duplicate messages
-  test("MITRA-08: Changing avatar or name does NOT create new conversation or duplicate messages", async () => {
+  test("EMOTY-08: Changing avatar or name does NOT create new conversation or duplicate messages", async () => {
     const { t, studentAId } = await setupTestEnvironment();
     const asStudentA = t.withIdentity({ subject: studentAId });
 
@@ -217,7 +217,7 @@ describe("Priority 6: Mitra Human Avatar & Student Home Suite", () => {
     expect(initialLogsCount).toBe(1);
 
     // Update avatar and name
-    await asStudentA.mutation(api.users.updateMitraPreferences, {
+    await asStudentA.mutation(api.users.updateEmotyPreferences, {
       userId: studentAId,
       name: "Kiran",
       avatarGender: "male",
@@ -244,37 +244,37 @@ describe("Priority 6: Mitra Human Avatar & Student Home Suite", () => {
     expect(legacyMessages.length).toBe(0);
   });
 
-  // TEST 11: Security - Student A cannot read Student B's Mitra preferences
-  test("MITRA-09: Student A cannot read Student B's Mitra preferences", async () => {
+  // TEST 11: Security - Student A cannot read Student B's Emoty preferences
+  test("EMOTY-09: Student A cannot read Student B's Emoty preferences", async () => {
     const { t, studentAId, studentBId } = await setupTestEnvironment();
     const asStudentA = t.withIdentity({ subject: studentAId });
 
     await expect(
-      asStudentA.query(api.users.getMitraPreferences, {
+      asStudentA.query(api.users.getEmotyPreferences, {
         userId: studentBId,
       })
     ).rejects.toThrow(/Unauthorized/i);
   });
 
-  // TEST 12: Security - Student A cannot update Student B's Mitra preferences
-  test("MITRA-10: Student A cannot update Student B's Mitra preferences", async () => {
+  // TEST 12: Security - Student A cannot update Student B's Emoty preferences
+  test("EMOTY-10: Student A cannot update Student B's Emoty preferences", async () => {
     const { t, studentAId, studentBId } = await setupTestEnvironment();
     const asStudentA = t.withIdentity({ subject: studentAId });
 
     await expect(
-      asStudentA.mutation(api.users.updateMitraPreferences, {
+      asStudentA.mutation(api.users.updateEmotyPreferences, {
         userId: studentBId,
         name: "HackedName",
       })
     ).rejects.toThrow(/Unauthorized/i);
   });
 
-  // TEST 13: Counselor can read student's Mitra preferences
-  test("MITRA-11: Authorized counselor can read student's Mitra preferences", async () => {
+  // TEST 13: Counselor can read student's Emoty preferences
+  test("EMOTY-11: Authorized counselor can read student's Emoty preferences", async () => {
     const { t, studentAId, counselorId } = await setupTestEnvironment();
     const asCounselor = t.withIdentity({ subject: counselorId });
 
-    const prefs = await asCounselor.query(api.users.getMitraPreferences, {
+    const prefs = await asCounselor.query(api.users.getEmotyPreferences, {
       userId: studentAId,
     });
     expect(prefs).toBeDefined();
@@ -321,7 +321,7 @@ describe("Priority 6: Mitra Human Avatar & Student Home Suite", () => {
   });
 
   // TEST 15: Onboarding saves companion preferences
-  test("ONBOARDING-01: completeOnboarding persists optional mitraPreferences", async () => {
+  test("ONBOARDING-01: completeOnboarding persists optional emotyPreferences", async () => {
     const { t, studentBId } = await setupTestEnvironment();
     const asStudentB = t.withIdentity({ subject: studentBId });
 
@@ -333,13 +333,13 @@ describe("Priority 6: Mitra Human Avatar & Student Home Suite", () => {
       department: "Biology",
       consentVersion: "1.0",
       consentTimestamp: Date.now(),
-      mitraPreferences: {
+      emotyPreferences: {
         name: "Sanjay",
         avatarGender: "male",
       },
     });
 
-    const prefs = await asStudentB.query(api.users.getMitraPreferences, {
+    const prefs = await asStudentB.query(api.users.getEmotyPreferences, {
       userId: studentBId,
     });
     expect(prefs.name).toBe("Sanjay");
@@ -477,12 +477,12 @@ describe("Priority 6: Mitra Human Avatar & Student Home Suite", () => {
     ).rejects.toThrow("Invalid demographic gender option");
   });
 
-  test("PROFILE-06: Mitra preferences and student demographic gender remain completely separate", async () => {
+  test("PROFILE-06: Emoty preferences and student demographic gender remain completely separate", async () => {
     const { t, studentAId } = await setupTestEnvironment();
     const asStudentA = t.withIdentity({ subject: studentAId });
 
-    // 1. Set Mitra companion to Male ("male")
-    await asStudentA.mutation(api.users.updateMitraPreferences, {
+    // 1. Set Emoty companion to Male ("male")
+    await asStudentA.mutation(api.users.updateEmotyPreferences, {
       userId: studentAId,
       avatarGender: "male",
       name: "Dost",
@@ -494,12 +494,12 @@ describe("Priority 6: Mitra Human Avatar & Student Home Suite", () => {
       gender: "female",
     });
 
-    // 3. Verify Mitra companion preference is unchanged (still male + "Dost")
-    const mitraPrefs = await asStudentA.query(api.users.getMitraPreferences, {
+    // 3. Verify Emoty companion preference is unchanged (still male + "Dost")
+    const emotyPrefs = await asStudentA.query(api.users.getEmotyPreferences, {
       userId: studentAId,
     });
-    expect(mitraPrefs.avatarGender).toBe("male");
-    expect(mitraPrefs.name).toBe("Dost");
+    expect(emotyPrefs.avatarGender).toBe("male");
+    expect(emotyPrefs.name).toBe("Dost");
 
     // 4. Verify student demographic gender is female
     const profile = await asStudentA.query(api.users.getByClerkId, {

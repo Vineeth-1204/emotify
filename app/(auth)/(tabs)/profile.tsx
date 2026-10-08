@@ -36,7 +36,7 @@ export default function ProfileScreen() {
   const exportScreenings = useQuery(api.screening.getAll, isReady && userId ? { userId: userId } : "skip");
 
   const { t, language, setLanguage, supportedLanguages, activeLanguageOption } = useLanguage();
-  const { avatarName, avatarGender, setMitraPreferences } = useAvatar();
+  const { avatarName, avatarGender, setEmotyPreferences } = useAvatar();
   const { voiceEnabled, setVoiceEnabled, selectedVoice } = useVoice();
   const [showRenameModal, setShowRenameModal] = useState(false);
   const [showLanguageModal, setShowLanguageModal] = useState(false);
@@ -131,7 +131,7 @@ export default function ProfileScreen() {
     }
     const finalGender: AvatarGender = selectedGender === "male" ? "male" : "female";
     try {
-      await setMitraPreferences({
+      await setEmotyPreferences({
         name: trimmed,
         avatarGender: finalGender,
       });
@@ -362,7 +362,7 @@ export default function ProfileScreen() {
               <TouchableOpacity
                 onPress={() => {
                   setSelectedGender(avatarGender || "female");
-                  setNewCompanionName(avatarName || "Mitra");
+                  setNewCompanionName(avatarName || "Emoty");
                   setShowRenameModal(true);
                 }}
                 style={{

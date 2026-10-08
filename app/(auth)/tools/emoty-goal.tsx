@@ -1,10 +1,10 @@
 /**
- * Mitra-Led MicroGoal Screen
+ * Emoty-Led MicroGoal Screen
  * Phase 4 — Conversational Wellbeing Entry Point
  *
  * Flow:
- * Mitra suggests one small goal → user accepts [Let's do it] or declines [Not now]
- * → user performs task → genuine completion → Mitra post-goal check ("How did that feel?")
+ * Emoty suggests one small goal → user accepts [Let's do it] or declines [Not now]
+ * → user performs task → genuine completion → Emoty post-goal check ("How did that feel?")
  * → contextual encouragement → return Home.
  *
  * Strictly non-clinical: zero dependency on PHQ-9, GAD-7, PQ-16, or triage.
@@ -33,7 +33,7 @@ import { Colors } from "@/constants/Colors";
 import { Theme } from "@/constants/Theme";
 import { useThemeColors } from "@/context/MoodThemeContext";
 import { useAvatar } from "@/context/AvatarContext";
-import { EmotyAvatar, MitraAvatar, AvatarState } from "@/components/avatar/EmotyAvatar";
+import { EmotyAvatar, AvatarState } from "@/components/avatar/EmotyAvatar";
 import { CalmPointToken } from "@/components/svg/system";
 import { getLocalDateString } from "@/utils/date";
 
@@ -73,7 +73,7 @@ const REFLECTION_OPTIONS: ReflectionOption[] = [
   },
 ];
 
-export default function MitraGoalScreen() {
+export default function EmotyGoalScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ start?: string }>();
   const insets = useSafeAreaInsets();
@@ -92,9 +92,9 @@ export default function MitraGoalScreen() {
   const autoStartHandledRef = useRef(false);
 
   // Convex Queries & Mutations
-  const suggestedQuery = useQuery(api.microGoals.getMitraSuggestedGoal, { dateStr: todayStr });
-  const acceptGoalMutation = useMutation(api.microGoals.acceptMitraGoal);
-  const skipGoalMutation = useMutation(api.microGoals.skipMitraGoal);
+  const suggestedQuery = useQuery(api.microGoals.getEmotySuggestedGoal, { dateStr: todayStr });
+  const acceptGoalMutation = useMutation(api.microGoals.acceptEmotyGoal);
+  const skipGoalMutation = useMutation(api.microGoals.skipEmotyGoal);
   const completeGoalMutation = useMutation(api.microGoals.completeGoalWithFeeling);
 
   const animateIn = () => {
@@ -312,7 +312,7 @@ export default function MitraGoalScreen() {
           </View>
         )}
 
-        {/* STEP 1: Mitra Suggestion */}
+        {/* STEP 1: Emoty Suggestion */}
         {step === "suggesting" && (
           <Animated.View
             style={[
@@ -320,9 +320,9 @@ export default function MitraGoalScreen() {
               { opacity: fadeAnim, transform: [{ translateY: slideAnim }] },
             ]}
           >
-            {/* Mitra Avatar */}
+            {/* Emoty Avatar */}
             <View style={styles.avatarWrap}>
-              <MitraAvatar
+              <EmotyAvatar
                 gender={avatarGender}
                 state={getAvatarState()}
                 size="lg"
@@ -331,7 +331,7 @@ export default function MitraGoalScreen() {
 
             {/* Conversational prompt */}
             <View style={styles.speechBubble}>
-              <Text style={styles.mitraLeadText}>
+              <Text style={styles.emotyLeadText}>
                 I've got a small thing you could try.
               </Text>
             </View>
@@ -390,7 +390,7 @@ export default function MitraGoalScreen() {
             ]}
           >
             <View style={styles.avatarWrap}>
-              <MitraAvatar
+              <EmotyAvatar
                 gender={avatarGender}
                 state={getAvatarState()}
                 size="lg"
@@ -398,10 +398,10 @@ export default function MitraGoalScreen() {
             </View>
 
             <View style={styles.speechBubble}>
-              <Text style={styles.mitraLeadText}>
+              <Text style={styles.emotyLeadText}>
                 Take your time.
               </Text>
-              <Text style={styles.mitraSubLeadText}>
+              <Text style={styles.emotySubLeadText}>
                 Whenever you're done, let me know below.
               </Text>
             </View>
@@ -447,7 +447,7 @@ export default function MitraGoalScreen() {
             ]}
           >
             <View style={styles.avatarWrap}>
-              <MitraAvatar
+              <EmotyAvatar
                 gender={avatarGender}
                 state={getAvatarState()}
                 size="lg"
@@ -455,10 +455,10 @@ export default function MitraGoalScreen() {
             </View>
 
             <View style={styles.speechBubble}>
-              <Text style={styles.mitraLeadText}>
+              <Text style={styles.emotyLeadText}>
                 Nice — that's done.
               </Text>
-              <Text style={styles.mitraSubLeadText}>
+              <Text style={styles.emotySubLeadText}>
                 How did that feel?
               </Text>
             </View>
@@ -497,7 +497,7 @@ export default function MitraGoalScreen() {
             ]}
           >
             <View style={styles.avatarWrap}>
-              <MitraAvatar
+              <EmotyAvatar
                 gender={avatarGender}
                 state={getAvatarState()}
                 size="lg"
@@ -505,7 +505,7 @@ export default function MitraGoalScreen() {
             </View>
 
             <View style={styles.speechBubble}>
-              <Text style={styles.mitraLeadText}>
+              <Text style={styles.emotyLeadText}>
                 {selectedFeeling?.response || "Nice. You got that done."}
               </Text>
             </View>
@@ -540,7 +540,7 @@ export default function MitraGoalScreen() {
             ]}
           >
             <View style={styles.avatarWrap}>
-              <MitraAvatar
+              <EmotyAvatar
                 gender={avatarGender}
                 state={getAvatarState()}
                 size="lg"
@@ -548,7 +548,7 @@ export default function MitraGoalScreen() {
             </View>
 
             <View style={styles.speechBubble}>
-              <Text style={styles.mitraLeadText}>
+              <Text style={styles.emotyLeadText}>
                 No problem. We can try something else later.
               </Text>
             </View>
@@ -577,7 +577,7 @@ export default function MitraGoalScreen() {
             ]}
           >
             <View style={styles.avatarWrap}>
-              <MitraAvatar
+              <EmotyAvatar
                 gender={avatarGender}
                 state={getAvatarState()}
                 size="lg"
@@ -585,10 +585,10 @@ export default function MitraGoalScreen() {
             </View>
 
             <View style={styles.speechBubble}>
-              <Text style={styles.mitraLeadText}>
+              <Text style={styles.emotyLeadText}>
                 You're all set for today.
               </Text>
-              <Text style={styles.mitraSubLeadText}>
+              <Text style={styles.emotySubLeadText}>
                 You've completed your daily routine goals. Feel free to explore other tools or rest.
               </Text>
             </View>
@@ -665,14 +665,14 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#E2E8F0",
   },
-  mitraLeadText: {
+  emotyLeadText: {
     fontFamily: Theme.fontFamily.bold,
     fontSize: 18,
     color: "#1E293B",
     textAlign: "center",
     lineHeight: 24,
   },
-  mitraSubLeadText: {
+  emotySubLeadText: {
     fontFamily: Theme.fontFamily.medium,
     fontSize: 14,
     color: "#64748B",

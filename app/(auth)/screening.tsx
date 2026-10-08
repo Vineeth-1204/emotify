@@ -11,6 +11,9 @@ import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import * as SecureStore from "expo-secure-store";
 import { useLanguage } from "@/context/LanguageContext";
+import { useAvatar } from "@/context/AvatarContext";
+import { getEmotyPresence } from "@/common/emotyPresence";
+import { EmotyPresence } from "@/components/avatar/EmotyPresence";
 import {
   PHQ9_QUESTIONS,
   PHQ9_OPTIONS,
@@ -66,6 +69,7 @@ export default function ScreeningScreen() {
   const router = useRouter();
   const { user } = useAppAuth();
   const { t } = useLanguage();
+  const { isSafetyActive } = useAvatar();
   const [selectedInstrument, setSelectedInstrument] = useState<string | null>(null);
   const [screeningStartTime] = useState<number>(() => Date.now());
   const [answers, setAnswers] = useState<ScreeningState>({
@@ -161,8 +165,8 @@ export default function ScreeningScreen() {
         await SecureStore.deleteItemAsync(key);
       } catch (e) {}
 
-      // 4. Navigate to main tabs
-      router.replace("/(auth)/(tabs)");
+      // 4. Navigate to main tabs (Emoty thanks the student there)
+      router.replace({ pathname: "/(auth)/(tabs)", params: { from: "screening" } } as any);
     } catch (error) {
       console.error("Failed to submit screening attempt", error);
       setIsSubmitting(false);
@@ -184,8 +188,12 @@ export default function ScreeningScreen() {
   if (isSubmitting) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={Colors.primary} />
-        <Text style={styles.loadingText}>Analyzing your responses...</Text>
+        <EmotyPresence
+          presence={getEmotyPresence({ scene: "screening_submitting", safetyActive: isSafetyActive })}
+          layout="stacked"
+          size="lg"
+        />
+        <ActivityIndicator size="small" color={Colors.primary} style={{ marginTop: 16 }} />
       </View>
     );
   }
@@ -247,6 +255,16 @@ export default function ScreeningScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        <EmotyPresence
+          presence={getEmotyPresence({
+            scene: "screening_intro",
+            answered: INSTRUMENTS.reduce((sum, inst) => sum + getProgress(inst.id, inst.questions.length).answered, 0),
+            total: INSTRUMENTS.reduce((sum, inst) => sum + inst.questions.length, 0),
+            forcedRetest: isForceRetest,
+            safetyActive: isSafetyActive,
+          })}
+          style={{ marginBottom: 16 }}
+        />
         <View style={styles.cardsContainer}>
           {INSTRUMENTS.map((inst) => {
             const { answered, percent } = getProgress(inst.id, inst.questions.length);
@@ -337,12 +355,6 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.background,
     justifyContent: "center",
     alignItems: "center",
-  },
-  loadingText: {
-    fontFamily: Theme.fontFamily.medium,
-    fontSize: Theme.fontSize.md,
-    color: Colors.textSecondary,
-    marginTop: Theme.spacing.md,
   },
   header: {
     paddingHorizontal: Theme.spacing.xl,

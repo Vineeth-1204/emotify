@@ -4,7 +4,7 @@ import { useQuery, useMutation, useConvexAuth } from 'convex/react';
 import { api } from '@/convex/_generated/api';
 import { useAppAuth } from '@/utils/auth';
 import { AvatarState } from '@/components/avatar/EmotyAvatar';
-import { getCompanionDisplayName } from '@/common/companionName';
+import { getCompanionDisplayName, readStoredEmotyPreferences } from '@/common/companionName';
 import { resolveAvatarPresentationState } from '@/common/avatarPresentation';
 
 export type HomeEmotionCard = 'good' | 'calm' | 'low' | 'heavy';
@@ -22,7 +22,7 @@ interface AvatarContextType {
   setAvatarName: (name: string) => Promise<void>;
   avatarGender: AvatarGender;
   setAvatarGender: (gender: AvatarGender) => Promise<void>;
-  setMitraPreferences: (prefs: { name?: string; avatarGender?: AvatarGender }) => Promise<void>;
+  setEmotyPreferences: (prefs: { name?: string; avatarGender?: AvatarGender }) => Promise<void>;
   avatarState: AvatarState;
   setAvatarState: (newState: AvatarState, priority?: number) => void;
   triggerSafetyState: () => void;
@@ -75,10 +75,10 @@ export const AvatarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const latestTriage = useQuery(api.triage.getLatest, isReady ? { userId: user!.id } : 'skip');
   const userGoals = useQuery(api.microGoals.getUserGoals, isReady ? { userId: user!.id } : 'skip');
   const backendPrefs = useQuery(
-    api.users.getMitraPreferences,
+    api.users.getEmotyPreferences,
     isReady ? { userId: user!.id } : 'skip'
   );
-  const updateMitraPrefsMutation = useMutation(api.users.updateMitraPreferences);
+  const updateEmotyPrefsMutation = useMutation(api.users.updateEmotyPreferences);
 
   const [avatarState, setInternalAvatarState] = useState<AvatarState>('idle');
   const [avatarName, setAvatarNameState] = useState<string>(getCompanionDisplayName());
@@ -109,7 +109,7 @@ export const AvatarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   // 2. Synchronize with backend profile when available
   useEffect(() => {
-    const prefs = backendPrefs || dbUser?.mitraPreferences;
+    const prefs = backendPrefs || readStoredEmotyPreferences(dbUser as any);
     if (prefs) {
       if (prefs.name && prefs.name.trim().length > 0) {
         const preferredName = getCompanionDisplayName(prefs.name);
@@ -121,7 +121,7 @@ export const AvatarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         AsyncStorage.setItem(ASYNC_KEY_GENDER, prefs.avatarGender).catch(() => {});
       }
     }
-  }, [backendPrefs, dbUser?.mitraPreferences]);
+  }, [backendPrefs, dbUser]);
 
   // Set avatar name persistently
   const setAvatarName = useCallback(
@@ -133,7 +133,7 @@ export const AvatarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       try {
         await AsyncStorage.setItem(ASYNC_KEY_NAME, cleanName);
         if (user?.id) {
-          await updateMitraPrefsMutation({
+          await updateEmotyPrefsMutation({
             userId: user.id,
             name: cleanName,
           });
@@ -142,7 +142,7 @@ export const AvatarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         console.error('Failed to save avatar name:', e);
       }
     },
-    [user?.id, updateMitraPrefsMutation]
+    [user?.id, updateEmotyPrefsMutation]
   );
 
   // Set avatar gender persistently
@@ -153,7 +153,7 @@ export const AvatarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       try {
         await AsyncStorage.setItem(ASYNC_KEY_GENDER, validGender);
         if (user?.id) {
-          await updateMitraPrefsMutation({
+          await updateEmotyPrefsMutation({
             userId: user.id,
             avatarGender: validGender,
           });
@@ -162,11 +162,11 @@ export const AvatarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         console.error('Failed to save avatar gender:', e);
       }
     },
-    [user?.id, updateMitraPrefsMutation]
+    [user?.id, updateEmotyPrefsMutation]
   );
 
   // Set both simultaneously
-  const setMitraPreferences = useCallback(
+  const setEmotyPreferences = useCallback(
     async (prefs: { name?: string; avatarGender?: AvatarGender }) => {
       let cleanName: string | undefined = undefined;
       if (prefs.name !== undefined) {
@@ -185,7 +185,7 @@ export const AvatarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
       if (user?.id) {
         try {
-          await updateMitraPrefsMutation({
+          await updateEmotyPrefsMutation({
             userId: user.id,
             name: cleanName,
             avatarGender: validGender,
@@ -195,7 +195,7 @@ export const AvatarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
       }
     },
-    [user?.id, updateMitraPrefsMutation]
+    [user?.id, updateEmotyPrefsMutation]
   );
 
   // Age Group detection: default to 13-18 if <=18 or undefined; 19-24 if >=19
@@ -381,7 +381,7 @@ export const AvatarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         setAvatarName,
         avatarGender,
         setAvatarGender,
-        setMitraPreferences,
+        setEmotyPreferences,
         avatarState,
         setAvatarState,
         triggerSafetyState,

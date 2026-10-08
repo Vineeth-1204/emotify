@@ -12,7 +12,9 @@ import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAvatar } from "@/context/AvatarContext";
-import { EmotyAvatar, MitraAvatar } from "@/components/avatar/EmotyAvatar";
+import { EmotyAvatar } from "@/components/avatar/EmotyAvatar";
+import { EmotyPresence } from "@/components/avatar/EmotyPresence";
+import { getEmotyPresence } from "@/common/emotyPresence";
 import { CalmPointToken } from "@/components/svg/system";
 import {
   HappyEmotionIcon,
@@ -57,6 +59,7 @@ export default function MicroGoalsScreen() {
   const router = useRouter();
   const { user } = useAppAuth();
   const insets = useSafeAreaInsets();
+  const { isSafetyActive } = useAvatar();
 
   // Convex Queries
   const todayCheckin = useQuery(api.microGoals.getTodayCheckin, { dateStr: getLocalDateString() });
@@ -304,6 +307,16 @@ export default function MicroGoalsScreen() {
           <Text style={styles.title}>Your daily goals</Text>
           <Text style={styles.subtitle}>Small steps that fit into your day.</Text>
         </View>
+        <EmotyPresence
+          presence={getEmotyPresence({
+            scene: "small_steps",
+            checkedIn: !!todayCheckin,
+            total: totalGoalsCount,
+            completed: completedCount,
+            safetyActive: isSafetyActive,
+          })}
+          style={{ marginBottom: 16 }}
+        />
 
         <View style={styles.todayOverview}>
           <View style={styles.todayOverviewTop}>
@@ -763,7 +776,7 @@ export default function MicroGoalsScreen() {
         <View style={styles.modalOverlay}>
           <View style={styles.celebrationContent}>
             <View style={{ alignItems: 'center', marginBottom: 12 }}>
-              <MitraAvatar state="celebrating" size="md" />
+              <EmotyAvatar state="celebrating" size="md" />
             </View>
             <Text style={styles.celebrationTitle}>Nice work!</Text>
             <Text style={styles.celebrationMessage}>

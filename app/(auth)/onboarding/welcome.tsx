@@ -22,7 +22,7 @@ export default function WelcomeScreen() {
   const isReady = Boolean(isAuthenticated && isConvexAuthed && user?.id);
 
   const { t } = useLanguage();
-  const { avatarName, avatarGender, setMitraPreferences } = useAvatar();
+  const { avatarName, avatarGender, setEmotyPreferences } = useAvatar();
   const dbUser = useQuery(api.users.getByClerkId, isReady ? { clerkId: user!.id } : "skip");
 
   const [selectedGender, setSelectedGender] = useState<AvatarGender>(avatarGender || "female");
@@ -45,15 +45,15 @@ export default function WelcomeScreen() {
   }, [dbUser]);
 
   const handleContinue = async () => {
-    const finalName = customName.trim() || "Mitra";
+    const finalName = customName.trim() || "Emoty";
     const finalGender: AvatarGender = selectedGender === "male" ? "male" : "female";
     try {
-      await setMitraPreferences({
+      await setEmotyPreferences({
         name: finalName,
         avatarGender: finalGender,
       });
     } catch (e) {
-      console.warn("Failed to save Mitra preferences during welcome:", e);
+      console.warn("Failed to save Emoty preferences during welcome:", e);
     }
     router.push("/(auth)/onboarding/consent");
   };
@@ -143,7 +143,7 @@ export default function WelcomeScreen() {
           style={styles.nameInput}
           value={customName}
           onChangeText={setCustomName}
-          placeholder="Mitra"
+          placeholder="Emoty"
           placeholderTextColor={Colors.textMuted}
           maxLength={30}
           autoCorrect={false}

@@ -8,7 +8,7 @@
  * - Reduced motion & screen reader accessibility
  * - Backend persistence, schema validation & rate limiting
  * - Row-level authorization & counselor access
- * - Provenance preservation & boundary with Mitra / JPMR
+ * - Provenance preservation & boundary with Emoty / JPMR
  */
 
 import { describe, test, expect, vi } from "vitest";
@@ -385,7 +385,7 @@ describe("Priority 9 Step 4B: Canonical Breathing Engine & Protocols", () => {
   });
 
   // =========================================================================
-  // 6. SYSTEM BOUNDARY & ISOLATION (JPMR & MITRA)
+  // 6. SYSTEM BOUNDARY & ISOLATION (JPMR & EMOTY)
   // =========================================================================
   test("BREATH-13: JPMR Boundary - JPMR relaxation logs to jpmrLogs and does not pollute breathingLogs", async () => {
     const t = convexTest(schema);

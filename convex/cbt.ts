@@ -35,7 +35,7 @@ export const getSession = query({
 });
 
 /**
- * Internal query used strictly by server actions (CBT / Mitra) to fetch active key.
+ * Internal query used strictly by server actions (CBT / Emoty) to fetch active key.
  * Never callable directly by clients over public Convex protocols.
  */
 export const getActiveApiKeyInternal = internalQuery({

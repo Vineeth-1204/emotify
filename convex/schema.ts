@@ -40,6 +40,8 @@ export default defineSchema({
     biometricEnabled: v.optional(v.boolean()),
     lastLoginAt: v.optional(v.number()),
     temp_password: v.optional(v.string()), // Transient plain-text password shown to admin after reset, cleared after viewing
+    // Emoty companion preferences. Historical field name kept so stored documents need no
+    // migration; access it only via readStoredEmotyPreferences / storedEmotyPreferencesPatch.
     mitraPreferences: v.optional(
       v.object({
         name: v.string(),

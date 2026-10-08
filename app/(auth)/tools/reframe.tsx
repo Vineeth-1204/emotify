@@ -25,7 +25,9 @@ import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAvatar } from "@/context/AvatarContext";
-import { EmotyAvatar, MitraAvatar } from "@/components/avatar/EmotyAvatar";
+import { EmotyAvatar } from "@/components/avatar/EmotyAvatar";
+import { EmotyPresence } from "@/components/avatar/EmotyPresence";
+import { getEmotyPresence } from "@/common/emotyPresence";
 import { BreathingPlayer } from "@/components/breathing/BreathingPlayer";
 import { BREATHING_PROTOCOLS } from "@/constants/BreathingProtocols";
 import { SensoryGroundingPlayer } from "@/components/grounding/SensoryGroundingPlayer";
@@ -201,6 +203,7 @@ export default function ReframeScreen() {
   const router = useRouter();
   const { user } = useAppAuth();
   const insets = useSafeAreaInsets();
+  const { avatarName, avatarGender, isSafetyActive } = useAvatar();
 
   // Convex endpoints
   const startSession = useMutation(api.cbt.startSession);
@@ -509,6 +512,11 @@ export default function ReframeScreen() {
 
   const { currentStep, conversation, sessionStatus } = activeSession;
   const progress = getProgressPercent(currentStep);
+  const reframePresence = getEmotyPresence({
+    scene: "reframe",
+    step: sessionStatus === "safety_mode" ? "safety_mode" : currentStep,
+    safetyActive: isSafetyActive,
+  });
 
   // BRANCH 2: High Risk Safety Mode
   if (sessionStatus === "safety_mode") {
@@ -517,7 +525,7 @@ export default function ReframeScreen() {
         <LinearGradient colors={["#FFF5F5", "#FEE2E2"]} style={StyleSheet.absoluteFill} />
         <ScrollView contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top + 30 }]}>
           <View style={styles.safetyHeader}>
-            <Ionicons name="shield-half" size={64} color={Colors.severe} />
+            <EmotyPresence presence={{ ...reframePresence, line: null }} layout="stacked" size="md" />
             <Text style={styles.safetyTitle}>Crisis Safety Support</Text>
             <Text style={styles.safetySub}>
               We have paused our reflection session. Your physical and emotional safety are the absolute highest priority.
@@ -687,10 +695,10 @@ export default function ReframeScreen() {
         <LinearGradient colors={["#F4F7FB", "#EEF3FF"]} style={StyleSheet.absoluteFill} />
         <ScrollView contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top + 40 }]}>
           <View style={styles.successIconWrapper}>
-            <Ionicons name="checkmark-circle" size={80} color={Colors.success} />
+            <EmotyPresence presence={{ ...reframePresence, line: null }} layout="stacked" size="md" />
           </View>
           <Text style={styles.resumeTitle}>Session Complete</Text>
-          <Text style={styles.encouragingText}>You did an amazing job taking time for your mind today.</Text>
+          <Text style={styles.encouragingText}>{reframePresence.line}</Text>
 
           <View style={styles.summaryResultCard}>
             <Text style={styles.resultPercentage}>
@@ -753,6 +761,9 @@ export default function ReframeScreen() {
           <View style={styles.progressContainer}>
             <View style={[styles.progressBar, { width: `${progress}%` }]} />
           </View>
+          {reframePresence.line && (
+            <EmotyPresence presence={reframePresence} size="xs" style={{ marginTop: 12 }} />
+          )}
         </View>
 
         {/* CHAT MESSAGES DISPLAY */}
@@ -782,8 +793,8 @@ export default function ReframeScreen() {
 
             {aiLoading && (
               <View style={[styles.messageBubble, styles.assistantBubble, styles.loadingBubble]}>
-                <ActivityIndicator size="small" color={Colors.primary} />
-                <Text style={styles.typingText}>Counselor is reflecting...</Text>
+                <EmotyAvatar gender={avatarGender} state="thinking" size="xs" interactive={false} />
+                <Text style={styles.typingText}>{avatarName} is thinking...</Text>
               </View>
             )}
           </ScrollView>
@@ -901,7 +912,7 @@ export default function ReframeScreen() {
           >
             <View style={styles.glassCard}>
               <View style={{ alignItems: "center", marginVertical: 20 }}>
-                <MitraAvatar state="celebrating" size="md" />
+                <EmotyAvatar gender={avatarGender} state={reframePresence.avatarState} size="md" />
               </View>
               <Text style={styles.stepTitle}>Reflection Completed!</Text>
               <Text style={styles.stepSub}>

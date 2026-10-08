@@ -1,6 +1,6 @@
-export type MitraNextActionType = "checkin" | "emotion_followup" | "goal_suggestion" | "all_caught_up";
+export type EmotyNextActionType = "checkin" | "emotion_followup" | "goal_suggestion" | "all_caught_up";
 
-export interface MitraActionState {
+export interface EmotyHomeActionState {
   hasCheckedInToday: boolean;
   hasLoggedEmotionToday: boolean;
   dismissedEmotionFollowup: boolean;
@@ -9,7 +9,7 @@ export interface MitraActionState {
 }
 
 /** Keeps Home's existing Phase 5 priority order in one testable decision. */
-export function getCurrentMitraAction(state: MitraActionState): MitraNextActionType {
+export function getCurrentEmotyAction(state: EmotyHomeActionState): EmotyNextActionType {
   if (!state.hasCheckedInToday) return "checkin";
   if (!state.hasLoggedEmotionToday && !state.dismissedEmotionFollowup) return "emotion_followup";
   if (state.suggestedGoalStatus && state.suggestedGoalStatus !== "all_completed" && !state.dismissedGoalFollowup) {

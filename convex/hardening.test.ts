@@ -238,10 +238,10 @@ describe("Priority 5 Step 2: Clinical Architecture Hardening Suite", () => {
   });
 
   // =========================================================================
-  // CATEGORY 2: MITRA DEDUPLICATION TESTS (MITRA-01 to MITRA-05)
+  // CATEGORY 2: EMOTY DEDUPLICATION TESTS (EMOTY-01 to EMOTY-05)
   // =========================================================================
 
-  test("MITRA-01 & MITRA-03: New user message creates exactly one authoritative AI companion log and NO duplicate companionMessages record", async () => {
+  test("EMOTY-01 & EMOTY-03: New user message creates exactly one authoritative AI companion log and NO duplicate companionMessages record", async () => {
     const { t, studentAId } = await setupTestEnvironment();
 
     const studentSession = t.withIdentity({ subject: studentAId });
@@ -265,7 +265,7 @@ describe("Priority 5 Step 2: Clinical Architecture Hardening Suite", () => {
     });
   });
 
-  test("MITRA-02: New assistant response creates exactly one authoritative AI companion log", async () => {
+  test("EMOTY-02: New assistant response creates exactly one authoritative AI companion log", async () => {
     const { t, studentAId } = await setupTestEnvironment();
 
     const studentSession = t.withIdentity({ subject: studentAId });
@@ -287,7 +287,7 @@ describe("Priority 5 Step 2: Clinical Architecture Hardening Suite", () => {
     });
   });
 
-  test("MITRA-04: Existing historical companionMessages remain untouched and queryable via fallback", async () => {
+  test("EMOTY-04: Existing historical companionMessages remain untouched and queryable via fallback", async () => {
     const { t, studentAId } = await setupTestEnvironment();
 
     // Insert historical legacy messages directly
@@ -308,7 +308,7 @@ describe("Priority 5 Step 2: Clinical Architecture Hardening Suite", () => {
     expect(history[0].content).toBe("Historical user message from previous version");
   });
 
-  test("MITRA-05: Student companion isolation remains intact", async () => {
+  test("EMOTY-05: Student companion isolation remains intact", async () => {
     const { t, studentAId, studentBId } = await setupTestEnvironment();
 
     const sessionA = t.withIdentity({ subject: studentAId });

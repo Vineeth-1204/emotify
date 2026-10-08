@@ -1,5 +1,5 @@
-import { v, ConvexError } from "convex/values";
-import { internalMutation } from "./_generated/server";
+import { v, ConvexError, type ObjectType } from "convex/values";
+import { internalMutation, type QueryCtx, type MutationCtx } from "./_generated/server";
 import { mutation, query } from "./functions";
 import { checkRateLimit } from "./rateLimiter";
 import { logAuditEvent } from "./audit";
@@ -1094,123 +1094,219 @@ export const markComplete = mutation({
 });
 
 // ==========================================
-// 6. PHASE 4: MITRA-LED MICROGOAL ORCHESTRATION
+// 6. PHASE 4: EMOTY-LED MICROGOAL ORCHESTRATION
 // ==========================================
 
-export const getMitraSuggestedGoal = query({
-  args: {
-    dateStr: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return null;
-    const userId = identity.subject;
+const getEmotySuggestedGoalArgs = {
+  dateStr: v.optional(v.string()),
+};
 
-    const todayStr =
-      args.dateStr && isValidCheckinDateStr(args.dateStr)
-        ? args.dateStr
-        : new Date().toISOString().split("T")[0];
+async function getEmotySuggestedGoalHandler(ctx: QueryCtx, args: ObjectType<typeof getEmotySuggestedGoalArgs>) {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) return null;
+  const userId = identity.subject;
 
-    let startOfDay: number;
-    let endOfDay: number;
-    if (todayStr && isValidCheckinDateStr(todayStr)) {
-      const [y, m, d] = todayStr.split("-").map(Number);
-      startOfDay = new Date(y, m - 1, d, 0, 0, 0, 0).getTime();
-      endOfDay = startOfDay + 24 * 60 * 60 * 1000;
-    } else {
-      const now = new Date();
-      startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-      endOfDay = startOfDay + 24 * 60 * 60 * 1000;
-    }
+  const todayStr =
+    args.dateStr && isValidCheckinDateStr(args.dateStr)
+      ? args.dateStr
+      : new Date().toISOString().split("T")[0];
 
-    const allUserGoals = await ctx.db
-      .query("microGoals")
-      .withIndex("by_userId", (q) => q.eq("userId", userId))
-      .collect();
+  let startOfDay: number;
+  let endOfDay: number;
+  if (todayStr && isValidCheckinDateStr(todayStr)) {
+    const [y, m, d] = todayStr.split("-").map(Number);
+    startOfDay = new Date(y, m - 1, d, 0, 0, 0, 0).getTime();
+    endOfDay = startOfDay + 24 * 60 * 60 * 1000;
+  } else {
+    const now = new Date();
+    startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    endOfDay = startOfDay + 24 * 60 * 60 * 1000;
+  }
 
-    const todayGoals = allUserGoals.filter((g) => (args.dateStr ? g.date === todayStr : (g.createdAt >= startOfDay && g.createdAt < endOfDay)));
+  const allUserGoals = await ctx.db
+    .query("microGoals")
+    .withIndex("by_userId", (q) => q.eq("userId", userId))
+    .collect();
 
-    // 1. If an active uncompleted and unskipped goal exists for today in DB:
-    const activeGoal = todayGoals.find((g) => !g.completed && !g.skipped);
-    if (activeGoal) {
-      return {
-        persisted: true,
-        _id: activeGoal._id,
-        goalId: activeGoal.goalId || (activeGoal as any).id || "water",
-        goalTitle: activeGoal.goalTitle || (activeGoal as any).goal || "Drink a glass of water",
-        goalDescription: activeGoal.goalDescription || "",
-        category: activeGoal.category,
-        difficulty: activeGoal.difficulty,
-        points: activeGoal.points || activeGoal.xpAwarded || 10,
-        completed: false,
-        skipped: false,
-        status: "active" as const,
-      };
-    }
+  const todayGoals = allUserGoals.filter((g) => (args.dateStr ? g.date === todayStr : (g.createdAt >= startOfDay && g.createdAt < endOfDay)));
 
-    // 2. If all today's goals are completed:
-    const completedGoals = todayGoals.filter((g) => g.completed);
-    if (todayGoals.length > 0 && completedGoals.length === todayGoals.length) {
-      const lastCompleted = completedGoals[completedGoals.length - 1];
-      return {
-        persisted: true,
-        _id: lastCompleted._id,
-        goalId: lastCompleted.goalId || (lastCompleted as any).id || "water",
-        goalTitle: lastCompleted.goalTitle || (lastCompleted as any).goal || "Drink a glass of water",
-        goalDescription: lastCompleted.goalDescription || "",
-        category: lastCompleted.category,
-        difficulty: lastCompleted.difficulty,
-        points: lastCompleted.points || lastCompleted.xpAwarded || 10,
-        completed: true,
-        skipped: false,
-        status: "all_completed" as const,
-      };
-    }
-
-    // 3. Otherwise, deterministically select today's small routine goal from the catalog:
-    const assignedHistory: AssignedGoalRecord[] = allUserGoals.map((g: any) => ({
-      goalId: g.goalId || g.id,
-      createdAt: g.createdAt,
-      date: g.date,
-    }));
-
-    const { selectedSmall } = selectDailyRoutineGoalsDeterministically({
-      userId,
-      dateStr: todayStr,
-      assignedHistory,
-      cooldownDays: 7,
-    });
-
-    const template = selectedSmall[0];
-    if (!template) return null;
-
+  // 1. If an active uncompleted and unskipped goal exists for today in DB:
+  const activeGoal = todayGoals.find((g) => !g.completed && !g.skipped);
+  if (activeGoal) {
     return {
-      persisted: false,
-      goalId: template.id,
-      goalTitle: template.title,
-      goalDescription: template.description,
-      category: template.category,
-      difficulty: template.difficulty,
-      points: template.points,
-      whyItHelps: template.whyItHelps,
-      estimatedTime: template.estimatedTime,
+      persisted: true,
+      _id: activeGoal._id,
+      goalId: activeGoal.goalId || (activeGoal as any).id || "water",
+      goalTitle: activeGoal.goalTitle || (activeGoal as any).goal || "Drink a glass of water",
+      goalDescription: activeGoal.goalDescription || "",
+      category: activeGoal.category,
+      difficulty: activeGoal.difficulty,
+      points: activeGoal.points || activeGoal.xpAwarded || 10,
       completed: false,
       skipped: false,
-      status: "suggested" as const,
+      status: "active" as const,
     };
-  },
-});
+  }
 
-export const acceptMitraGoal = mutation({
-  args: {
-    goalId: v.optional(v.string()),
-    dateStr: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new ConvexError("Unauthenticated");
-    const userId = identity.subject;
+  // 2. If all today's goals are completed:
+  const completedGoals = todayGoals.filter((g) => g.completed);
+  if (todayGoals.length > 0 && completedGoals.length === todayGoals.length) {
+    const lastCompleted = completedGoals[completedGoals.length - 1];
+    return {
+      persisted: true,
+      _id: lastCompleted._id,
+      goalId: lastCompleted.goalId || (lastCompleted as any).id || "water",
+      goalTitle: lastCompleted.goalTitle || (lastCompleted as any).goal || "Drink a glass of water",
+      goalDescription: lastCompleted.goalDescription || "",
+      category: lastCompleted.category,
+      difficulty: lastCompleted.difficulty,
+      points: lastCompleted.points || lastCompleted.xpAwarded || 10,
+      completed: true,
+      skipped: false,
+      status: "all_completed" as const,
+    };
+  }
 
+  // 3. Otherwise, deterministically select today's small routine goal from the catalog:
+  const assignedHistory: AssignedGoalRecord[] = allUserGoals.map((g: any) => ({
+    goalId: g.goalId || g.id,
+    createdAt: g.createdAt,
+    date: g.date,
+  }));
+
+  const { selectedSmall } = selectDailyRoutineGoalsDeterministically({
+    userId,
+    dateStr: todayStr,
+    assignedHistory,
+    cooldownDays: 7,
+  });
+
+  const template = selectedSmall[0];
+  if (!template) return null;
+
+  return {
+    persisted: false,
+    goalId: template.id,
+    goalTitle: template.title,
+    goalDescription: template.description,
+    category: template.category,
+    difficulty: template.difficulty,
+    points: template.points,
+    whyItHelps: template.whyItHelps,
+    estimatedTime: template.estimatedTime,
+    completed: false,
+    skipped: false,
+    status: "suggested" as const,
+  };
+}
+
+export const getEmotySuggestedGoal = query({ args: getEmotySuggestedGoalArgs, handler: getEmotySuggestedGoalHandler });
+
+/** @deprecated Pre-Emoty name kept so installed app versions keep working. Remove once every client uses `getEmotySuggestedGoal`. */
+export const getMitraSuggestedGoal = query({ args: getEmotySuggestedGoalArgs, handler: getEmotySuggestedGoalHandler });
+
+const acceptEmotyGoalArgs = {
+  goalId: v.optional(v.string()),
+  dateStr: v.optional(v.string()),
+};
+
+async function acceptEmotyGoalHandler(ctx: MutationCtx, args: ObjectType<typeof acceptEmotyGoalArgs>) {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) throw new ConvexError("Unauthenticated");
+  const userId = identity.subject;
+
+  const todayStr =
+    args.dateStr && isValidCheckinDateStr(args.dateStr)
+      ? args.dateStr
+      : new Date().toISOString().split("T")[0];
+
+  let startOfDay: number;
+  let endOfDay: number;
+  if (todayStr && isValidCheckinDateStr(todayStr)) {
+    const [y, m, d] = todayStr.split("-").map(Number);
+    startOfDay = new Date(y, m - 1, d, 0, 0, 0, 0).getTime();
+    endOfDay = startOfDay + 24 * 60 * 60 * 1000;
+  } else {
+    const now = new Date();
+    startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    endOfDay = startOfDay + 24 * 60 * 60 * 1000;
+  }
+
+  const allUserGoals = await ctx.db
+    .query("microGoals")
+    .withIndex("by_userId", (q) => q.eq("userId", userId))
+    .collect();
+
+  const todayGoals = allUserGoals.filter((g) => (args.dateStr ? g.date === todayStr : (g.createdAt >= startOfDay && g.createdAt < endOfDay)));
+
+  // If a matching goal is already in DB for today:
+  if (args.goalId) {
+    const existingMatch = todayGoals.find((g: any) => (g.goalId === args.goalId || g._id === args.goalId) && !g.completed && !g.skipped);
+    if (existingMatch) {
+      return {
+        id: existingMatch._id,
+        goalId: existingMatch.goalId,
+        goalTitle: existingMatch.goalTitle,
+        goalDescription: existingMatch.goalDescription,
+        points: existingMatch.points,
+        category: existingMatch.category,
+      };
+    }
+  }
+
+  // If any active uncompleted goal exists:
+  const activeGoal = todayGoals.find((g: any) => !g.completed && !g.skipped);
+  if (activeGoal) {
+    return {
+      id: activeGoal._id,
+      goalId: activeGoal.goalId,
+      goalTitle: activeGoal.goalTitle,
+      goalDescription: activeGoal.goalDescription,
+      points: activeGoal.points,
+      category: activeGoal.category,
+    };
+  }
+
+  // Otherwise, generate today's standard recommended goals via existing deterministic engine:
+  const insertedIds = await generateRecommendedGoals(ctx, userId, "okay", todayStr);
+  const firstGoal = (await ctx.db.get(insertedIds[0])) as any;
+  if (!firstGoal) throw new ConvexError("Failed to initialize recommended goal");
+  return {
+    id: firstGoal._id,
+    goalId: firstGoal.goalId,
+    goalTitle: firstGoal.goalTitle,
+    goalDescription: firstGoal.goalDescription,
+    points: firstGoal.points,
+    category: firstGoal.category,
+  };
+}
+
+export const acceptEmotyGoal = mutation({ args: acceptEmotyGoalArgs, handler: acceptEmotyGoalHandler });
+
+/** @deprecated Pre-Emoty name kept so installed app versions keep working. Remove once every client uses `acceptEmotyGoal`. */
+export const acceptMitraGoal = mutation({ args: acceptEmotyGoalArgs, handler: acceptEmotyGoalHandler });
+
+const skipEmotyGoalArgs = {
+  id: v.optional(v.id("microGoals")),
+  goalId: v.optional(v.string()),
+  dateStr: v.optional(v.string()),
+};
+
+async function skipEmotyGoalHandler(ctx: MutationCtx, args: ObjectType<typeof skipEmotyGoalArgs>) {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) throw new ConvexError("Unauthenticated");
+  const userId = identity.subject;
+
+  if (args.id) {
+    const goal = await ctx.db.get(args.id);
+    if (!goal) throw new ConvexError("Goal not found");
+    if (goal.userId !== userId) throw new ConvexError("Unauthorized");
+    await ctx.db.patch(args.id, { skipped: true, reminderStatus: "missed" });
+    return { success: true, message: "No problem. We can try something else later." };
+  }
+
+  // If goal is referenced by goalId
+  if (args.goalId) {
     const todayStr =
       args.dateStr && isValidCheckinDateStr(args.dateStr)
         ? args.dateStr
@@ -1233,103 +1329,19 @@ export const acceptMitraGoal = mutation({
       .withIndex("by_userId", (q) => q.eq("userId", userId))
       .collect();
 
-    const todayGoals = allUserGoals.filter((g) => (args.dateStr ? g.date === todayStr : (g.createdAt >= startOfDay && g.createdAt < endOfDay)));
-
-    // If a matching goal is already in DB for today:
-    if (args.goalId) {
-      const existingMatch = todayGoals.find((g: any) => (g.goalId === args.goalId || g._id === args.goalId) && !g.completed && !g.skipped);
-      if (existingMatch) {
-        return {
-          id: existingMatch._id,
-          goalId: existingMatch.goalId,
-          goalTitle: existingMatch.goalTitle,
-          goalDescription: existingMatch.goalDescription,
-          points: existingMatch.points,
-          category: existingMatch.category,
-        };
-      }
+    const todayGoals = allUserGoals.filter((g) => g.createdAt >= startOfDay && g.createdAt < endOfDay);
+    const match = todayGoals.find((g: any) => g.goalId === args.goalId && !g.completed && !g.skipped);
+    if (match) {
+      if (match.userId !== userId) throw new ConvexError("Unauthorized");
+      await ctx.db.patch(match._id, { skipped: true, reminderStatus: "missed" });
     }
+  }
 
-    // If any active uncompleted goal exists:
-    const activeGoal = todayGoals.find((g: any) => !g.completed && !g.skipped);
-    if (activeGoal) {
-      return {
-        id: activeGoal._id,
-        goalId: activeGoal.goalId,
-        goalTitle: activeGoal.goalTitle,
-        goalDescription: activeGoal.goalDescription,
-        points: activeGoal.points,
-        category: activeGoal.category,
-      };
-    }
+  return { success: true, message: "No problem. We can try something else later." };
+}
 
-    // Otherwise, generate today's standard recommended goals via existing deterministic engine:
-    const insertedIds = await generateRecommendedGoals(ctx, userId, "okay", todayStr);
-    const firstGoal = (await ctx.db.get(insertedIds[0])) as any;
-    if (!firstGoal) throw new ConvexError("Failed to initialize recommended goal");
-    return {
-      id: firstGoal._id,
-      goalId: firstGoal.goalId,
-      goalTitle: firstGoal.goalTitle,
-      goalDescription: firstGoal.goalDescription,
-      points: firstGoal.points,
-      category: firstGoal.category,
-    };
-  },
-});
+export const skipEmotyGoal = mutation({ args: skipEmotyGoalArgs, handler: skipEmotyGoalHandler });
 
-export const skipMitraGoal = mutation({
-  args: {
-    id: v.optional(v.id("microGoals")),
-    goalId: v.optional(v.string()),
-    dateStr: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new ConvexError("Unauthenticated");
-    const userId = identity.subject;
-
-    if (args.id) {
-      const goal = await ctx.db.get(args.id);
-      if (!goal) throw new ConvexError("Goal not found");
-      if (goal.userId !== userId) throw new ConvexError("Unauthorized");
-      await ctx.db.patch(args.id, { skipped: true, reminderStatus: "missed" });
-      return { success: true, message: "No problem. We can try something else later." };
-    }
-
-    // If goal is referenced by goalId
-    if (args.goalId) {
-      const todayStr =
-        args.dateStr && isValidCheckinDateStr(args.dateStr)
-          ? args.dateStr
-          : new Date().toISOString().split("T")[0];
-
-      let startOfDay: number;
-      let endOfDay: number;
-      if (todayStr && isValidCheckinDateStr(todayStr)) {
-        const [y, m, d] = todayStr.split("-").map(Number);
-        startOfDay = new Date(y, m - 1, d, 0, 0, 0, 0).getTime();
-        endOfDay = startOfDay + 24 * 60 * 60 * 1000;
-      } else {
-        const now = new Date();
-        startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-        endOfDay = startOfDay + 24 * 60 * 60 * 1000;
-      }
-
-      const allUserGoals = await ctx.db
-        .query("microGoals")
-        .withIndex("by_userId", (q) => q.eq("userId", userId))
-        .collect();
-
-      const todayGoals = allUserGoals.filter((g) => g.createdAt >= startOfDay && g.createdAt < endOfDay);
-      const match = todayGoals.find((g: any) => g.goalId === args.goalId && !g.completed && !g.skipped);
-      if (match) {
-        if (match.userId !== userId) throw new ConvexError("Unauthorized");
-        await ctx.db.patch(match._id, { skipped: true, reminderStatus: "missed" });
-      }
-    }
-
-    return { success: true, message: "No problem. We can try something else later." };
-  },
-});
+/** @deprecated Pre-Emoty name kept so installed app versions keep working. Remove once every client uses `skipEmotyGoal`. */
+export const skipMitraGoal = mutation({ args: skipEmotyGoalArgs, handler: skipEmotyGoalHandler });
 

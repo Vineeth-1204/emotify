@@ -8,7 +8,7 @@ import { useAppAuth } from "@/utils/auth";
 import { Ionicons } from "@expo/vector-icons";
 import { useThemeColors } from "@/context/MoodThemeContext";
 import { Calendar } from "react-native-calendars";
-import { EmotyAvatar, MitraAvatar } from "@/components/avatar/EmotyAvatar";
+import { EmotyAvatar } from "@/components/avatar/EmotyAvatar";
 
 const HOURS = Array.from({ length: 12 }, (_, i) => (i + 1).toString().padStart(2, '0'));
 const MINUTES = Array.from({ length: 60 }, (_, i) => i.toString().padStart(2, '0'));
@@ -424,7 +424,7 @@ export default function AppointmentsScreen() {
         <View style={[StyleSheet.absoluteFill, { zIndex: 9999, justifyContent: 'center', alignItems: 'center', backgroundColor: colors.background + 'EE' }]}>
            <Animated.View style={{ transform: [{ scale: scaleAnim }], alignItems: 'center', backgroundColor: colors.surface, padding: 32, borderRadius: 24, shadowOpacity: 0.2, shadowRadius: 20, elevation: 10 }}>
              <View style={{ marginBottom: 16 }}>
-               <MitraAvatar state="celebrating" size="md" />
+               <EmotyAvatar state="celebrating" size="md" />
              </View>
              <Text style={{ fontSize: 28, fontWeight: 'bold', color: colors.primary, marginBottom: 20 }}>Confirmed!</Text>
              {selectedAppt && (

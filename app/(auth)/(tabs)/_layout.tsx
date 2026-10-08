@@ -11,7 +11,8 @@ import { Button } from "@/components/ui/Button";
 import { BlurView } from "expo-blur";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { ShieldSafetyIcon } from "@/components/svg/system";
+import { EmotyPresence } from "@/components/avatar/EmotyPresence";
+import { getEmotyPresence } from "@/common/emotyPresence";
 
 import { useLanguage } from "@/context/LanguageContext";
 import { CRISIS_RESOURCES, HELPLINE_DIAL_URL, EMERGENCY_DIAL_URL } from "@/common/crisisResources";
@@ -77,7 +78,7 @@ export default function TabLayout() {
           <Ionicons name="close" size={28} color={colors.textSecondary} />
         </TouchableOpacity>
         <View style={{ alignItems: 'center', marginBottom: 20 }}>
-          <ShieldSafetyIcon size={64} color={colors.error} />
+          <EmotyPresence presence={getEmotyPresence({ scene: "safety" })} layout="stacked" size="md" />
         </View>
         <Text style={[styles.emergencyTitle, { color: colors.error, textAlign: 'center' }]}>Safety Priority</Text>
         <Text style={[styles.emergencyText, { color: colors.text, textAlign: 'center', marginVertical: Theme.spacing.xl, fontSize: 18 }]}>

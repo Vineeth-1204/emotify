@@ -12,12 +12,10 @@
  *   riveAsset: require('@/assets/rive/emoty_boy.riv'),
  * Screens do not change.
  *
- * The girl character is not in the repository yet. Her reference illustration must be
- * assets/emoty_girl_avatar.jpg (1024x1024 RGB JPG, same illustration style, framing,
- * proportions and soft sky-blue backdrop as emoty_boy_avatar.jpg, head and shoulders
- * centred). Once it exists set:
- *   girl: { riveAsset: null, fallbackAsset: require('@/assets/emoty_girl_avatar.jpg') },
- * Until then the girl preference shows the boy character, as before.
+ * Reference illustrations (the identity each .riv must match):
+ *   boy:  assets/emoty_boy_avatar.jpg  (1024x1024 RGB JPG)
+ *   girl: assets/emoty_girl_avatar.png (1254x1254 RGB PNG)
+ * Both are square, head and shoulders centred, on the same soft sky-blue backdrop.
  */
 import type { ImageSourcePropType } from 'react-native';
 import type { EmotyAvatarState } from '@/common/avatarPresentation';
@@ -28,7 +26,7 @@ export type EmotyCharacterId = 'boy' | 'girl';
 export interface EmotyCharacterConfig {
   /** Bundled .riv (require() result) implementing EMOTY_RIVE_CONTRACT, or null. */
   riveAsset: number | null;
-  /** Static illustration; null means the character is not available yet. */
+  /** Static illustration; null would mean the character is not available (falls back to the boy). */
   fallbackAsset: ImageSourcePropType | null;
   /** Optional eyes-closed frame (same framing as fallbackAsset) for an occasional blink. */
   blink?: ImageSourcePropType;
@@ -47,7 +45,7 @@ export const CANONICAL_EMOTY_BOY_AVATAR: ImageSourcePropType = require('@/assets
 
 export const EMOTY_AVATAR_CONFIG: Record<EmotyCharacterId, EmotyCharacterConfig> = {
   boy: { riveAsset: null, fallbackAsset: CANONICAL_EMOTY_BOY_AVATAR },
-  girl: { riveAsset: null, fallbackAsset: null },
+  girl: { riveAsset: null, fallbackAsset: require('@/assets/emoty_girl_avatar.png') },
 };
 
 /** Stored preferences use 'male' | 'female'; the avatar API also accepts 'boy' | 'girl'. */

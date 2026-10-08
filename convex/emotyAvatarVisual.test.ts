@@ -457,9 +457,15 @@ describe("Emoty feels alive without demanding attention", () => {
     expect(componentCode).toContain("if (!character.blink || reduceMotion) return;");
   });
 
-  test("the girl character has her own config slot", () => {
+  test("the girl character uses her own PNG illustration", () => {
     const configCode = fs.readFileSync(path.resolve(__dirname, "../components/avatar/emotyAvatarConfig.ts"), "utf-8");
-    expect(configCode).toMatch(/girl: \{ riveAsset: [^,]+, fallbackAsset: (null|require\('@\/assets\/emoty_girl_avatar\.jpg'\)) \}/);
+    expect(configCode).toMatch(/girl: \{ riveAsset: [^,]+, fallbackAsset: require\('@\/assets\/emoty_girl_avatar\.png'\) \}/);
+    expect(configCode).not.toContain("emoty_girl_avatar.jpg");
+
+    const png = fs.readFileSync(path.resolve(__dirname, "../assets/emoty_girl_avatar.png"));
+    // PNG signature, then a square IHDR (width === height)
+    expect([...png.subarray(0, 8)]).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    expect(png.readUInt32BE(16)).toBe(png.readUInt32BE(20));
   });
 });
 

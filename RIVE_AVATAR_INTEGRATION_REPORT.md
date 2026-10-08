@@ -11,13 +11,13 @@ Branch `claude/blissful-knuth-04nxs0`, on top of `19afe4d`.
 
 ### Girl reference asset
 
-`assets/emoty_girl_avatar.jpg` does not exist. I ran `git fetch origin` and searched:
-- `origin/claude/blissful-knuth-04nxs0`;
-- `origin/main`;
-- all git history (`git log --all -- 'assets/emoty_girl_avatar*'`);
-- the working tree, for `*girl*` and `*.riv` files.
+Update: the girl reference was added as **`assets/emoty_girl_avatar.png`** (commit `0b74ab9`). It is a 1254×1254 RGB PNG of about 2.5 MB. I inspected it, and it is the intended Emoty girl:
+- the same 3D cartoon illustration style, soft sky-blue backdrop and head-and-shoulders framing as the boy;
+- her own identity: long dark-brown wavy hair, brown eyes, freckles and a pink hoodie.
 
-Nothing was found. The only character artwork is `assets/emoty_boy_avatar.jpg` (1024×1024 RGB JPEG). The girl preference therefore still shows the boy character, as before. Nothing was invented for her.
+It is now the girl's `fallbackAsset`. When this report was first written, no girl artwork existed, and the girl preference showed the boy.
+
+The boy reference is unchanged: `assets/emoty_boy_avatar.jpg`, a 1024×1024 RGB JPEG.
 
 ### Versions
 
@@ -147,7 +147,7 @@ Both characters use the same contract (`EMOTY_RIVE_CONTRACT`, `common/avatarEmot
 | Item | Required value |
 | --- | --- |
 | Files | `assets/rive/emoty_boy.riv`, `assets/rive/emoty_girl.riv` |
-| Artboard | `Emoty`: square, head and shoulders centred, same framing as the reference JPG (it is cropped to a circle) |
+| Artboard | `Emoty`: square, head and shoulders centred, same framing as the character's reference illustration (it is cropped to a circle) |
 | State machine | `EmotyStateMachine`, initial state `Idle` |
 | Input `emotion` (Number) | `0` → `Idle`, `1` → `Happy`, `2` → `Encouraging`, `3` → `Thinking`, `4` → `Concerned`. Transitions from Any State, with a ~250–400 ms blend |
 | Input `speaking` (Boolean) | Gentle talk/mouth layer while true |
@@ -162,17 +162,17 @@ What each state should look like:
 
 Shared requirements:
 - **Boy:** must match `assets/emoty_boy_avatar.jpg`: same face, hair, outfit, palette, illustration style and soft sky-blue backdrop.
-- **Girl:** the visual reference `assets/emoty_girl_avatar.jpg` **does not exist yet** and must be supplied first: 1024×1024 RGB JPG, the same style, framing, proportions and backdrop as the boy. Her `.riv` must match that illustration.
-- **Both:** an opaque backdrop matching the JPG, so the swap from illustration to Rive is seamless; low file size (target under 300 KB); no text, no external assets, no audio.
+- **Girl:** must match `assets/emoty_girl_avatar.png`: the same face, long dark-brown wavy hair, freckles, pink hoodie, palette, illustration style and sky-blue backdrop.
+- **Both:** an opaque backdrop matching the reference illustration, so the swap from illustration to Rive is seamless; low file size (target under 300 KB); no text, no external assets, no audio.
 
 Wiring each file is one line in `components/avatar/emotyAvatarConfig.ts`:
 
 ```ts
 boy:  { riveAsset: require('@/assets/rive/emoty_boy.riv'), fallbackAsset: CANONICAL_EMOTY_BOY_AVATAR },
-girl: { riveAsset: require('@/assets/rive/emoty_girl.riv'), fallbackAsset: require('@/assets/emoty_girl_avatar.jpg') },
+girl: { riveAsset: require('@/assets/rive/emoty_girl.riv'), fallbackAsset: require('@/assets/emoty_girl_avatar.png') },
 ```
 
-A character needs its `fallbackAsset` before it can be used; without one it falls back to the boy. The girl JPG is therefore a prerequisite for the girl `.riv`.
+A character needs its `fallbackAsset` before it can be used; without one it falls back to the boy. Both characters now have one.
 
 ## 5. Remaining work
 
@@ -190,11 +190,11 @@ A character needs its `fallbackAsset` before it can be used; without one it fall
 ### Rive artwork
 
 - `emoty_boy.riv` built from the boy JPG to the contract above.
-- `emoty_girl.riv` built from the girl JPG.
+- `emoty_girl.riv` built from the girl PNG.
 
 ### Manual design
 
-- Supply `assets/emoty_girl_avatar.jpg`.
+- Optional: the girl PNG is about 2.5 MB, against the boy's 624 KB. A losslessly optimised or 1024×1024 export would cut the app size.
 - Sign off on how gentle the "concerned" state looks.
 - Check the framing at xs (32 px) and lg (140 px).
 

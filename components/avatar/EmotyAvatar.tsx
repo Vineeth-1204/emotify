@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Image,
@@ -8,10 +8,12 @@ import {
   StyleSheet,
   TouchableOpacity,
   AccessibilityInfo,
-  ImageSourcePropType,
 } from 'react-native';
 import { useAvatar } from '@/context/AvatarContext';
 import { resolveAvatarPresentationState } from '@/common/avatarPresentation';
+import { AVATAR_EMOTION_STATE, avatarEmotionForState, type AvatarEmotion } from '@/common/avatarEmotion';
+import { getEmotyCharacter, toEmotyCharacterId } from './emotyAvatarConfig';
+import { EmotyRiveCharacter, isRiveRuntimeAvailable } from './EmotyRiveCharacter';
 
 export type AvatarState =
   | 'idle'
@@ -32,7 +34,10 @@ export type AvatarGender = 'female' | 'male' | 'girl' | 'boy';
 
 export interface EmotyAvatarProps {
   gender?: AvatarGender;
+  /** Presentation state, normally from getEmotyPresence(); drives aura and the illustration. */
   state?: AvatarState | 'neutral' | 'grounding';
+  /** Animated-character emotion; derived from `state` when omitted. */
+  emotion?: AvatarEmotion;
   size?: number | 'xs' | 'sm' | 'md' | 'lg' | 'xl';
   ageGroup?: '13-18' | '19-24';
   interactive?: boolean;
@@ -41,6 +46,11 @@ export interface EmotyAvatarProps {
   style?: any;
   /** True while Emoty is actively speaking (e.g. voice playback): shows a soft halo pulse. */
   speaking?: boolean;
+  /**
+   * Companion presence: render the animated (Rive) character when the character has one.
+   * Pickers, lists and decorative uses leave this off and always show the illustration.
+   */
+  live?: boolean;
 }
 
 
@@ -51,40 +61,6 @@ export const SIZE_MAP: Record<string, number> = {
   lg: 140,
   xl: 180,
 };
-
-// Canonical Emoty Boy Character Illustration
-export const CANONICAL_EMOTY_BOY_AVATAR: ImageSourcePropType = require('@/assets/emoty_boy_avatar.jpg');
-
-/**
- * Artwork for one Emoty character. Every image must use the same square framing as `base`
- * so frames can be swapped without the avatar jumping.
- */
-export interface EmotyCharacterAssets {
-  base: ImageSourcePropType;
-  /** Optional eyes-closed frame; when present Emoty blinks occasionally while at rest. */
-  blink?: ImageSourcePropType;
-  /** Optional per-state expression frames (e.g. happy, thinking); `base` is used otherwise. */
-  expressions?: Partial<Record<AvatarState, ImageSourcePropType>>;
-}
-
-/**
- * Character registry, keyed by the student's avatar preference.
- *
- * The female character is not in the repository yet. To add her, place the artwork at
- * assets/emoty_girl_avatar.jpg (1024x1024 RGB JPG, same illustration style, framing,
- * proportions and soft sky-blue backdrop as emoty_boy_avatar.jpg, head and shoulders
- * centred) and set:
- *   female: { base: require('@/assets/emoty_girl_avatar.jpg') },
- * Until then the female preference falls back to the canonical character.
- */
-export const EMOTY_CHARACTERS: Record<'male' | 'female', EmotyCharacterAssets | null> = {
-  male: { base: CANONICAL_EMOTY_BOY_AVATAR },
-  female: null,
-};
-
-export function getEmotyCharacter(gender: 'male' | 'female'): EmotyCharacterAssets {
-  return EMOTY_CHARACTERS[gender] ?? (EMOTY_CHARACTERS.male as EmotyCharacterAssets);
-}
 
 export interface StateAuraConfig {
   ringColor: string;
@@ -177,12 +153,15 @@ export const STATE_AURA_MAP: Record<AvatarState, StateAuraConfig> = {
 /**
  * EmotyAvatar — Canonical Production Visual Component.
  *
- * Renders the authoritative Emoty boy character visual (assets/emoty_boy_avatar.jpg)
- * while preserving the complete AI-3 avatar architecture and 13 approved states.
+ * Renders the student's Emoty character (artwork from emotyAvatarConfig.ts) in one of the
+ * 13 approved presentation states. With `live`, a character that has a .riv is rendered by
+ * the Rive state machine (EmotyRiveCharacter), driven by the 5-emotion contract in
+ * common/avatarEmotion.ts; the illustration stays as the loading and failure fallback.
  */
 export const EmotyAvatar: React.FC<EmotyAvatarProps> = ({
   gender: propGender,
-  state: rawState = 'idle',
+  state: propState,
+  emotion: propEmotion,
   size: rawSize = 140,
   ageGroup = '13-18',
   interactive = true,
@@ -190,6 +169,7 @@ export const EmotyAvatar: React.FC<EmotyAvatarProps> = ({
   accessibilityLabel,
   style,
   speaking = false,
+  live = false,
 }) => {
   // Gracefully read context if available without crashing outside provider
   let contextGender: 'female' | 'male' = 'female';
@@ -203,14 +183,31 @@ export const EmotyAvatar: React.FC<EmotyAvatarProps> = ({
   }
 
   const rawGender = propGender || contextGender;
-  const isMale = rawGender === 'male' || rawGender === 'boy';
-  const effectiveGender: 'female' | 'male' = isMale ? 'male' : 'female';
+  const effectiveGender = toEmotyCharacterId(rawGender);
 
   const size = typeof rawSize === 'number' ? rawSize : (SIZE_MAP[rawSize] ?? 140);
+  const rawState = propState ?? (propEmotion ? AVATAR_EMOTION_STATE[propEmotion] : 'idle');
   const state: AvatarState = resolveAvatarPresentationState({
     explicitAvatarState: rawState,
     defaultState: 'idle',
   });
+  const emotion: AvatarEmotion = propEmotion ?? avatarEmotionForState(state);
+
+  const character = getEmotyCharacter(effectiveGender);
+  const imageSource = character.expressions?.[state] ?? character.fallbackAsset;
+
+  // Rive character: only for companion presence, only when the character has a .riv and the
+  // runtime is in this build. Status is tracked per source so switching character starts over.
+  const riveSource = live && character.riveAsset != null && isRiveRuntimeAvailable() ? character.riveAsset : null;
+  const [riveLoad, setRiveLoad] = useState<{ source: number | null; status: 'loading' | 'ready' | 'failed' }>({
+    source: null,
+    status: 'loading',
+  });
+  const riveStatus = riveLoad.source === riveSource ? riveLoad.status : 'loading';
+  const showRive = riveSource !== null && riveStatus !== 'failed';
+  const riveReady = showRive && riveStatus === 'ready';
+  const handleRiveReady = useCallback(() => setRiveLoad({ source: riveSource, status: 'ready' }), [riveSource]);
+  const handleRiveUnavailable = useCallback(() => setRiveLoad({ source: riveSource, status: 'failed' }), [riveSource]);
 
   // Track image loading failure for safe fail-closed rendering
   const [imageError, setImageError] = useState(false);
@@ -258,8 +255,9 @@ export const EmotyAvatar: React.FC<EmotyAvatarProps> = ({
   const amp = Math.max(1, Math.min(4, size * 0.03));
 
   // Per-state motion: a short intro gesture, a few ambient cycles, then settle to rest.
+  // A ready Rive character animates itself, so the frame stays still.
   useEffect(() => {
-    if (reduceMotion) {
+    if (reduceMotion || riveReady) {
       scaleAnim.setValue(1);
       liftAnim.setValue(0);
       tiltAnim.setValue(0);
@@ -279,7 +277,7 @@ export const EmotyAvatar: React.FC<EmotyAvatarProps> = ({
     });
 
     return () => motion.stop();
-  }, [state, reduceMotion, amp]);
+  }, [state, reduceMotion, amp, riveReady]);
 
   // Speaking: soft halo pulse only while Emoty is actively speaking
   useEffect(() => {
@@ -301,13 +299,11 @@ export const EmotyAvatar: React.FC<EmotyAvatarProps> = ({
     return () => pulse.stop();
   }, [speaking, reduceMotion]);
 
-  const character = getEmotyCharacter(effectiveGender);
-  const imageSource = character.expressions?.[state] ?? character.base;
-
-  // Occasional natural blink, only when the character provides an eyes-closed frame
+  // Occasional natural blink, only when the illustration provides an eyes-closed frame
   const blinkAnim = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     if (!character.blink || reduceMotion) return;
+    if (riveReady) return;
     let timer: ReturnType<typeof setTimeout>;
     let cancelled = false;
     const scheduleBlink = () => {
@@ -325,7 +321,7 @@ export const EmotyAvatar: React.FC<EmotyAvatarProps> = ({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [character.blink, reduceMotion]);
+  }, [character.blink, reduceMotion, riveReady]);
 
   const isHero = size >= 140;
   const aura = STATE_AURA_MAP[state] ?? STATE_AURA_MAP.idle;
@@ -347,6 +343,7 @@ export const EmotyAvatar: React.FC<EmotyAvatarProps> = ({
   const innerSize = size - effectiveRingWidth * 2;
   const heroImageScale = isHero ? 1.07 : 1.0;
   const heroImageTranslateY = isHero ? size * 0.025 : 0;
+  const imageTransform = [{ scale: heroImageScale }, { translateY: heroImageTranslateY }];
 
   const content = (
     <Animated.View style={[styles.avatarWrapper, { opacity: enterOpacity }]}>
@@ -398,32 +395,33 @@ export const EmotyAvatar: React.FC<EmotyAvatarProps> = ({
           },
         ]}
       >
-        {imageError ? (
-          <View
-            style={[
-              styles.fallbackContainer,
-              {
-                width: innerSize,
-                height: innerSize,
-                borderRadius: innerSize / 2,
-              },
-            ]}
-          >
-            <Text style={[styles.fallbackInitial, { fontSize: Math.max(size * 0.4, 12) }]}>
-              E
-            </Text>
-          </View>
-        ) : (
-          <View
-            style={[
-              styles.imageClipContainer,
-              {
-                width: innerSize,
-                height: innerSize,
-                borderRadius: innerSize / 2,
-              },
-            ]}
-          >
+        <View
+          style={[
+            styles.imageClipContainer,
+            {
+              width: innerSize,
+              height: innerSize,
+              borderRadius: innerSize / 2,
+            },
+          ]}
+        >
+          {!riveReady && imageError && (
+            <View
+              style={[
+                styles.fallbackContainer,
+                {
+                  width: innerSize,
+                  height: innerSize,
+                  borderRadius: innerSize / 2,
+                },
+              ]}
+            >
+              <Text style={[styles.fallbackInitial, { fontSize: Math.max(size * 0.4, 12) }]}>
+                E
+              </Text>
+            </View>
+          )}
+          {!riveReady && !imageError && (
             <Image
               source={imageSource}
               style={[
@@ -432,36 +430,51 @@ export const EmotyAvatar: React.FC<EmotyAvatarProps> = ({
                   width: innerSize,
                   height: innerSize,
                   borderRadius: innerSize / 2,
-                  transform: [
-                    { scale: heroImageScale },
-                    { translateY: heroImageTranslateY },
-                  ],
+                  transform: imageTransform,
                 },
               ]}
               resizeMode="cover"
               onError={() => setImageError(true)}
               accessible={false}
             />
-            {character.blink && (
-              <Animated.Image
-                source={character.blink}
-                style={[
-                  StyleSheet.absoluteFillObject,
-                  {
-                    width: innerSize,
-                    height: innerSize,
-                    borderRadius: innerSize / 2,
-                    opacity: blinkAnim,
-                    transform: [{ scale: heroImageScale }, { translateY: heroImageTranslateY }],
-                  },
-                ]}
-                resizeMode="cover"
-                accessible={false}
+          )}
+          {character.blink && !riveReady && (
+            <Animated.Image
+              source={character.blink}
+              style={[
+                StyleSheet.absoluteFillObject,
+                {
+                  width: innerSize,
+                  height: innerSize,
+                  borderRadius: innerSize / 2,
+                  opacity: blinkAnim,
+                  transform: imageTransform,
+                },
+              ]}
+              resizeMode="cover"
+              accessible={false}
+            />
+          )}
+          {showRive && riveSource !== null && (
+            // Same framing as the illustration; hidden until the first emotion is applied
+            <View
+              key={riveSource}
+              style={[StyleSheet.absoluteFillObject, styles.riveLayer, { opacity: riveReady ? 1 : 0, transform: imageTransform }]}
+              pointerEvents="none"
+            >
+              <EmotyRiveCharacter
+                source={riveSource}
+                emotion={emotion}
+                speaking={speaking}
+                reducedMotion={reduceMotion}
+                size={innerSize}
+                onReady={handleRiveReady}
+                onUnavailable={handleRiveUnavailable}
               />
-            )}
-            {isHero && <View style={[styles.heroInnerRim, { borderRadius: innerSize / 2 }]} />}
-          </View>
-        )}
+            </View>
+          )}
+          {isHero && <View style={[styles.heroInnerRim, { borderRadius: innerSize / 2 }]} />}
+        </View>
       </Animated.View>
     </Animated.View>
   );
@@ -522,6 +535,10 @@ const styles = StyleSheet.create({
   },
   imageClipContainer: {
     overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  riveLayer: {
     alignItems: 'center',
     justifyContent: 'center',
   },

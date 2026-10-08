@@ -736,6 +736,7 @@ export default function DashboardScreen() {
                 gender={avatarGender}
                 state={homePresence.avatarState} 
                 size={ageCohort === "13-18" ? "md" : "sm"} 
+                live
               />
               <View style={[styles.avatarNameBadge, { backgroundColor: colors.primary + '15' }]}>
                 <Text style={[styles.avatarNameBadgeText, { color: colors.primary }]}>{avatarName}</Text>

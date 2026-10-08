@@ -950,7 +950,7 @@ export default function ReframeScreen() {
           >
             <View style={styles.glassCard}>
               <View style={{ alignItems: "center", marginVertical: 20 }}>
-                <EmotyAvatar gender={avatarGender} state={reframePresence.avatarState} size="md" />
+                <EmotyAvatar gender={avatarGender} state={reframePresence.avatarState} size="md" live />
               </View>
               <Text style={styles.stepTitle}>Reflection Completed!</Text>
               <Text style={styles.stepSub}>

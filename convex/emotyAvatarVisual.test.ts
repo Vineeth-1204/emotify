@@ -16,6 +16,7 @@ describe("AI-3 Step 6B: Avatar Visual Replacement (AVATAR-VISUAL-01 to AVATAR-VI
   const rootDir = path.resolve(__dirname, "..");
   const canonicalAssetPath = path.join(rootDir, "assets", "emoty_boy_avatar.jpg");
   const avatarComponentPath = path.join(rootDir, "components", "avatar", "EmotyAvatar.tsx");
+  const avatarConfigPath = path.join(rootDir, "components", "avatar", "emotyAvatarConfig.ts");
 
   // =========================================================================
   // 1. CANONICAL ASSET VERIFICATION (AVATAR-VISUAL-01, AVATAR-VISUAL-02)
@@ -36,10 +37,11 @@ describe("AI-3 Step 6B: Avatar Visual Replacement (AVATAR-VISUAL-01 to AVATAR-VI
     expect(buf[1]).toBe(0xd8);
     expect(buf[2]).toBe(0xff);
 
-    // 3. EmotyAvatar component explicitly references this canonical asset
-    const componentCode = fs.readFileSync(avatarComponentPath, "utf-8");
-    expect(componentCode).toContain("assets/emoty_boy_avatar.jpg");
-    expect(componentCode).toContain("CANONICAL_EMOTY_BOY_AVATAR");
+    // 3. The avatar config explicitly references this canonical asset and EmotyAvatar reads that config
+    const configCode = fs.readFileSync(avatarConfigPath, "utf-8");
+    expect(configCode).toContain("assets/emoty_boy_avatar.jpg");
+    expect(configCode).toContain("CANONICAL_EMOTY_BOY_AVATAR");
+    expect(fs.readFileSync(avatarComponentPath, "utf-8")).toContain("from './emotyAvatarConfig'");
   });
 
   test("AVATAR-VISUAL-02: EmotyAvatar renders the new character asset via Image component", () => {
@@ -49,7 +51,7 @@ describe("AI-3 Step 6B: Avatar Visual Replacement (AVATAR-VISUAL-01 to AVATAR-VI
     expect(componentCode).toContain("<Image");
     // Character artwork comes from the per-gender registry; the canonical character is the male entry
     expect(componentCode).toContain("source={imageSource}");
-    expect(componentCode).toContain("male: { base: CANONICAL_EMOTY_BOY_AVATAR }");
+    expect(fs.readFileSync(avatarConfigPath, "utf-8")).toMatch(/boy: \{ riveAsset: [^,]+, fallbackAsset: CANONICAL_EMOTY_BOY_AVATAR \}/);
     expect(componentCode).toContain("getEmotyCharacter(effectiveGender)");
     expect(componentCode).toContain('resizeMode="cover"');
     // Must NOT contain old SVG human face geometry
@@ -328,12 +330,13 @@ describe("AI-3 Step 6C: Avatar Hero Refinement (HERO-01 to HERO-08)", () => {
   const rootDir = path.resolve(__dirname, "..");
   const canonicalAssetPath = path.join(rootDir, "assets", "emoty_boy_avatar.jpg");
   const avatarComponentPath = path.join(rootDir, "components", "avatar", "EmotyAvatar.tsx");
+  const avatarConfigPath = path.join(rootDir, "components", "avatar", "emotyAvatarConfig.ts");
   const componentCode = fs.readFileSync(avatarComponentPath, "utf-8");
 
   test("HERO-01: Hero sizing tokens (lg: 140, xl: 180) implement refined hero depth, ambient halo, and framing while preserving canonical image", () => {
     // Canonical image asset remains unchanged
     expect(fs.existsSync(canonicalAssetPath)).toBe(true);
-    expect(componentCode).toContain("CANONICAL_EMOTY_BOY_AVATAR");
+    expect(fs.readFileSync(avatarConfigPath, "utf-8")).toContain("CANONICAL_EMOTY_BOY_AVATAR");
 
     // Hero check definition
     expect(componentCode).toContain("const isHero = size >= 140;");
@@ -450,11 +453,89 @@ describe("Emoty feels alive without demanding attention", () => {
   });
 
   test("expression frames are optional and blinking only runs when a blink frame exists", () => {
-    expect(componentCode).toContain("character.expressions?.[state] ?? character.base");
+    expect(componentCode).toContain("character.expressions?.[state] ?? character.fallbackAsset");
     expect(componentCode).toContain("if (!character.blink || reduceMotion) return;");
   });
 
-  test("the female character has its own registry slot", () => {
-    expect(componentCode).toMatch(/female: (null|\{ base: require\('@\/assets\/emoty_girl_avatar\.jpg'\) \})/);
+  test("the girl character has her own config slot", () => {
+    const configCode = fs.readFileSync(path.resolve(__dirname, "../components/avatar/emotyAvatarConfig.ts"), "utf-8");
+    expect(configCode).toMatch(/girl: \{ riveAsset: [^,]+, fallbackAsset: (null|require\('@\/assets\/emoty_girl_avatar\.jpg'\)) \}/);
+  });
+});
+
+describe("Rive companion character integration", () => {
+  const rootDir = path.resolve(__dirname, "..");
+  const read = (rel: string) => fs.readFileSync(path.join(rootDir, rel), "utf-8");
+  const componentCode = read("components/avatar/EmotyAvatar.tsx");
+  // Code only: the config's doc comment shows example require() lines for artwork not yet added
+  const configCode = read("components/avatar/emotyAvatarConfig.ts")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
+  const nativeRenderer = read("components/avatar/EmotyRiveCharacter.native.tsx");
+  const webRenderer = read("components/avatar/EmotyRiveCharacter.tsx");
+
+  function sourceFiles(dir: string): string[] {
+    const abs = path.join(rootDir, dir);
+    if (!fs.existsSync(abs)) return [];
+    return fs.readdirSync(abs, { withFileTypes: true }).flatMap((e) => {
+      const rel = path.join(dir, e.name);
+      if (e.isDirectory()) return sourceFiles(rel);
+      return /\.(ts|tsx)$/.test(e.name) && !/\.test\.ts$/.test(e.name) ? [rel] : [];
+    });
+  }
+  const appSources = ["app", "components", "common", "context", "hooks", "utils", "services"].flatMap(sourceFiles);
+
+  test("only the native renderer touches the Rive runtime", () => {
+    const users = appSources.filter((f) => read(f).includes("@rive-app/react-native"));
+    expect(users).toEqual([path.join("components", "avatar", "EmotyRiveCharacter.native.tsx")]);
+    expect(webRenderer).toContain("return false;");
+    expect(webRenderer).not.toContain("@rive-app");
+  });
+
+  test("every configured artwork exists on disk; no placeholder .riv is referenced", () => {
+    const required = [...configCode.matchAll(/require\('@\/([^']+)'\)/g)].map((m) => m[1]);
+    expect(required).toContain("assets/emoty_boy_avatar.jpg");
+    for (const rel of required) expect(fs.existsSync(path.join(rootDir, rel)), rel).toBe(true);
+    const riveAssets = [...configCode.matchAll(/riveAsset: ([^,;\n]+),/g)];
+    expect(riveAssets).toHaveLength(2); // boy and girl
+    for (const m of riveAssets) {
+      expect(m[1] === "null" || /^require\('@\/assets\/rive\/emoty_(boy|girl)\.riv'\)$/.test(m[1]), m[1]).toBe(true);
+    }
+  });
+
+  test("Rive is opt-in and used only for companion presence", () => {
+    const liveSites = appSources.filter((f) => /<EmotyAvatar\b[^>]*\slive\b/.test(read(f))).sort();
+    expect(liveSites).toEqual(
+      [
+        "app/(auth)/(tabs)/index.tsx",
+        "app/(auth)/tools/companion.tsx",
+        "app/(auth)/tools/reframe.tsx",
+        "components/avatar/EmotyPresence.tsx",
+      ].map((p) => path.join(...p.split("/")))
+    );
+    expect(componentCode).toContain("live = false");
+    expect(componentCode).toContain("live && character.riveAsset != null && isRiveRuntimeAvailable()");
+  });
+
+  test("emotion changes are state machine inputs on one view, never a remount", () => {
+    expect(nativeRenderer).toContain("setNumberInputValue(inputs.emotion, emotionValues[emotion])");
+    expect(nativeRenderer).toContain("setBooleanInputValue(inputs.speaking, speaking)");
+    expect(nativeRenderer).toContain("setBooleanInputValue(inputs.reducedMotion, reducedMotion)");
+    expect(nativeRenderer).toContain("stateMachineName={EMOTY_RIVE_CONTRACT.stateMachine}");
+    expect(componentCode).toContain("key={riveSource}");
+    expect(componentCode).not.toMatch(/key=\{(emotion|state)/);
+  });
+
+  test("the illustration stays as the loading and failure fallback", () => {
+    expect(nativeRenderer).toContain("onError={fail}");
+    expect(nativeRenderer).toContain("callbacks.current.onUnavailable()");
+    expect(componentCode).toContain("{!riveReady && !imageError && (");
+    expect(componentCode).toContain("opacity: riveReady ? 1 : 0");
+    expect(componentCode).toContain("reducedMotion={reduceMotion}");
+    expect(componentCode).toContain("if (reduceMotion || riveReady) {");
+  });
+
+  test("Metro bundles .riv files", () => {
+    expect(read("metro.config.js")).toContain("assetExts.push('riv')");
   });
 });

@@ -17,7 +17,7 @@ interface EmotyPresenceProps {
 }
 
 /**
- * The one way screens show Emoty: the canonical EmotyAvatar plus, when the presence model
+ * The one way screens show Emoty: the canonical EmotyAvatar (live companion character) plus, when the presence model
  * provides one, a single short line. Screens pass context through getEmotyPresence().
  */
 export function EmotyPresence({ presence, layout = 'row', size = 'sm', children, style }: EmotyPresenceProps) {
@@ -28,7 +28,7 @@ export function EmotyPresence({ presence, layout = 'row', size = 'sm', children,
   if (layout === 'stacked') {
     return (
       <View style={[styles.stacked, style]}>
-        <EmotyAvatar gender={avatarGender} state={avatarState} size={size} interactive={false} />
+        <EmotyAvatar gender={avatarGender} state={avatarState} size={size} interactive={false} live />
         {line ? (
           <Text
             style={[styles.stackedLine, { color: colors.text }]}
@@ -44,7 +44,7 @@ export function EmotyPresence({ presence, layout = 'row', size = 'sm', children,
 
   return (
     <View style={[styles.row, style]}>
-      <EmotyAvatar gender={avatarGender} state={avatarState} size={size} interactive={false} />
+      <EmotyAvatar gender={avatarGender} state={avatarState} size={size} interactive={false} live />
       {line || children ? (
         <View style={styles.bubbleCol}>
           {line ? (

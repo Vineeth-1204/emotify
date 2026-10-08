@@ -5,6 +5,7 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
+  Pressable,
   Alert,
   Dimensions,
   Modal,
@@ -65,6 +66,7 @@ import { useLanguage } from "@/context/LanguageContext";
 import {
   PRIMARY_EMOTION_CARD_DESCRIPTIONS,
   PRIMARY_EMOTION_CARD_MIN_HEIGHT,
+  primaryEmotionCardSelectedColors,
 } from "@/common/primaryEmotionCardLayout";
 
 // Phase 3: SecureStore key for pending post-session state (JPMR/Reframe navigate away, then return)
@@ -752,6 +754,7 @@ export default function EmotionMapScreen() {
                 <View style={styles.primaryGrid}>
                   {PRIMARY_EMOTIONS.map((emotion) => {
                     const isSelected = primaryEmotion === emotion.id;
+                    const selectedColors = primaryEmotionCardSelectedColors(emotion.themeColor);
                     const IconComponent =
                       emotion.id === "happy"
                         ? HappyEmotionIcon
@@ -762,21 +765,26 @@ export default function EmotionMapScreen() {
                         : CalmEmotionIcon;
 
                     return (
-                      <TouchableOpacity
+                      // Pressable with a slight scale, not an opacity fade: fading an elevated card
+                      // lets its Android shadow show through the card while pressed.
+                      <Pressable
                         key={emotion.id}
-                        style={[
+                        style={({ pressed }) => [
                           styles.primaryCard,
                           isSelected && styles.primaryCardSelected,
-                          isSelected && { borderColor: emotion.themeColor, backgroundColor: emotion.themeColor + "10" },
+                          isSelected && { borderColor: selectedColors.borderColor, backgroundColor: selectedColors.backgroundColor },
+                          pressed && styles.primaryCardPressed,
                         ]}
                         onPress={() => handleSelectPrimary(emotion.id)}
-                        activeOpacity={0.85}
+                        accessibilityRole="radio"
+                        accessibilityState={{ selected: isSelected, checked: isSelected }}
+                        accessibilityLabel={`${emotion.label}: ${PRIMARY_EMOTION_CARD_DESCRIPTIONS[emotion.id]}`}
                       >
                         <View
                           style={[
                             styles.primaryIconContainer,
                             { backgroundColor: emotion.themeColor + "18" },
-                            isSelected && { backgroundColor: emotion.themeColor + "30" },
+                            isSelected && { backgroundColor: selectedColors.iconBackgroundColor },
                           ]}
                         >
                           <IconComponent size={36} color={emotion.themeColor} />
@@ -799,7 +807,7 @@ export default function EmotionMapScreen() {
                             <Ionicons name="checkmark" size={14} color={Colors.white} />
                           )}
                         </View>
-                      </TouchableOpacity>
+                      </Pressable>
                     );
                   })}
                 </View>
@@ -1552,9 +1560,13 @@ const styles = StyleSheet.create({
     ...Theme.shadows.tertiary,
     position: "relative",
   },
+  // Same elevation as unselected cards (no jump on Android); selection shows through the
+  // border, opaque tint, label colour and check badge.
   primaryCardSelected: {
     backgroundColor: Colors.white,
-    ...Theme.shadows.primary,
+  },
+  primaryCardPressed: {
+    transform: [{ scale: 0.98 }],
   },
   primaryIconContainer: {
     width: 52,

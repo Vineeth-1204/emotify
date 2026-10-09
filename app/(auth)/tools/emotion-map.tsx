@@ -54,6 +54,13 @@ import { formatProtocolDuration, resolveActiveBreathingProtocol } from "@/consta
 import { CHECKIN_RETURN_TO } from "@/common/checkinReturn";
 import { getGuidedMeditation, openGuidedMeditation } from "@/common/guidedMeditations";
 import {
+  getIntensityLevel,
+  intensityPrompt,
+  toneForEmotion,
+  toneForFeeling,
+  type FeelingTone,
+} from "@/common/intensityWording";
+import {
   getDiscoveryGroups,
   getPrimaryMeaningChoices,
   nextDiscoveryMode,
@@ -104,26 +111,16 @@ const FEATURE_EMOTIONS = [
   { id: "guilty", label: "Guilty / Regretful", shortLabel: "Guilty", Icon: GuiltyEmotionIcon },
 ];
 
-const getIntensityLabel = (value: number) => {
-  if (value <= 2)
-    return { text: "Minimal", desc: "Barely noticeable, very mild physical or emotional presence.", color: "#10B981" };
-  if (value <= 4)
-    return { text: "Mild", desc: "Noticeable but easily managed and does not disrupt activities.", color: "#3B82F6" };
-  if (value <= 6)
-    return { text: "Moderate", desc: "Quite noticeable, distracting, but you can still function.", color: "#F59E0B" };
-  if (value <= 8)
-    return { text: "Severe", desc: "Strong distress, hard to ignore, significantly impacts focus.", color: "#EA580C" };
-  return { text: "Extreme", desc: "Overwhelming distress, demands complete attention and intervention.", color: "#EF4444" };
-};
-
 interface IntensitySelectorProps {
   value: number;
   onChange: (val: number) => void;
   activeColor?: string;
+  /** Tone of the selected feeling: wording and colours describe its strength, not distress. */
+  tone: FeelingTone;
 }
 
-function IntensitySelector({ value, onChange, activeColor }: IntensitySelectorProps) {
-  const level = getIntensityLabel(value);
+function IntensitySelector({ value, onChange, activeColor, tone }: IntensitySelectorProps) {
+  const level = getIntensityLevel(value, tone);
 
   const handleDecrement = () => {
     if (value > 1) {
@@ -146,7 +143,7 @@ function IntensitySelector({ value, onChange, activeColor }: IntensitySelectorPr
 
   const renderCircle = (n: number) => {
     const isSelected = value === n;
-    const numLevel = getIntensityLabel(n);
+    const numLevel = getIntensityLevel(n, tone);
     return (
       <TouchableOpacity
         key={n}
@@ -965,8 +962,18 @@ export default function EmotionMapScreen() {
                                 ],
                               ]}
                               onPress={() => handleSelectSecondary(option)}
+                              accessibilityRole="radio"
+                              accessibilityState={{ selected: isSelected, checked: isSelected }}
                               activeOpacity={0.8}
                             >
+                              {/* Icon is always present and text weight is fixed, so selecting a chip
+                                  never changes its width and the wrapped rows do not jump */}
+                              <Ionicons
+                                name={isSelected ? "checkmark-circle" : "ellipse-outline"}
+                                size={16}
+                                color={isSelected ? Colors.white : Colors.textMuted}
+                                style={styles.chipIcon}
+                              />
                               <Text
                                 style={[
                                   styles.secondaryChipText,
@@ -975,14 +982,6 @@ export default function EmotionMapScreen() {
                               >
                                 {option}
                               </Text>
-                              {isSelected && (
-                                <Ionicons
-                                  name="checkmark-circle"
-                                  size={16}
-                                  color={Colors.white}
-                                  style={{ marginLeft: 6 }}
-                                />
-                              )}
                             </TouchableOpacity>
                           );
                         })}
@@ -1149,10 +1148,15 @@ export default function EmotionMapScreen() {
                             accessibilityState={{ checked: isSelected }}
                             activeOpacity={0.8}
                           >
+                            <Ionicons
+                              name={isSelected ? "checkmark-circle" : "ellipse-outline"}
+                              size={16}
+                              color={isSelected ? Colors.white : Colors.textMuted}
+                              style={styles.chipIcon}
+                            />
                             <Text style={[styles.secondaryChipText, styles.sensationChipText, isSelected && styles.secondaryChipTextSelected]}>
                               {sensation.label}
                             </Text>
-                            {isSelected && <Ionicons name="checkmark-circle" size={16} color={Colors.white} style={{ marginLeft: 6 }} />}
                           </TouchableOpacity>
                         );
                       })}
@@ -1191,13 +1195,11 @@ export default function EmotionMapScreen() {
                   <View style={styles.emotySpeechBubble}>
                     <Text style={styles.emotySpeechText}>How strong does it feel right now?</Text>
                     <Text style={styles.emotySubtext}>
-                      {secondaryEmotion
-                        ? `Rate the intensity of ${secondaryEmotion.toLowerCase()} on a scale from 1 to 10.`
-                        : `Rate the intensity on a scale from 1 to 10.`}
+                      {intensityPrompt(secondaryEmotion)}
                     </Text>
                   </View>
                 </View>
-                <IntensitySelector value={intensity} onChange={setIntensity} activeColor={activeColors.primary} />
+                <IntensitySelector value={intensity} onChange={setIntensity} activeColor={activeColors.primary} tone={toneForEmotion(primaryEmotion)} />
                 <View style={styles.navRow}>
                   <Button title="Back" onPress={() => setStep(3)} variant="outline" style={styles.halfBtn} />
                   <Button title={isSubmitting ? "Finding Best Tool..." : "Continue"} onPress={handleContinueFromStep4} disabled={isSubmitting} style={styles.halfBtn} />
@@ -1561,7 +1563,7 @@ export default function EmotionMapScreen() {
                             style={[
                               styles.logIntensity,
                               {
-                                color: getIntensityLabel(Math.round(log.averageIntensity)).color,
+                                color: getIntensityLevel(Math.round(log.averageIntensity), toneForFeeling(log.emotionLabel)).color,
                               },
                             ]}
                           >
@@ -1844,9 +1846,12 @@ const styles = StyleSheet.create({
     fontSize: Theme.fontSize.sm,
     color: Colors.text,
   },
+  // Same weight as unselected text so the chip keeps its width
   secondaryChipTextSelected: {
-    fontFamily: Theme.fontFamily.bold,
     color: Colors.white,
+  },
+  chipIcon: {
+    marginRight: 6,
   },
   // Step 2 discovery: broad-emotion meanings from the specification
   meaningCard: {

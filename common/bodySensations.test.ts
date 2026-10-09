@@ -168,7 +168,7 @@ describe("saving and the 1–10 intensity scale are unchanged", () => {
     expect(save).toContain("preIntensity: intensity,");
     expect(save).toContain("averageIntensity: intensity,");
     expect(screen).toContain("<IntensitySelector value={intensity} onChange={setIntensity}");
-    expect(screen).toContain("Rate the intensity on a scale from 1 to 10.");
+    expect(screen).toContain("{intensityPrompt(secondaryEmotion)}");
   });
 
   test("History gets a readable label (the chosen feeling, or the broad emotion's label)", () => {

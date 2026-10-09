@@ -253,3 +253,25 @@ export function getBreathingProtocol(id: string): BreathingProtocol {
   if (protocol) return protocol;
   return BREATHING_PROTOCOLS.paced_444;
 }
+
+/**
+ * The protocol a routed breathing intervention actually plays: the requested protocol when it
+ * exists and is active, otherwise Box Breathing (box_4444). Inactive protocols are never resolved.
+ */
+export function resolveActiveBreathingProtocol(id?: string | null): BreathingProtocol {
+  if (id && BREATHING_PROTOCOLS[id]?.isActive) return BREATHING_PROTOCOLS[id];
+  return BREATHING_PROTOCOLS.box_4444;
+}
+
+/** Session length in seconds with default targets, computed the same way as useBreathingEngine. */
+export function getProtocolSessionSeconds(protocol: BreathingProtocol): number {
+  return protocol.targetType === 'duration'
+    ? protocol.defaultDurationSeconds
+    : protocol.defaultCycles * getCycleDurationSeconds(protocol);
+}
+
+/** Student-facing length of a breathing session, e.g. "About 1 min". */
+export function formatProtocolDuration(protocol: BreathingProtocol): string {
+  const minutes = Math.max(1, Math.round(getProtocolSessionSeconds(protocol) / 60));
+  return `About ${minutes} min${minutes === 1 ? '' : 's'}`;
+}

@@ -13,7 +13,8 @@ import {
   ActivityIndicator,
   Animated
 } from "react-native";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { CHECKIN_POST_SESSION_HREF, CHECKIN_RETURN_TO, isCheckinReturn } from "@/common/checkinReturn";
 import { useAppAuth } from "@/utils/auth";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "@/convex/_generated/api";
@@ -210,6 +211,9 @@ const REFRAME_STARTERS = [
 
 export default function ReframeScreen() {
   const router = useRouter();
+  // Opened by the guided check-in: finish by handing back to its "How do you feel now?" step
+  const { returnTo } = useLocalSearchParams<{ returnTo?: string }>();
+  const returnToCheckin = isCheckinReturn(returnTo);
   const { user } = useAppAuth();
   const insets = useSafeAreaInsets();
   const { avatarName, avatarGender, isSafetyActive } = useAvatar();
@@ -736,11 +740,19 @@ export default function ReframeScreen() {
             </Text>
           </View>
 
-          <Button
-            title="Back to Dashboard"
-            onPress={() => router.replace("/(auth)/(tabs)/tools")}
-            style={styles.actionBtn}
-          />
+          {returnToCheckin ? (
+            <Button
+              title="Continue"
+              onPress={() => router.replace(CHECKIN_POST_SESSION_HREF as any)}
+              style={styles.actionBtn}
+            />
+          ) : (
+            <Button
+              title="Back to Dashboard"
+              onPress={() => router.replace("/(auth)/(tabs)/tools")}
+              style={styles.actionBtn}
+            />
+          )}
         </ScrollView>
       </View>
     );
@@ -972,7 +984,9 @@ export default function ReframeScreen() {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
                   router.replace({
                     pathname: "/(auth)/tools/recovery-plan",
-                    params: { sessionId: activeSession._id }
+                    params: returnToCheckin
+                      ? { sessionId: activeSession._id, returnTo: CHECKIN_RETURN_TO }
+                      : { sessionId: activeSession._id },
                   });
                 }}
                 style={styles.actionBtn}

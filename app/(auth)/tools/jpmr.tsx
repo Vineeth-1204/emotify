@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, Alert, Dimensions, Animated, ScrollView } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
+import { CHECKIN_POST_SESSION_HREF, isCheckinReturn } from "@/common/checkinReturn";
 import { useAppAuth } from "@/utils/auth";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
@@ -143,7 +144,10 @@ export default function JPMRScreen() {
     sourceType?: string;
     attemptId?: string;
     triageId?: string;
+    returnTo?: string;
   }>();
+  // Opened by the guided check-in: finish by handing back to its "How do you feel now?" step
+  const returnToCheckin = isCheckinReturn(params.returnTo);
   const { user } = useAppAuth();
   const { setAvatarState } = useAvatar();
 
@@ -734,14 +738,24 @@ export default function JPMRScreen() {
               </View>
             </View>
 
-            <Text style={styles.compareHeading}>Would you like to compare how your body feels now?</Text>
+            {!returnToCheckin && (
+              <Text style={styles.compareHeading}>Would you like to compare how your body feels now?</Text>
+            )}
 
             <View style={styles.compareBtnContainer}>
-              <Button
-                title="Compare Body Map"
-                onPress={() => router.replace({ pathname: "/(auth)/tools/emotion-map" }) as any}
-                style={styles.actionBtn}
-              />
+              {returnToCheckin ? (
+                <Button
+                  title="Continue"
+                  onPress={() => router.replace(CHECKIN_POST_SESSION_HREF as any)}
+                  style={styles.actionBtn}
+                />
+              ) : (
+                <Button
+                  title="Compare Body Map"
+                  onPress={() => router.replace({ pathname: "/(auth)/tools/emotion-map" }) as any}
+                  style={styles.actionBtn}
+                />
+              )}
               <Button
                 title="Back to Dashboard"
                 onPress={() => router.replace("/(auth)/(tabs)") as any}

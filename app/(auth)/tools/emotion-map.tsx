@@ -48,7 +48,8 @@ import { EmotyAvatar } from "@/components/avatar/EmotyAvatar";
 import { BreathingPlayer } from "@/components/breathing/BreathingPlayer";
 import { SensoryGroundingPlayer } from "@/components/grounding/SensoryGroundingPlayer";
 import { SENSORY_54321_PROTOCOL } from "@/constants/GroundingProtocols";
-import { BREATHING_PROTOCOLS } from "@/constants/BreathingProtocols";
+import { formatProtocolDuration, resolveActiveBreathingProtocol } from "@/constants/BreathingProtocols";
+import { CHECKIN_RETURN_TO } from "@/common/checkinReturn";
 import {
   determineIntervention,
   getRelevantBodyRegions,
@@ -535,7 +536,7 @@ export default function EmotionMapScreen() {
     }
     router.replace({
       pathname: pathname as any,
-      params: { sourceType: "emotion_checkin", returnTo: "emotion_map_post", ...extraParams },
+      params: { sourceType: "emotion_checkin", returnTo: CHECKIN_RETURN_TO, ...extraParams },
     } as any);
   };
 
@@ -662,15 +663,13 @@ export default function EmotionMapScreen() {
   };
 
   // Resolve breathing protocol from registry using approved active protocols only.
-  // relaxing_478 (4-7-8) remains defined_inactive — never resolved here.
-  const activeBreathingProtocol = (() => {
-    const id = routedIntervention?.protocolId;
-    if (id && BREATHING_PROTOCOLS[id] && BREATHING_PROTOCOLS[id].isActive) {
-      return BREATHING_PROTOCOLS[id];
-    }
-    // Safe fallback: box_4444 (active)
-    return BREATHING_PROTOCOLS.box_4444;
-  })();
+  // relaxing_478 (4-7-8) remains defined_inactive — never resolved here. Falls back to box_4444.
+  const activeBreathingProtocol = resolveActiveBreathingProtocol(routedIntervention?.protocolId);
+  // Breathing cards show the length of the session that will actually play
+  const interventionDuration =
+    routedIntervention?.interventionType === "breathing"
+      ? formatProtocolDuration(activeBreathingProtocol)
+      : routedIntervention?.recommendedDuration;
 
   return (
     <View style={styles.container}>
@@ -1036,20 +1035,19 @@ export default function EmotionMapScreen() {
                 <View style={styles.interventionCard}>
                   <View style={styles.interventionHeader}>
                     <View style={styles.interventionIconBox}>{getInterventionIcon(routedIntervention.interventionType)}</View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.interventionTitle}>{routedIntervention.title}</Text>
-                      <View style={styles.badgeRow}>
-                        <View style={styles.pillTag}><Text style={styles.pillTagText}>{routedIntervention.studentFacingName}</Text></View>
-                        <View style={[styles.pillTag, styles.durationPill]}>
-                          <Ionicons name="time-outline" size={12} color={Colors.primary} />
-                          <Text style={[styles.pillTagText, { color: Colors.primary }]}>{routedIntervention.recommendedDuration}</Text>
-                        </View>
-                      </View>
+                    <Text style={styles.interventionTitle}>{routedIntervention.title}</Text>
+                  </View>
+                  {/* Full card width and wrapping, so long names never push the duration off the card */}
+                  <View style={styles.badgeRow}>
+                    <View style={styles.pillTag}><Text style={styles.pillTagText}>{routedIntervention.studentFacingName}</Text></View>
+                    <View style={[styles.pillTag, styles.durationPill]}>
+                      <Ionicons name="time-outline" size={12} color={Colors.primary} />
+                      <Text style={[styles.pillTagText, { color: Colors.primary }]}>{interventionDuration}</Text>
                     </View>
                   </View>
                   <Text style={styles.interventionReason}>{routedIntervention.reason}</Text>
                 </View>
-                <TouchableOpacity style={styles.startInterventionBtn} onPress={handleStartIntervention} activeOpacity={0.9}>
+                <TouchableOpacity style={styles.startInterventionBtn} onPress={handleStartIntervention} activeOpacity={0.9} accessibilityRole="button">
                   <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={styles.startBtnGradient}>
                     <Text style={styles.startBtnText}>{"Let's start"}</Text>
                     <Ionicons name="arrow-forward" size={20} color={Colors.white} />
@@ -1075,7 +1073,7 @@ export default function EmotionMapScreen() {
                     <View style={styles.fallbackIconBox}><DeepBreathingActivityIcon size={28} color={Colors.primary} /></View>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.fallbackActivityTitle}>{"Let's breathe"}</Text>
-                      <Text style={styles.fallbackActivitySub}>A simple 3-minute breathing exercise</Text>
+                      <Text style={styles.fallbackActivitySub}>A short breathing exercise</Text>
                     </View>
                     <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
                   </TouchableOpacity>
@@ -1872,7 +1870,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    marginBottom: Theme.spacing.md,
+    marginBottom: Theme.spacing.sm,
   },
   interventionIconBox: {
     width: 52,
@@ -1885,17 +1883,20 @@ const styles = StyleSheet.create({
     borderColor: "#E2E8F0",
   },
   interventionTitle: {
+    flex: 1,
     fontFamily: Theme.fontFamily.bold,
     fontSize: Theme.fontSize.md,
     color: Colors.text,
-    marginBottom: 4,
   },
   badgeRow: {
     flexDirection: "row",
+    flexWrap: "wrap",
     gap: 6,
     alignItems: "center",
+    marginBottom: Theme.spacing.md,
   },
   pillTag: {
+    maxWidth: "100%",
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 6,
@@ -1908,6 +1909,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primary + "10",
   },
   pillTagText: {
+    flexShrink: 1,
     fontFamily: Theme.fontFamily.bold,
     fontSize: 11,
     color: Colors.primary,

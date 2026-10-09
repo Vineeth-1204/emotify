@@ -12,6 +12,7 @@ import {
   Animated,
   ActivityIndicator,
   BackHandler,
+  Linking,
 } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { useAppAuth } from "@/utils/auth";
@@ -50,10 +51,12 @@ import { SensoryGroundingPlayer } from "@/components/grounding/SensoryGroundingP
 import { SENSORY_54321_PROTOCOL } from "@/constants/GroundingProtocols";
 import { formatProtocolDuration, resolveActiveBreathingProtocol } from "@/constants/BreathingProtocols";
 import { CHECKIN_RETURN_TO } from "@/common/checkinReturn";
+import { getGuidedMeditation, openGuidedMeditation } from "@/common/guidedMeditations";
 import {
   determineIntervention,
   getRelevantBodyRegions,
   InterventionRoutingResult,
+  type CanonicalEmotionKey,
 } from "@/common/emotionRouting";
 import {
   PRIMARY_EMOTIONS,
@@ -237,6 +240,8 @@ export default function EmotionMapScreen() {
 
   // Step 5: Automatic Intervention Launch Transition
   const [routedIntervention, setRoutedIntervention] = useState<InterventionRoutingResult | null>(null);
+  // Emotion the recommendation was routed from; selects the optional guided meditation
+  const [routedEmotionKey, setRoutedEmotionKey] = useState<CanonicalEmotionKey | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
   // Phase 3 — Modal states for inline interventions
@@ -478,6 +483,7 @@ export default function EmotionMapScreen() {
       const canonicalEmotion = getCanonicalEmotionForRouting(primaryEmotion, secondaryEmotion);
       const intervention = determineIntervention(canonicalEmotion, intensity);
       setRoutedIntervention(intervention);
+      setRoutedEmotionKey(canonicalEmotion);
 
       const effectiveRegions = isUnsureBody ? [] : selectedRegions;
       const logEmotion = secondaryEmotion || primaryEmotion;
@@ -568,6 +574,17 @@ export default function EmotionMapScreen() {
       setStep(8);
     } finally {
       setIsSavingPost(false);
+    }
+  };
+
+  // Step 5: Optional guided meditation, opened outside the app. It does not log anything or
+  // change the step, so the built-in intervention and the post-check stay exactly as they were.
+  const guidedMeditation = getGuidedMeditation(routedEmotionKey);
+  const handleOpenGuidedMeditation = async () => {
+    Haptics.selectionAsync().catch(() => {});
+    const result = await openGuidedMeditation(guidedMeditation, (url) => Linking.openURL(url));
+    if (result !== "opened") {
+      Alert.alert("Couldn't open the meditation", "You can still try the exercise above.");
     }
   };
 
@@ -1053,6 +1070,27 @@ export default function EmotionMapScreen() {
                     <Ionicons name="arrow-forward" size={20} color={Colors.white} />
                   </LinearGradient>
                 </TouchableOpacity>
+                {guidedMeditation && (
+                  <Pressable
+                    style={({ pressed }) => [styles.meditationRow, pressed && styles.meditationRowPressed]}
+                    onPress={handleOpenGuidedMeditation}
+                    accessibilityRole="link"
+                    accessibilityLabel={`Optional guided meditation: ${guidedMeditation.title}`}
+                    accessibilityHint="Opens YouTube outside Emotify"
+                  >
+                    <View style={styles.meditationIconBox}>
+                      <Ionicons name="play-circle-outline" size={24} color={Colors.primary} />
+                    </View>
+                    <View style={styles.meditationTextCol}>
+                      <Text style={styles.meditationEyebrow}>Guided meditation · Optional</Text>
+                      <Text style={styles.meditationTitle}>{guidedMeditation.title}</Text>
+                      <Text style={styles.meditationMeta}>
+                        {guidedMeditation.durationLabel ? `YouTube · ${guidedMeditation.durationLabel}` : "YouTube"}
+                      </Text>
+                    </View>
+                    <Ionicons name="open-outline" size={18} color={Colors.textMuted} />
+                  </Pressable>
+                )}
                 <TouchableOpacity style={styles.maybeLaterBtn} onPress={() => router.replace("/(auth)/(tabs)")}>
                   <Text style={styles.maybeLaterText}>Maybe later</Text>
                 </TouchableOpacity>
@@ -1936,6 +1974,50 @@ const styles = StyleSheet.create({
     fontFamily: Theme.fontFamily.bold,
     fontSize: Theme.fontSize.md,
     color: Colors.white,
+  },
+  meditationRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    minHeight: 56,
+    marginTop: Theme.spacing.md,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: Theme.borderRadius.lg,
+    borderWidth: 1.5,
+    borderColor: "#E2E8F0",
+    backgroundColor: Colors.white,
+  },
+  meditationRowPressed: {
+    transform: [{ scale: 0.98 }],
+  },
+  meditationIconBox: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: Colors.primary + "12",
+  },
+  meditationTextCol: {
+    flex: 1,
+  },
+  meditationEyebrow: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: 11,
+    color: Colors.primary,
+  },
+  meditationTitle: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: Theme.fontSize.sm,
+    color: Colors.text,
+    marginTop: 2,
+  },
+  meditationMeta: {
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: Theme.fontSize.xs,
+    color: Colors.textSecondary,
+    marginTop: 2,
   },
   maybeLaterBtn: {
     marginTop: 12,

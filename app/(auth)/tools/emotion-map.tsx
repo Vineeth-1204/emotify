@@ -13,6 +13,7 @@ import {
   ActivityIndicator,
   BackHandler,
   Linking,
+  AccessibilityInfo,
 } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { useAppAuth } from "@/utils/auth";
@@ -53,6 +54,14 @@ import { formatProtocolDuration, resolveActiveBreathingProtocol } from "@/consta
 import { CHECKIN_RETURN_TO } from "@/common/checkinReturn";
 import { getGuidedMeditation, openGuidedMeditation } from "@/common/guidedMeditations";
 import {
+  HELP_ME_NOTICE_STEPS,
+  NOTICE_STEP_MS,
+  getBodySensations,
+  includesWholeBody,
+  regionsForSensations,
+  type BodyRegion,
+} from "@/common/bodySensations";
+import {
   determineIntervention,
   getRelevantBodyRegions,
   InterventionRoutingResult,
@@ -61,7 +70,6 @@ import {
 import {
   PRIMARY_EMOTIONS,
   SECONDARY_EMOTIONS_BY_PRIMARY,
-  UNCERTAINTY_REPHRASINGS,
   getCanonicalEmotionForRouting,
   PrimaryEmotionId,
 } from "@/common/emotionTaxonomy";
@@ -88,8 +96,6 @@ const FEATURE_EMOTIONS = [
   { id: "embarrassed", label: "Embarrassed / Ashamed", shortLabel: "Embarrassed", Icon: EmbarrassedEmotionIcon },
   { id: "guilty", label: "Guilty / Regretful", shortLabel: "Guilty", Icon: GuiltyEmotionIcon },
 ];
-
-const STANDARD_BODY_REGIONS = ["Chest", "Stomach", "Shoulders", "Head", "Hands", "Legs"] as const;
 
 const getIntensityLabel = (value: number) => {
   if (value <= 2)
@@ -225,15 +231,16 @@ export default function EmotionMapScreen() {
   const [selectedEmotions, setSelectedEmotions] = useState<string[]>([]);
   const [strongestEmotion, setStrongestEmotion] = useState<string | null>(null);
 
-  // Phase 2 — Step 2 uncertainty sub-state
-  const [step2UncertaintyState, setStep2UncertaintyState] = useState<"normal" | "rephrased">("normal");
+  // Step 2: "unsure" = the student chose "Not sure" for the specific feeling. The check-in then
+  // continues with the primary emotion they picked in step 1; nothing more specific is assumed.
+  const [step2UncertaintyState, setStep2UncertaintyState] = useState<"normal" | "unsure">("normal");
 
-  // Step 3: Body cues
-  const [selectedRegions, setSelectedRegions] = useState<string[]>([]);
+  // Step 3: Body sensations (sensation-first). Saved as the existing figure regions.
+  const [selectedSensations, setSelectedSensations] = useState<string[]>([]);
+  // "Not really" after Help me notice. Saved as no regions (the schema has no separate "unsure").
   const [isUnsureBody, setIsUnsureBody] = useState<boolean>(false);
-
-  // Phase 2 — Step 3 uncertainty sub-state
-  const [step3UncertaintyState, setStep3UncertaintyState] = useState<"normal" | "rephrased">("normal");
+  // Help me notice: null = off, 0..n-1 = highlighting that step, n = finished
+  const [noticeIndex, setNoticeIndex] = useState<number | null>(null);
 
   // Step 4: Intensity
   const [intensity, setIntensity] = useState<number>(5);
@@ -352,10 +359,31 @@ export default function EmotionMapScreen() {
       setStep(1);
       setPrimaryEmotion(null);
       setSecondaryEmotion(null);
-      setSelectedRegions([]);
+      setSelectedSensations([]);
+      setIsUnsureBody(false);
       setRoutedIntervention(null);
     }
   }, [params.reset]);
+
+  // Sensations belong to one emotion's list: clear them when the emotion changes
+  // (same key as intervention routing)
+  const sensationEmotionKey = primaryEmotion ? getCanonicalEmotionForRouting(primaryEmotion, secondaryEmotion) : null;
+  useEffect(() => {
+    setSelectedSensations([]);
+    setIsUnsureBody(false);
+  }, [sensationEmotionKey]);
+
+  // Help me notice: advance one region every NOTICE_STEP_MS; stops when leaving step 3
+  useEffect(() => {
+    if (step !== 3) {
+      if (noticeIndex !== null) setNoticeIndex(null);
+      return;
+    }
+    if (noticeIndex === null || noticeIndex >= HELP_ME_NOTICE_STEPS.length) return;
+    AccessibilityInfo.announceForAccessibility(HELP_ME_NOTICE_STEPS[noticeIndex].line);
+    const timer = setTimeout(() => setNoticeIndex(noticeIndex + 1), NOTICE_STEP_MS);
+    return () => clearTimeout(timer);
+  }, [step, noticeIndex]);
 
   // Step 1: User selects a primary emotion
   const handleSelectPrimary = (id: PrimaryEmotionId) => {
@@ -387,56 +415,60 @@ export default function EmotionMapScreen() {
   const handleContinueFromStep2 = () => {
     if (!secondaryEmotion) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-    setStep3UncertaintyState("normal");
     setStep(3);
   };
 
-  // Phase 2 — Step 2: User chooses "Not sure" on secondary emotion
+  // Step 2: "Not sure" about the specific feeling. Asked once only: the check-in continues with
+  // the primary emotion the student chose; no specific feeling is filled in for them.
   const handleUnsureSecondary = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-    if (step2UncertaintyState === "normal") {
-      // First attempt: Rephrase with concrete examples
-      setStep2UncertaintyState("rephrased");
-    } else {
-      // Second uncertainty: Stop interrogating. Enter uncertain_support (step 6).
-      // Fall back to primary emotion for intervention routing if user triggers a tool
-      if (primaryEmotion) {
-        setStrongestEmotion(primaryEmotion);
-        setSelectedEmotions([primaryEmotion]);
-      }
-      setStep(6);
+    setSecondaryEmotion(null);
+    if (primaryEmotion) {
+      setStrongestEmotion(primaryEmotion);
+      setSelectedEmotions([primaryEmotion]);
     }
+    setStep2UncertaintyState("unsure");
   };
 
-  // Toggle body region in Step 3
-  const toggleRegion = (region: string) => {
+  const handleContinueWithPrimaryOnly = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    setStep(3);
+  };
+
+  // Explicit choice to leave the check-in for a calming activity (step 6). Nothing is saved there.
+  const handleSkipToCalmingActivity = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    setStep(6);
+  };
+
+  // Step 3: toggle a body sensation (multi-select)
+  const toggleSensation = (label: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     setIsUnsureBody(false);
-    setStep3UncertaintyState("normal");
-    if (selectedRegions.includes(region)) {
-      setSelectedRegions(selectedRegions.filter((r) => r !== region));
-    } else {
-      setSelectedRegions([...selectedRegions, region]);
-    }
+    setSelectedSensations((prev) => (prev.includes(label) ? prev.filter((l) => l !== label) : [...prev, label]));
   };
 
-  const handleToggleUnsureBody = () => {
+  // Step 3: Help me notice — a short optional body check, skippable at any point
+  const handleStartNotice = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-    if (step3UncertaintyState === "normal") {
-      // First time: rephrase with concrete examples
-      setIsUnsureBody(true);
-      setSelectedRegions([]);
-      setStep3UncertaintyState("rephrased");
-    } else {
-      // Already rephrased; user still unsure — proceed without body location
-      setIsUnsureBody(true);
-      setSelectedRegions([]);
-      setStep(4);
-    }
+    setIsUnsureBody(false);
+    setNoticeIndex(0);
+  };
+  const handleSkipNotice = () => setNoticeIndex(HELP_ME_NOTICE_STEPS.length);
+
+  // After Help me notice: nothing stood out. Continue without a sensation; that is a valid answer.
+  const handleNothingNoticed = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    setSelectedSensations([]);
+    setIsUnsureBody(true);
+    setNoticeIndex(null);
+    setStep(4);
   };
 
+  // Step 3 -> Next. A sensation is never required.
   const handleContinueFromStep3 = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    setNoticeIndex(null);
     setStep(4);
   };
 
@@ -485,8 +517,11 @@ export default function EmotionMapScreen() {
       setRoutedIntervention(intervention);
       setRoutedEmotionKey(canonicalEmotion);
 
-      const effectiveRegions = isUnsureBody ? [] : selectedRegions;
+      // Sensations are saved as the figure regions they name (wording is not in the schema)
+      const effectiveRegions = isUnsureBody ? [] : regionsForSensations(canonicalEmotion, selectedSensations);
+      // "Not sure" on the specific feeling: only the primary emotion the student chose is saved
       const logEmotion = secondaryEmotion || primaryEmotion;
+      const historyLabel = secondaryEmotion || PRIMARY_EMOTIONS.find((e) => e.id === primaryEmotion)?.label || primaryEmotion;
       const emotionsList = secondaryEmotion ? [primaryEmotion, secondaryEmotion] : [primaryEmotion];
 
       // Authoritative emotionLogs insertion — capture logId for Phase 3 post-intensity patch
@@ -507,7 +542,7 @@ export default function EmotionMapScreen() {
 
       await createEmotionMap({
         userId: user?.id,
-        emotionLabel: logEmotion,
+        emotionLabel: historyLabel,
         selectedRegions: effectiveRegions,
         bodyRatings: ratingsList.length > 0 ? ratingsList : [{ region: "General", intensity }],
         averageIntensity: intensity,
@@ -679,6 +714,22 @@ export default function EmotionMapScreen() {
     }
   };
 
+  // Step 3: sensation options follow the emotion the student chose
+  const sensationOptions = getBodySensations(sensationEmotionKey);
+  const sensationRegions = regionsForSensations(sensationEmotionKey, selectedSensations);
+  const sensationWholeBody = includesWholeBody(sensationEmotionKey, selectedSensations);
+  const isNoticing = noticeIndex !== null && noticeIndex < HELP_ME_NOTICE_STEPS.length;
+  const noticeFinished = noticeIndex === HELP_ME_NOTICE_STEPS.length;
+  const figureColor = activePrimaryDef?.themeColor || Colors.primary;
+  // The figure is feedback only: it shows the regions behind the chosen sensations, or the
+  // region Help me notice is on. It is not a picker.
+  const regionFill = (region: BodyRegion) => {
+    if (isNoticing) return HELP_ME_NOTICE_STEPS[noticeIndex!].region === region ? figureColor : "#E2E8F0";
+    if (sensationRegions.includes(region)) return figureColor;
+    if (sensationWholeBody) return figureColor + "55";
+    return "#E2E8F0";
+  };
+
   // Resolve breathing protocol from registry using approved active protocols only.
   // relaxing_478 (4-7-8) remains defined_inactive — never resolved here. Falls back to box_4444.
   const activeBreathingProtocol = resolveActiveBreathingProtocol(routedIntervention?.protocolId);
@@ -837,185 +888,205 @@ export default function EmotionMapScreen() {
                 <View style={styles.emotyHeaderRow}>
                   <EmotyAvatar state="listening" size="md" />
                   <View style={styles.emotySpeechBubble}>
-                    {step2UncertaintyState === "normal" ? (
+                    {step2UncertaintyState === "unsure" ? (
+                      <>
+                        <Text style={styles.emotySpeechText}>{"That's okay."}</Text>
+                        <Text style={styles.emotySubtext}>
+                          {`"${PRIMARY_EMOTIONS.find((e) => e.id === primaryEmotion)?.label}" is enough to go on.`}
+                        </Text>
+                      </>
+                    ) : (
                       <>
                         <Text style={styles.emotySpeechText}>
                           Got it. You're feeling {PRIMARY_EMOTIONS.find((e) => e.id === primaryEmotion)?.label.toLowerCase()}.
                         </Text>
                         <Text style={styles.emotySubtext}>What's closest to how you're feeling?</Text>
                       </>
-                    ) : (
-                      <>
-                        <Text style={styles.emotySpeechText}>
-                          {UNCERTAINTY_REPHRASINGS[primaryEmotion].prompt}
-                        </Text>
-                        <Text style={styles.emotySubtext}>
-                          {UNCERTAINTY_REPHRASINGS[primaryEmotion].examples}
-                        </Text>
-                      </>
                     )}
                   </View>
                 </View>
 
-                <View style={styles.secondaryContainer}>
-                  <View style={styles.secondaryGrid}>
-                    {(SECONDARY_EMOTIONS_BY_PRIMARY[primaryEmotion] || [])
-                      .filter((opt) => opt !== "Not sure")
-                      .map((option) => {
-                        const isSelected = secondaryEmotion === option;
-                        const primaryThemeColor =
-                          PRIMARY_EMOTIONS.find((e) => e.id === primaryEmotion)?.themeColor || Colors.primary;
-
-                        return (
-                          <TouchableOpacity
-                            key={option}
-                            style={[
-                              styles.secondaryChip,
-                              isSelected && [
-                                styles.secondaryChipSelected,
-                                { backgroundColor: primaryThemeColor, borderColor: primaryThemeColor },
-                              ],
-                            ]}
-                            onPress={() => handleSelectSecondary(option)}
-                            activeOpacity={0.8}
-                          >
-                            <Text
-                              style={[
-                                styles.secondaryChipText,
-                                isSelected && styles.secondaryChipTextSelected,
-                              ]}
-                            >
-                              {option}
-                            </Text>
-                            {isSelected && (
-                              <Ionicons
-                                name="checkmark-circle"
-                                size={16}
-                                color={Colors.white}
-                                style={{ marginLeft: 6 }}
-                              />
-                            )}
-                          </TouchableOpacity>
-                        );
-                      })}
-                  </View>
-
-                  <TouchableOpacity
-                    style={[
-                      styles.unsureInlineBtn,
-                      step2UncertaintyState === "rephrased" && styles.unsureInlineBtnActive,
-                    ]}
-                    onPress={handleUnsureSecondary}
-                  >
-                    <Ionicons
-                      name="help-circle-outline"
-                      size={18}
-                      color={step2UncertaintyState === "rephrased" ? Colors.primary : Colors.textMuted}
-                    />
-                    <Text
-                      style={[
-                        styles.unsureInlineText,
-                        step2UncertaintyState === "rephrased" && { color: Colors.primary, fontFamily: Theme.fontFamily.bold },
-                      ]}
+                {step2UncertaintyState === "unsure" ? (
+                  // Asked once only: continue with the primary emotion, pick after all, or leave
+                  <View style={styles.secondaryContainer}>
+                    <TouchableOpacity
+                      style={styles.unsureInlineBtn}
+                      onPress={() => setStep2UncertaintyState("normal")}
+                      accessibilityRole="button"
                     >
-                      {step2UncertaintyState === "rephrased" ? "Still not sure — that's completely okay" : "Not sure"}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
+                      <Text style={styles.unsureInlineText}>Pick a feeling after all</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.unsureInlineBtn}
+                      onPress={handleSkipToCalmingActivity}
+                      accessibilityRole="button"
+                      accessibilityHint="Leaves the check-in without saving it"
+                    >
+                      <Text style={styles.unsureInlineText}>Skip to a calming activity</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <View style={styles.secondaryContainer}>
+                    <View style={styles.secondaryGrid}>
+                      {(SECONDARY_EMOTIONS_BY_PRIMARY[primaryEmotion] || [])
+                        .filter((opt) => opt !== "Not sure")
+                        .map((option) => {
+                          const isSelected = secondaryEmotion === option;
+                          const primaryThemeColor =
+                            PRIMARY_EMOTIONS.find((e) => e.id === primaryEmotion)?.themeColor || Colors.primary;
+
+                          return (
+                            <TouchableOpacity
+                              key={option}
+                              style={[
+                                styles.secondaryChip,
+                                isSelected && [
+                                  styles.secondaryChipSelected,
+                                  { backgroundColor: primaryThemeColor, borderColor: primaryThemeColor },
+                                ],
+                              ]}
+                              onPress={() => handleSelectSecondary(option)}
+                              activeOpacity={0.8}
+                            >
+                              <Text
+                                style={[
+                                  styles.secondaryChipText,
+                                  isSelected && styles.secondaryChipTextSelected,
+                                ]}
+                              >
+                                {option}
+                              </Text>
+                              {isSelected && (
+                                <Ionicons
+                                  name="checkmark-circle"
+                                  size={16}
+                                  color={Colors.white}
+                                  style={{ marginLeft: 6 }}
+                                />
+                              )}
+                            </TouchableOpacity>
+                          );
+                        })}
+                    </View>
+
+                    <TouchableOpacity style={styles.unsureInlineBtn} onPress={handleUnsureSecondary} accessibilityRole="button">
+                      <Ionicons name="help-circle-outline" size={18} color={Colors.textMuted} />
+                      <Text style={styles.unsureInlineText}>Not sure</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
 
                 <View style={styles.navRow}>
                   <Button title="Back" onPress={() => setStep(1)} variant="outline" style={styles.halfBtn} />
-                  <Button
-                    title="Continue"
-                    onPress={handleContinueFromStep2}
-                    disabled={!secondaryEmotion}
-                    style={styles.halfBtn}
-                  />
+                  {step2UncertaintyState === "unsure" ? (
+                    <Button title="Continue" onPress={handleContinueWithPrimaryOnly} style={styles.halfBtn} />
+                  ) : (
+                    <Button
+                      title="Continue"
+                      onPress={handleContinueFromStep2}
+                      disabled={!secondaryEmotion}
+                      style={styles.halfBtn}
+                    />
+                  )}
                 </View>
               </View>
             )}
 
-            {/* STEP 3: Body Sensation - Phase 2 rephrase/auto-advance */}
+            {/* STEP 3: How does it feel in your body? Sensation-first; the figure is feedback only */}
             {step === 3 && (
               <View style={styles.stepCard}>
                 <View style={styles.emotyHeaderRow}>
                   <EmotyAvatar state="listening" size="md" />
-                  <View style={styles.emotySpeechBubble}>
-                    {step3UncertaintyState === "normal" ? (
+                  <View style={styles.emotySpeechBubble} accessibilityLiveRegion="polite">
+                    {isNoticing ? (
                       <>
-                        <Text style={styles.emotySpeechText}>Where do you notice it most?</Text>
-                        <Text style={styles.emotySubtext}>
-                          {secondaryEmotion
-                            ? `Where do you feel that sense of ${secondaryEmotion.toLowerCase()} in your body?`
-                            : `Where do you notice that feeling in your body?`}
-                        </Text>
+                        <Text style={styles.emotySpeechText}>{HELP_ME_NOTICE_STEPS[noticeIndex!].line}</Text>
+                        <Text style={styles.emotySubtext}>Just notice. There is nothing to get right.</Text>
                       </>
                     ) : (
                       <>
-                        <Text style={styles.emotySpeechText}>{"That's okay."}</Text>
-                        <Text style={styles.emotySubtext}>
-                          Sometimes feelings show up as a tight chest, a knot in the stomach, tense shoulders, or restless hands. Do you notice anything like that?
+                        <Text style={styles.emotySpeechText}>
+                          {noticeFinished ? "Anything stand out?" : "How does it feel in your body?"}
                         </Text>
+                        <Text style={styles.emotySubtext}>Pick anything that fits.</Text>
                       </>
                     )}
                   </View>
                 </View>
-                <View style={styles.bodyMapContainer}>
-                  <View style={styles.svgWrapper}>
-                    <Svg width={140} height={260} viewBox="0 0 200 320">
-                      <Circle cx={100} cy={35} r={20} fill={selectedRegions.includes("Head") ? (activePrimaryDef?.themeColor || Colors.primary) : "#E2E8F0"} onPress={() => toggleRegion("Head")} />
-                      <Path d="M 65 65 L 135 65 L 130 85 L 70 85 Z" fill={selectedRegions.includes("Shoulders") ? (activePrimaryDef?.themeColor || Colors.primary) : "#E2E8F0"} onPress={() => toggleRegion("Shoulders")} />
-                      <Path d="M 72 88 L 128 88 L 125 125 L 75 125 Z" fill={selectedRegions.includes("Chest") ? (activePrimaryDef?.themeColor || Colors.primary) : "#E2E8F0"} onPress={() => toggleRegion("Chest")} />
-                      <Path d="M 75 128 L 125 128 L 120 170 L 80 170 Z" fill={selectedRegions.includes("Stomach") ? (activePrimaryDef?.themeColor || Colors.primary) : "#E2E8F0"} onPress={() => toggleRegion("Stomach")} />
-                      <Path d="M 62 68 L 48 80 L 38 150 L 48 150 L 58 90 Z" fill={selectedRegions.includes("Hands") ? (activePrimaryDef?.themeColor || Colors.primary) : "#E2E8F0"} onPress={() => toggleRegion("Hands")} />
-                      <Path d="M 138 68 L 152 80 L 162 150 L 152 150 L 142 90 Z" fill={selectedRegions.includes("Hands") ? (activePrimaryDef?.themeColor || Colors.primary) : "#E2E8F0"} onPress={() => toggleRegion("Hands")} />
-                      <Path d="M 80 173 L 97 173 L 92 295 L 75 295 Z" fill={selectedRegions.includes("Legs") ? (activePrimaryDef?.themeColor || Colors.primary) : "#E2E8F0"} onPress={() => toggleRegion("Legs")} />
-                      <Path d="M 103 173 L 120 173 L 125 295 L 108 295 Z" fill={selectedRegions.includes("Legs") ? (activePrimaryDef?.themeColor || Colors.primary) : "#E2E8F0"} onPress={() => toggleRegion("Legs")} />
-                    </Svg>
-                  </View>
-                  <View style={styles.bodyListColumn}>
-                    {STANDARD_BODY_REGIONS.map((region) => {
-                      const isSelected = selectedRegions.includes(region);
-                      return (
-                        <TouchableOpacity
-                          key={region}
-                          style={[
-                            styles.bodyRegionChip,
-                            isSelected && [
-                              styles.bodyRegionChipSelected,
-                              activePrimaryDef ? { backgroundColor: activePrimaryDef.themeColor, borderColor: activePrimaryDef.themeColor } : null,
-                            ],
-                          ]}
-                          onPress={() => toggleRegion(region)}
-                        >
-                          <Ionicons name={isSelected ? "checkbox" : "square-outline"} size={18} color={isSelected ? Colors.white : Colors.textSecondary} style={{ marginRight: 6 }} />
-                          <Text style={[styles.bodyRegionText, isSelected && styles.bodyRegionTextSelected]}>{region}</Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                    <TouchableOpacity
-                      style={[
-                        styles.bodyRegionChip,
-                        selectedRegions.includes("Somewhere else") && [
-                          styles.bodyRegionChipSelected,
-                          activePrimaryDef ? { backgroundColor: activePrimaryDef.themeColor, borderColor: activePrimaryDef.themeColor } : null,
-                        ],
-                      ]}
-                      onPress={() => toggleRegion("Somewhere else")}
-                    >
-                      <Ionicons name={selectedRegions.includes("Somewhere else") ? "checkbox" : "square-outline"} size={18} color={selectedRegions.includes("Somewhere else") ? Colors.white : Colors.textSecondary} style={{ marginRight: 6 }} />
-                      <Text style={[styles.bodyRegionText, selectedRegions.includes("Somewhere else") && styles.bodyRegionTextSelected]}>Somewhere else</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={[styles.bodyRegionChip, styles.unsureChip, isUnsureBody && styles.unsureChipSelected]} onPress={handleToggleUnsureBody}>
-                      <Ionicons name={isUnsureBody ? "help-circle" : "help-circle-outline"} size={18} color={isUnsureBody ? Colors.primary : Colors.textMuted} style={{ marginRight: 6 }} />
-                      <Text style={[styles.bodyRegionText, isUnsureBody && { color: Colors.primary, fontFamily: Theme.fontFamily.bold }]}>{step3UncertaintyState === "rephrased" ? "Still not sure — that's fine" : "I'm not sure"}</Text>
+
+                <View style={styles.bodyFigureWrap} pointerEvents="none" importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
+                  <Svg width={92} height={148} viewBox="0 0 200 320">
+                    <Circle cx={100} cy={35} r={20} fill={regionFill("Head")} />
+                    <Path d="M 65 65 L 135 65 L 130 85 L 70 85 Z" fill={regionFill("Shoulders")} />
+                    <Path d="M 72 88 L 128 88 L 125 125 L 75 125 Z" fill={regionFill("Chest")} />
+                    <Path d="M 75 128 L 125 128 L 120 170 L 80 170 Z" fill={regionFill("Stomach")} />
+                    <Path d="M 62 68 L 48 80 L 38 150 L 48 150 L 58 90 Z" fill={regionFill("Hands")} />
+                    <Path d="M 138 68 L 152 80 L 162 150 L 152 150 L 142 90 Z" fill={regionFill("Hands")} />
+                    <Path d="M 80 173 L 97 173 L 92 295 L 75 295 Z" fill={regionFill("Legs")} />
+                    <Path d="M 103 173 L 120 173 L 125 295 L 108 295 Z" fill={regionFill("Legs")} />
+                  </Svg>
+                </View>
+
+                {isNoticing ? (
+                  <View style={styles.noticeFooter}>
+                    <View style={styles.noticeDots}>
+                      {HELP_ME_NOTICE_STEPS.map((s, i) => (
+                        <View key={s.region} style={[styles.noticeDot, i <= noticeIndex! && { backgroundColor: figureColor }]} />
+                      ))}
+                    </View>
+                    <TouchableOpacity style={styles.unsureInlineBtn} onPress={handleSkipNotice} accessibilityRole="button">
+                      <Text style={styles.unsureInlineText}>Skip</Text>
                     </TouchableOpacity>
                   </View>
-                </View>
-                <View style={styles.navRow}>
-                  <Button title="Back" onPress={() => setStep(2)} variant="outline" style={styles.halfBtn} />
-                  <Button title="Continue" onPress={handleContinueFromStep3} style={styles.halfBtn} />
-                </View>
+                ) : (
+                  <>
+                    <View style={styles.secondaryGrid}>
+                      {sensationOptions.map((sensation) => {
+                        const isSelected = selectedSensations.includes(sensation.label);
+                        return (
+                          <TouchableOpacity
+                            key={sensation.label}
+                            style={[
+                              styles.secondaryChip,
+                              styles.sensationChip,
+                              isSelected && [styles.secondaryChipSelected, { backgroundColor: figureColor, borderColor: figureColor }],
+                            ]}
+                            onPress={() => toggleSensation(sensation.label)}
+                            accessibilityRole="checkbox"
+                            accessibilityState={{ checked: isSelected }}
+                            activeOpacity={0.8}
+                          >
+                            <Text style={[styles.secondaryChipText, styles.sensationChipText, isSelected && styles.secondaryChipTextSelected]}>
+                              {sensation.label}
+                            </Text>
+                            {isSelected && <Ionicons name="checkmark-circle" size={16} color={Colors.white} style={{ marginLeft: 6 }} />}
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+
+                    {noticeFinished ? (
+                      <TouchableOpacity style={styles.unsureInlineBtn} onPress={handleNothingNoticed} accessibilityRole="button">
+                        <Text style={styles.unsureInlineText}>Not really</Text>
+                      </TouchableOpacity>
+                    ) : (
+                      <TouchableOpacity
+                        style={styles.unsureInlineBtn}
+                        onPress={handleStartNotice}
+                        accessibilityRole="button"
+                        accessibilityHint="A short guided body check, about 20 seconds"
+                      >
+                        <Ionicons name="sparkles-outline" size={18} color={Colors.primary} />
+                        <Text style={[styles.unsureInlineText, { color: Colors.primary }]}>Help me notice</Text>
+                      </TouchableOpacity>
+                    )}
+
+                    <View style={styles.navRow}>
+                      <Button title="Back" onPress={() => setStep(2)} variant="outline" style={styles.halfBtn} />
+                      <Button title="Continue" onPress={handleContinueFromStep3} style={styles.halfBtn} />
+                    </View>
+                  </>
+                )}
               </View>
             )}
 
@@ -1684,6 +1755,33 @@ const styles = StyleSheet.create({
     fontFamily: Theme.fontFamily.bold,
     color: Colors.white,
   },
+  // Step 3 sensation chips: long labels wrap inside the chip instead of overflowing
+  sensationChip: {
+    maxWidth: "100%",
+  },
+  sensationChipText: {
+    flexShrink: 1,
+  },
+  bodyFigureWrap: {
+    alignSelf: "center",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: Theme.spacing.md,
+  },
+  noticeFooter: {
+    alignItems: "center",
+    marginTop: Theme.spacing.sm,
+  },
+  noticeDots: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  noticeDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#E2E8F0",
+  },
 
   grid: {
     flexDirection: "row",
@@ -1759,57 +1857,6 @@ const styles = StyleSheet.create({
   },
   strongestTextSelected: {
     color: Colors.primary,
-  },
-  bodyMapContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginVertical: Theme.spacing.md,
-    gap: 12,
-  },
-  svgWrapper: {
-    flex: 1.2,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#F8FAFC",
-    borderRadius: Theme.borderRadius.lg,
-    paddingVertical: Theme.spacing.md,
-    borderWidth: 1,
-    borderColor: "#E2E8F0",
-  },
-  bodyListColumn: {
-    flex: 1,
-    gap: 8,
-  },
-  bodyRegionChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    borderRadius: Theme.borderRadius.md,
-    backgroundColor: "#F8FAFC",
-    borderWidth: 1,
-    borderColor: "#E2E8F0",
-  },
-  bodyRegionChipSelected: {
-    borderColor: Colors.primary,
-    backgroundColor: Colors.primary,
-  },
-  bodyRegionText: {
-    fontFamily: Theme.fontFamily.bold,
-    fontSize: Theme.fontSize.xs,
-    color: Colors.textSecondary,
-  },
-  bodyRegionTextSelected: {
-    color: Colors.white,
-  },
-  unsureChip: {
-    borderColor: "#CBD5E1",
-    backgroundColor: "#F1F5F9",
-  },
-  unsureChipSelected: {
-    borderColor: Colors.primary,
-    backgroundColor: Colors.primary + "15",
   },
   nextBtn: { marginTop: Theme.spacing.md, borderRadius: Theme.borderRadius.lg },
   navRow: {
@@ -2040,9 +2087,6 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 16,
     borderRadius: Theme.borderRadius.full,
-  },
-  unsureInlineBtnActive: {
-    backgroundColor: Colors.primary + "12",
   },
   unsureInlineText: {
     fontFamily: Theme.fontFamily.medium,

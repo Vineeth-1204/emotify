@@ -1,7 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
 import fs from "fs";
 import path from "path";
-import zlib from "zlib";
 import {
   GUIDED_MEDITATIONS,
   getGuidedMeditation,
@@ -11,39 +10,15 @@ import {
 } from "./guidedMeditations";
 import type { CanonicalEmotionKey } from "./emotionRouting";
 import { PRIMARY_EMOTIONS, SECONDARY_EMOTIONS_BY_PRIMARY, getCanonicalEmotionForRouting } from "./emotionTaxonomy";
+import { PRODUCT_SPEC_PATH, readZipEntry } from "../test-utils/docx";
 
 const root = path.resolve(__dirname, "..");
 const ALL_KEYS: CanonicalEmotionKey[] = ["worried", "angry", "embarrassed", "guilty", "sad", "tired", "happy", "calm"];
 
-/** Reads one file out of a .docx (zip) using only Node built-ins. */
-function readZipEntry(zipPath: string, entryName: string): string {
-  const buf = fs.readFileSync(zipPath);
-  const eocd = buf.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
-  let offset = buf.readUInt32LE(eocd + 16);
-  const count = buf.readUInt16LE(eocd + 10);
-  for (let i = 0; i < count; i++) {
-    const method = buf.readUInt16LE(offset + 10);
-    const compressedSize = buf.readUInt32LE(offset + 20);
-    const nameLen = buf.readUInt16LE(offset + 28);
-    const extraLen = buf.readUInt16LE(offset + 30);
-    const commentLen = buf.readUInt16LE(offset + 32);
-    const localOffset = buf.readUInt32LE(offset + 42);
-    const name = buf.toString("utf8", offset + 46, offset + 46 + nameLen);
-    if (name === entryName) {
-      const start = localOffset + 30 + buf.readUInt16LE(localOffset + 26) + buf.readUInt16LE(localOffset + 28);
-      const data = buf.subarray(start, start + compressedSize);
-      return (method === 8 ? zlib.inflateRawSync(data) : data).toString("utf8");
-    }
-    offset += 46 + nameLen + extraLen + commentLen;
-  }
-  throw new Error(`${entryName} not found in ${zipPath}`);
-}
-
 /** Emotion -> YouTube URL exactly as hyperlinked in the product specification. */
 function specVideoLinks(): Record<string, string> {
-  const spec = path.join(root, "priyanka app .docx");
-  const rels = readZipEntry(spec, "word/_rels/document.xml.rels");
-  const doc = readZipEntry(spec, "word/document.xml");
+  const rels = readZipEntry(PRODUCT_SPEC_PATH, "word/_rels/document.xml.rels");
+  const doc = readZipEntry(PRODUCT_SPEC_PATH, "word/document.xml");
   const targets: Record<string, string> = {};
   for (const rel of rels.match(/<Relationship [^>]*>/g) ?? []) {
     const id = /Id="([^"]+)"/.exec(rel)?.[1];

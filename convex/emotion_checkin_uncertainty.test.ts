@@ -8,7 +8,7 @@ const modules = import.meta.glob("./**/*.ts");
 
 /**
  * Persists exactly what the guided check-in (emotion-map handleContinueFromStep4) sends for the
- * sensation-first body step and the "Not sure" paths, and checks it reaches History
+ * sensation-first body step and feelings found through "Not sure", and checks it reaches History
  * (emotionMaps.getRecentLogs) and the counsellor timeline.
  */
 async function setup() {
@@ -76,23 +76,27 @@ describe("guided check-in persistence with sensations and uncertainty", () => {
     expect(logs[0]).toMatchObject({ emotion: "Lonely", bodyRegions: ["Head", "Chest", "Legs"], preIntensity: 6 });
   });
 
-  test("'Not sure' on the feeling saves only the student's primary emotion; 'Not really' saves no region", async () => {
+  test("a feeling found through 'Not sure' is saved like any other: emotion id and readable label agree", async () => {
     const { asStudent, studentId } = await setup();
+    // Student picked Sad, chose "Not sure", then "Disappointed" from "Does it feel more like…"
     await saveCheckin(asStudent, {
-      primary: "sad", secondary: null, historyLabel: "Sad",
+      primary: "sad", secondary: "Disappointed", historyLabel: "Disappointed",
       regions: [], intensity: 4, action: "Thought Reframing",
     });
     const logs = await asStudent.query(api.emotionLogs.getRecent, { userId: studentId });
     expect(logs).toHaveLength(1);
-    expect(logs[0]).toMatchObject({ emotion: "sad", strongestEmotion: "sad", selectedEmotions: ["sad"], bodyRegions: [], preIntensity: 4 });
+    expect(logs[0]).toMatchObject({
+      emotion: "Disappointed", strongestEmotion: "Disappointed", selectedEmotions: ["sad", "Disappointed"],
+      bodyRegions: [], preIntensity: 4,
+    });
     const history = await asStudent.query(api.emotionMaps.getRecentLogs, { userId: studentId });
-    expect(history[0]).toMatchObject({ emotionLabel: "Sad", selectedRegions: [], selectedEmotions: ["sad"] });
+    expect(history[0]).toMatchObject({ emotionLabel: "Disappointed", selectedRegions: [], strongestEmotion: "Disappointed" });
   });
 
-  test("both check-ins reach the counsellor's monitoring timeline", async () => {
+  test("both check-in records reach the counsellor's monitoring timeline", async () => {
     const { t, asStudent, studentId, counselorId } = await setup();
     await saveCheckin(asStudent, {
-      primary: "angry", secondary: null, historyLabel: "Angry",
+      primary: "angry", secondary: "Frustrated", historyLabel: "Frustrated",
       regions: ["Head"], intensity: 7, action: "Progressive Muscle Relaxation (JPMR)",
     });
     const res: any = await t.withIdentity({ subject: counselorId }).query(api.timeline.getStudentClinicalTimeline, {
@@ -102,16 +106,16 @@ describe("guided check-in persistence with sensations and uncertainty", () => {
     const events: any[] = Array.isArray(res) ? res : res.events ?? res.items ?? [];
     const checkin = events.find((e) => e.eventType === "emotion_checkin");
     const map = events.find((e) => e.eventType === "emotion_map");
-    expect(checkin?.title).toBe("Emotion Check-in: angry");
+    expect(checkin?.title).toBe("Emotion Check-in: Frustrated");
     expect(checkin?.metadata?.preIntensity).toBe(7);
-    expect(map?.title).toBe("Emotion Body Map: Angry");
+    expect(map?.title).toBe("Emotion Body Map: Frustrated");
     expect(map?.metadata?.selectedRegions).toEqual(["Head"]);
   });
 
   test("the post-intervention re-check still patches the saved log, once", async () => {
     const { asStudent, studentId } = await setup();
     const logId = await saveCheckin(asStudent, {
-      primary: "calm", secondary: null, historyLabel: "Calm", regions: ["Shoulders"], intensity: 3, action: "Breathing",
+      primary: "calm", secondary: "Relaxed", historyLabel: "Relaxed", regions: ["Shoulders"], intensity: 3, action: "Breathing",
     });
     await asStudent.mutation(api.emotionLogs.recordPostIntensity, { logId, postIntensity: 2 });
     await asStudent.mutation(api.emotionLogs.recordPostIntensity, { logId, postIntensity: 9 });

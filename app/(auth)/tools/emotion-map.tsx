@@ -54,6 +54,13 @@ import { formatProtocolDuration, resolveActiveBreathingProtocol } from "@/consta
 import { CHECKIN_RETURN_TO } from "@/common/checkinReturn";
 import { getGuidedMeditation, openGuidedMeditation } from "@/common/guidedMeditations";
 import {
+  getDiscoveryGroups,
+  getPrimaryMeaningChoices,
+  nextDiscoveryMode,
+  previousDiscoveryMode,
+  type DiscoveryMode,
+} from "@/common/emotionDiscovery";
+import {
   HELP_ME_NOTICE_STEPS,
   NOTICE_STEP_MS,
   getBodySensations,
@@ -231,9 +238,10 @@ export default function EmotionMapScreen() {
   const [selectedEmotions, setSelectedEmotions] = useState<string[]>([]);
   const [strongestEmotion, setStrongestEmotion] = useState<string | null>(null);
 
-  // Step 2: "unsure" = the student chose "Not sure" for the specific feeling. The check-in then
-  // continues with the primary emotion they picked in step 1; nothing more specific is assumed.
-  const [step2UncertaintyState, setStep2UncertaintyState] = useState<"normal" | "unsure">("normal");
+  // Step 2: "Not sure" opens guided discovery (see common/emotionDiscovery.ts). The check-in only
+  // continues once the student picks a feeling; no emotion is ever filled in for them.
+  const [discovery, setDiscovery] = useState<DiscoveryMode>({ kind: "choose" });
+  const discoveryGroups = primaryEmotion ? getDiscoveryGroups(primaryEmotion) : [];
 
   // Step 3: Body sensations (sensation-first). Saved as the existing figure regions.
   const [selectedSensations, setSelectedSensations] = useState<string[]>([]);
@@ -298,6 +306,10 @@ export default function EmotionMapScreen() {
         setActiveTab("log");
         return true;
       }
+      if (step === 2 && discovery.kind !== "choose") {
+        setDiscovery(previousDiscoveryMode(discovery, discoveryGroups.length));
+        return true;
+      }
       if (step === 2) {
         if (contextualPrimary) {
           router.back();
@@ -331,7 +343,7 @@ export default function EmotionMapScreen() {
 
     const sub = BackHandler.addEventListener("hardwareBackPress", onBackPress);
     return () => sub.remove();
-  }, [step, activeTab, router, contextualPrimary]);
+  }, [step, activeTab, router, contextualPrimary, discovery, discoveryGroups.length]);
 
   // Phase 3 — On mount: check if returning from JPMR/Reframe with pending post-session state
   useEffect(() => {
@@ -392,14 +404,14 @@ export default function EmotionMapScreen() {
     setSecondaryEmotion(null);
     setStrongestEmotion(id);
     setSelectedEmotions([id]);
-    setStep2UncertaintyState("normal");
+    setDiscovery({ kind: "choose" });
   };
 
   // Step 1 -> Next: Advance to Step 2
   const handleContinueFromStep1 = () => {
     if (!primaryEmotion) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-    setStep2UncertaintyState("normal");
+    setDiscovery({ kind: "choose" });
     setStep(2);
   };
 
@@ -418,21 +430,32 @@ export default function EmotionMapScreen() {
     setStep(3);
   };
 
-  // Step 2: "Not sure" about the specific feeling. Asked once only: the check-in continues with
-  // the primary emotion the student chose; no specific feeling is filled in for them.
+  // Step 2: "Not sure" opens guided discovery. Nothing is selected for the student.
   const handleUnsureSecondary = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     setSecondaryEmotion(null);
-    if (primaryEmotion) {
-      setStrongestEmotion(primaryEmotion);
-      setSelectedEmotions([primaryEmotion]);
-    }
-    setStep2UncertaintyState("unsure");
+    setDiscovery({ kind: "explore", group: 0 });
   };
 
-  const handleContinueWithPrimaryOnly = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-    setStep(3);
+  // "None of these": the next group of feelings, then the broad-emotion meanings
+  const handleDiscoveryNone = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    setDiscovery((mode) => nextDiscoveryMode(mode, discoveryGroups.length));
+  };
+  const handleDiscoveryBack = () => setDiscovery((mode) => previousDiscoveryMode(mode, discoveryGroups.length));
+
+  // A feeling that fits: the normal selection, then the student confirms with Continue
+  const handlePickDiscoveredFeeling = (option: string) => {
+    handleSelectSecondary(option);
+    setDiscovery({ kind: "choose" });
+  };
+
+  // A broad emotion that sounds closer: switch to it and show its feelings
+  const handlePickBroadMeaning = (id: PrimaryEmotionId) => handleSelectPrimary(id);
+
+  const handleStillNotSure = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    setDiscovery({ kind: "unresolved" });
   };
 
   // Explicit choice to leave the check-in for a calming activity (step 6). Nothing is saved there.
@@ -757,6 +780,8 @@ export default function EmotionMapScreen() {
               onPress={() => {
                 if (activeTab === "history") {
                   setActiveTab("log");
+                } else if (step === 2 && discovery.kind !== "choose") {
+                  handleDiscoveryBack();
                 } else if (step === 2) {
                   if (contextualPrimary) router.back();
                   else setStep(1);
@@ -887,15 +912,8 @@ export default function EmotionMapScreen() {
               <View style={styles.stepCard}>
                 <View style={styles.emotyHeaderRow}>
                   <EmotyAvatar state="listening" size="md" />
-                  <View style={styles.emotySpeechBubble}>
-                    {step2UncertaintyState === "unsure" ? (
-                      <>
-                        <Text style={styles.emotySpeechText}>{"That's okay."}</Text>
-                        <Text style={styles.emotySubtext}>
-                          {`"${PRIMARY_EMOTIONS.find((e) => e.id === primaryEmotion)?.label}" is enough to go on.`}
-                        </Text>
-                      </>
-                    ) : (
+                  <View style={styles.emotySpeechBubble} accessibilityLiveRegion="polite">
+                    {discovery.kind === "choose" && (
                       <>
                         <Text style={styles.emotySpeechText}>
                           Got it. You're feeling {PRIMARY_EMOTIONS.find((e) => e.id === primaryEmotion)?.label.toLowerCase()}.
@@ -903,29 +921,30 @@ export default function EmotionMapScreen() {
                         <Text style={styles.emotySubtext}>What's closest to how you're feeling?</Text>
                       </>
                     )}
+                    {discovery.kind === "explore" && (
+                      <>
+                        <Text style={styles.emotySpeechText}>
+                          {discovery.group === 0 ? "That's okay. Let's figure it out together." : "How about these?"}
+                        </Text>
+                        <Text style={styles.emotySubtext}>Does it feel more like…</Text>
+                      </>
+                    )}
+                    {discovery.kind === "broad" && (
+                      <>
+                        <Text style={styles.emotySpeechText}>{"Let's look at it another way."}</Text>
+                        <Text style={styles.emotySubtext}>Which of these sounds closest?</Text>
+                      </>
+                    )}
+                    {discovery.kind === "unresolved" && (
+                      <>
+                        <Text style={styles.emotySpeechText}>{"That's okay. Some feelings are hard to name."}</Text>
+                        <Text style={styles.emotySubtext}>{"Without a feeling, this check-in won't be saved."}</Text>
+                      </>
+                    )}
                   </View>
                 </View>
 
-                {step2UncertaintyState === "unsure" ? (
-                  // Asked once only: continue with the primary emotion, pick after all, or leave
-                  <View style={styles.secondaryContainer}>
-                    <TouchableOpacity
-                      style={styles.unsureInlineBtn}
-                      onPress={() => setStep2UncertaintyState("normal")}
-                      accessibilityRole="button"
-                    >
-                      <Text style={styles.unsureInlineText}>Pick a feeling after all</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.unsureInlineBtn}
-                      onPress={handleSkipToCalmingActivity}
-                      accessibilityRole="button"
-                      accessibilityHint="Leaves the check-in without saving it"
-                    >
-                      <Text style={styles.unsureInlineText}>Skip to a calming activity</Text>
-                    </TouchableOpacity>
-                  </View>
-                ) : (
+                {discovery.kind === "choose" && (
                   <View style={styles.secondaryContainer}>
                     <View style={styles.secondaryGrid}>
                       {(SECONDARY_EMOTIONS_BY_PRIMARY[primaryEmotion] || [])
@@ -976,17 +995,91 @@ export default function EmotionMapScreen() {
                   </View>
                 )}
 
+                {discovery.kind === "explore" && (
+                  // A few of this emotion's feelings at a time; picking one returns to the choices
+                  <View style={styles.secondaryContainer}>
+                    <View style={styles.secondaryGrid}>
+                      {(discoveryGroups[discovery.group] ?? []).map((option) => (
+                        <TouchableOpacity
+                          key={option}
+                          style={[styles.secondaryChip, styles.sensationChip]}
+                          onPress={() => handlePickDiscoveredFeeling(option)}
+                          accessibilityRole="button"
+                          activeOpacity={0.8}
+                        >
+                          <Text style={[styles.secondaryChipText, styles.sensationChipText]}>{option}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                    <TouchableOpacity style={styles.unsureInlineBtn} onPress={handleDiscoveryNone} accessibilityRole="button">
+                      <Text style={[styles.unsureInlineText, { color: Colors.primary }]}>None of these</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                {discovery.kind === "broad" && (
+                  // The specification's plain meaning of each broad emotion
+                  <View style={styles.secondaryContainer}>
+                    {getPrimaryMeaningChoices().map((choice) => (
+                      <TouchableOpacity
+                        key={choice.id}
+                        style={styles.meaningCard}
+                        onPress={() => handlePickBroadMeaning(choice.id)}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${choice.meaning} ${choice.label}`}
+                        activeOpacity={0.85}
+                      >
+                        <Text style={styles.meaningText}>{choice.meaning}</Text>
+                        <Text style={styles.meaningLabel}>{choice.label}</Text>
+                      </TouchableOpacity>
+                    ))}
+                    <TouchableOpacity style={styles.unsureInlineBtn} onPress={handleStillNotSure} accessibilityRole="button">
+                      <Text style={styles.unsureInlineText}>Still not sure</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                {discovery.kind === "unresolved" && (
+                  // Stop asking; offer another try, the choices, or a calming activity (nothing saved)
+                  <View style={styles.secondaryContainer}>
+                    <TouchableOpacity
+                      style={styles.unsureInlineBtn}
+                      onPress={() => setDiscovery({ kind: "explore", group: 0 })}
+                      accessibilityRole="button"
+                    >
+                      <Text style={[styles.unsureInlineText, { color: Colors.primary }]}>Try again</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.unsureInlineBtn}
+                      onPress={() => setDiscovery({ kind: "choose" })}
+                      accessibilityRole="button"
+                    >
+                      <Text style={[styles.unsureInlineText, { color: Colors.primary }]}>Back to the feelings</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.unsureInlineBtn}
+                      onPress={handleSkipToCalmingActivity}
+                      accessibilityRole="button"
+                      accessibilityHint="Leaves the check-in without saving it"
+                    >
+                      <Text style={[styles.unsureInlineText, { color: Colors.primary }]}>Do something calming instead</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
                 <View style={styles.navRow}>
-                  <Button title="Back" onPress={() => setStep(1)} variant="outline" style={styles.halfBtn} />
-                  {step2UncertaintyState === "unsure" ? (
-                    <Button title="Continue" onPress={handleContinueWithPrimaryOnly} style={styles.halfBtn} />
+                  {discovery.kind === "choose" ? (
+                    <>
+                      <Button title="Back" onPress={() => setStep(1)} variant="outline" style={styles.halfBtn} />
+                      <Button
+                        title="Continue"
+                        onPress={handleContinueFromStep2}
+                        disabled={!secondaryEmotion}
+                        style={styles.halfBtn}
+                      />
+                    </>
                   ) : (
-                    <Button
-                      title="Continue"
-                      onPress={handleContinueFromStep2}
-                      disabled={!secondaryEmotion}
-                      style={styles.halfBtn}
-                    />
+                    <Button title="Back" onPress={handleDiscoveryBack} variant="outline" style={styles.halfBtn} />
                   )}
                 </View>
               </View>
@@ -1755,6 +1848,27 @@ const styles = StyleSheet.create({
     fontFamily: Theme.fontFamily.bold,
     color: Colors.white,
   },
+  // Step 2 discovery: broad-emotion meanings from the specification
+  meaningCard: {
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: Theme.borderRadius.lg,
+    borderWidth: 1.5,
+    borderColor: "#E2E8F0",
+    backgroundColor: "#F8FAFC",
+    marginBottom: 10,
+  },
+  meaningText: {
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: Theme.fontSize.sm,
+    color: Colors.text,
+  },
+  meaningLabel: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: Theme.fontSize.xs,
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
   // Step 3 sensation chips: long labels wrap inside the chip instead of overflowing
   sensationChip: {
     maxWidth: "100%",
@@ -2089,6 +2203,8 @@ const styles = StyleSheet.create({
     borderRadius: Theme.borderRadius.full,
   },
   unsureInlineText: {
+    flexShrink: 1,
+    textAlign: "center",
     fontFamily: Theme.fontFamily.medium,
     fontSize: Theme.fontSize.sm,
     color: Colors.textMuted,

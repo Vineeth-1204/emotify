@@ -151,30 +151,6 @@ describe("Help me notice", () => {
   });
 });
 
-describe("step 2: Not sure about the specific feeling", () => {
-  const handler = section("const handleUnsureSecondary = () => {", "const handleContinueWithPrimaryOnly");
-
-  test("asked once: no re-asking with examples, and no jump out of the check-in", () => {
-    expect(screen).not.toContain("UNCERTAINTY_REPHRASINGS");
-    expect(screen).not.toContain("Still not sure");
-    expect(handler).not.toContain("setStep(");
-    expect(handler).toContain('setStep2UncertaintyState("unsure")');
-  });
-
-  test("no specific feeling is filled in; only the student's own primary emotion is kept", () => {
-    expect(handler).toContain("setSecondaryEmotion(null)");
-    expect(handler).toContain("setSelectedEmotions([primaryEmotion])");
-    expect(screen).toContain('"${PRIMARY_EMOTIONS.find((e) => e.id === primaryEmotion)?.label}" is enough to go on.');
-  });
-
-  test("Continue carries on with the normal check-in; leaving for an activity is an explicit choice", () => {
-    expect(screen).toMatch(/const handleContinueWithPrimaryOnly = \(\) => \{[\s\S]*?setStep\(3\);/);
-    expect(screen.match(/setStep\(6\)/g)).toHaveLength(1);
-    expect(screen).toMatch(/const handleSkipToCalmingActivity = \(\) => \{[\s\S]*?setStep\(6\);/);
-    expect(screen).toContain('accessibilityHint="Leaves the check-in without saving it"');
-  });
-});
-
 describe("saving and the 1–10 intensity scale are unchanged", () => {
   const save = section("const handleContinueFromStep4 = async () => {", "// Phase 3 — Save pending state");
 
@@ -195,7 +171,7 @@ describe("saving and the 1–10 intensity scale are unchanged", () => {
     expect(screen).toContain("Rate the intensity on a scale from 1 to 10.");
   });
 
-  test("primary-only check-ins show the readable emotion name in History", () => {
+  test("History gets a readable label (the chosen feeling, or the broad emotion's label)", () => {
     expect(save).toContain("emotionLabel: historyLabel,");
     expect(save).toContain("const historyLabel = secondaryEmotion || PRIMARY_EMOTIONS.find((e) => e.id === primaryEmotion)?.label || primaryEmotion;");
   });

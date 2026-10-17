@@ -607,7 +607,9 @@ export default defineSchema({
     rating: v.number(),
     status: v.string(), // "active" | "inactive" | "on_leave"
     createdAt: v.number(),
-  }).index("by_status", ["status"]),
+  })
+    .index("by_status", ["status"])
+    .index("by_userId", ["userId"]),
 
   clinicalTimelines: defineTable({
     userId: v.string(),
@@ -738,9 +740,14 @@ export default defineSchema({
     assignedAt: v.number(),
     active: v.boolean(),
     endedAt: v.optional(v.number()),
+    // Who ended the assignment and why ("reassigned" | "unassigned" | "student_deleted" | "counsellor_deleted").
+    // Inactive rows are the assignment history; the next row for the student holds the new counsellor.
+    endedBy: v.optional(v.id("users")),
+    endReason: v.optional(v.string()),
   })
     .index("by_counsellor_and_active", ["counsellorId", "active"])
-    .index("by_student_and_active", ["studentId", "active"]),
+    .index("by_student_and_active", ["studentId", "active"])
+    .index("by_active", ["active"]),
 
   // AI-3 Step 7: Dedicated Non-Sensitive Persistent Memory Table
   emotyMemories: defineTable({

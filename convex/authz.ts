@@ -193,9 +193,11 @@ export async function getStaffRecipientsForStudent(ctx: { db: any }, studentKey:
       .collect();
     for (const a of assignments) {
       const c = await ctx.db.get(a.counsellorId);
-      if (c) counsellors.push(c);
+      if (c && c.status !== "inactive") counsellors.push(c);
     }
   }
+  // Unassigned, or the assigned counsellor's account is deactivated: alert every active
+  // counsellor so a safety notification is never left with admins only.
   if (counsellors.length === 0) {
     counsellors = await ctx.db.query("users").withIndex("by_role", (q: any) => q.eq("role", "counsellor")).collect();
   }

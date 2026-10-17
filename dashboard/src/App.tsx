@@ -13,6 +13,7 @@ import Analytics from './pages/Analytics';
 import SystemSettingsPage from './pages/Settings';
 import TrashBin from './pages/TrashBin';
 import CounsellorRequests from './pages/CounsellorRequests';
+import Assignments from './pages/Assignments';
 
 
 import Login from './pages/Login';
@@ -67,6 +68,7 @@ function App() {
                   <Route index element={<Overview />} />
                   <Route path="patients" element={<PatientsList />} />
                   <Route path="patients/:id" element={<PatientDetail />} />
+                  <Route path="assignments" element={<AdminRoute><Assignments /></AdminRoute>} />
                   <Route path="alerts" element={<AlertsCenter />} />
                   <Route path="sessions" element={<Sessions />} />
 

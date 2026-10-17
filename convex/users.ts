@@ -5,6 +5,7 @@ import type { Id } from "./_generated/dataModel";
 import { signJwt, verifyPassword, hashPassword, generateTemporaryPassword, readUnverifiedSessionId } from "./authHelpers";
 import { internal } from "./_generated/api";
 import { logAuditEvent } from "./audit";
+import { endAssignmentsForDeletedUser } from "./counsellorAssignments";
 import { assertCanAccessStudent, requireAdmin, getAuthenticatedUser } from "./authz";
 import {
   getCompanionDisplayName,
@@ -1356,6 +1357,9 @@ const USER_OWNED_TABLES: Array<{ table: string; index: string; field: string; id
   { table: "aiMonitoringLogs", index: "by_userId", field: "userId" },
   { table: "loginHistory", index: "by_userId", field: "userId" },
   { table: "notifications", index: "by_recipientId", field: "recipientId" },
+  // The student's own assignment history. Rows where the deleted user was the counsellor
+  // belong to other students' history and are kept (already ended by endAssignmentsForDeletedUser).
+  { table: "counsellorAssignments", index: "by_student_and_active", field: "studentId", idOnly: true },
 ];
 
 /** Maximum documents deleted per transaction before the purge continues in a new one. */
@@ -1482,6 +1486,9 @@ export const deleteUser = mutation({
     });
 
     await logAuditEvent(ctx, String(admin._id), "user_deleted", `Deleted user ${user.patientId || String(args.userId)}`);
+
+    // No active caseload assignment may point at a deleted account (as student or counsellor).
+    await endAssignmentsForDeletedUser(ctx, args.userId, admin._id);
 
     const aliases = Array.from(new Set([String(args.userId), user.clerkId].filter((x): x is string => !!x)));
     const done = await purgeUserData(ctx, args.userId, aliases, DELETE_BATCH_BUDGET);

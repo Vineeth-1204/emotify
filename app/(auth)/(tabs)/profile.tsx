@@ -19,6 +19,7 @@ import { useLanguage } from "@/context/LanguageContext";
 import { useVoice } from "@/context/VoiceContext";
 import { VoiceSettingsModal } from "@/components/voice/VoiceSettingsModal";
 import { EmotyPreferencesSection } from "@/components/profile/EmotyPreferencesSection";
+import { MyCounsellorSection } from "@/components/profile/MyCounsellorSection";
 import { CRISIS_RESOURCES, HELPLINE_DIAL_URL, EMERGENCY_DIAL_URL } from "@/common/crisisResources";
 
 const { width } = Dimensions.get('window');
@@ -437,6 +438,9 @@ export default function ProfileScreen() {
 
         {/* Emoty Personalization & Preferences Section */}
         <EmotyPreferencesSection isReady={isReady} />
+
+        {/* My Counsellor: the student's assigned counsellor (live, read-only) */}
+        <MyCounsellorSection isReady={isReady} />
 
         {/* Account Details Section */}
         <View style={styles.section}>

@@ -180,7 +180,20 @@
     "exportingBtn": "Generating CSV...",
     "exportSuccess": "Your wellbeing logs have been compiled successfully.",
     "exportError": "Failed to export data.",
-    "signOutBtn": "Sign Out"
+    "signOutBtn": "Sign Out",
+    "myCounsellor": {
+      "title": "MY COUNSELLOR",
+      "role": "Counsellor",
+      "assignedSince": "Your counsellor since {{date}}",
+      "email": "Email",
+      "phone": "Phone",
+      "requestSession": "Request a session",
+      "unassigned": "Your counsellor hasn't been assigned yet. Please contact your institution's administrator for assistance.",
+      "unavailable": "Your counsellor is currently unavailable. Please contact your institution's administrator for assistance.",
+      "loading": "Loading your counsellor…",
+      "loadError": "We couldn't load your counsellor right now. Check your connection; this will update when you're back online.",
+      "signInAgain": "Please sign in again to see your counsellor."
+    }
   },
   "tools": {
     "howImFeelingTitle": "How I'm Feeling",

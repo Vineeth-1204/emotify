@@ -23,6 +23,7 @@ import {
 } from "recharts";
 import { EmptyState, LoadingState } from "../components/UIComponents";
 import EnrollPatientModal from "../components/EnrollPatientModal";
+import { useDashboardAuth } from "../components/AuthContext";
 
 function getAlertTitle(type: string) {
   if (type === "suicideRisk" || type === "suicide") return "Suicide risk alert";
@@ -38,6 +39,7 @@ export default function Overview() {
   const allAppointments = useQuery(api.appointments.listAllTwoWayAppointments);
 
   const [showEnrollModal, setShowEnrollModal] = useState(false);
+  const { isAdmin } = useDashboardAuth();
 
   const todayStr = new Date().toISOString().split("T")[0];
   const todaysAppointments = allAppointments?.filter((appointment) => appointment.date === todayStr) || [];
@@ -74,10 +76,13 @@ export default function Overview() {
           <article className="overview-metric-card">
             <div className="overview-metric-icon"><HeartPulse size={20} /></div>
             <div>
-              <p className="overview-metric-label">Students</p>
+              <p className="overview-metric-label">{isAdmin ? "Students" : "My students"}</p>
               <p className="overview-metric-value">{data?.totalPatients ?? 0}</p>
-              <p className="overview-metric-note">Registered accounts</p>
+              <p className="overview-metric-note">
+                {isAdmin ? "Registered accounts" : (data?.totalPatients ?? 0) === 0 ? "None assigned yet. An administrator assigns your caseload." : "Assigned to your caseload"}
+              </p>
             </div>
+            <Link className="overview-card-link" to={isAdmin ? "/assignments" : "/patients"} aria-label={isAdmin ? "Manage student assignments" : "View my students"}>→</Link>
           </article>
 
           <article className="overview-metric-card">

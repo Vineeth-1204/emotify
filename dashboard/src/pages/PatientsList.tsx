@@ -370,7 +370,13 @@ export default function PatientsList() {
         ) : isEmpty ? (
           <div style={{ padding: "64px 24px", textAlign: "center" }}>
             <Users size={40} style={{ color: "var(--border-color)", margin: "0 auto 12px", display: "block" }} />
-            <p style={{ color: "var(--text-secondary)", fontSize: "0.9rem" }}>No students found. Add a student to get started.</p>
+            <p style={{ color: "var(--text-secondary)", fontSize: "0.9rem" }}>
+              {isAdmin
+                ? "No students found. Add a student to get started."
+                : searchTerm
+                  ? "No students in your caseload match this search."
+                  : "No students are assigned to you yet. An administrator assigns students to your caseload."}
+            </p>
           </div>
         ) : patients!.map((patient: any, idx: number) => {
           const isActive = (patient.status || "active") === "active";

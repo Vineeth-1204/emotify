@@ -13,6 +13,7 @@ import {
   scorePQ16Responses,
   evaluateClinicalTriage,
 } from "./clinicalScoring";
+import { outcomeForTriageLevel } from "../common/screeningOutcome";
 
 /**
  * WSAS and ReQoL-10 are not part of Emotify. Earlier versions wrote placeholder
@@ -612,5 +613,40 @@ export const getAttemptAlerts = query({
       .query("alerts")
       .withIndex("by_attemptId", (q) => q.eq("attemptId", attempt._id))
       .collect();
+  },
+});
+
+/**
+ * Student: presentation outcome of my most recent completed screening, for the results
+ * screen. Identity comes only from the session (no arguments), so a student can only see
+ * their own. Returns no scores, ids, triage labels or alert details: only the outcome
+ * category chosen by common/screeningOutcome from the stored, server-computed triage level.
+ * Read-only: it cannot change triage, alerts or notifications.
+ */
+export const getMyResultSummary = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity?.subject) return { status: "unauthenticated" as const };
+
+    const keys = new Set<string>([identity.subject]);
+    const userId = ctx.db.normalizeId("users", identity.subject);
+    const user = userId ? await ctx.db.get(userId) : null;
+    if (user?.clerkId) keys.add(user.clerkId);
+
+    let latest: Doc<"screeningAttempts"> | null = null;
+    for (const key of keys) {
+      const attempt = await ctx.db
+        .query("screeningAttempts")
+        .withIndex("by_userId", (q) => q.eq("userId", key))
+        .order("desc")
+        .filter((q) => q.eq(q.field("status"), "completed"))
+        .first();
+      if (attempt && (!latest || attempt._creationTime > latest._creationTime)) latest = attempt;
+    }
+
+    const outcome = outcomeForTriageLevel(latest?.triageLevel);
+    if (!latest || !outcome) return { status: "none" as const };
+    return { status: "ready" as const, outcome, completedAt: latest.completedAt ?? latest._creationTime };
   },
 });

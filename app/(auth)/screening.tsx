@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { View, StyleSheet, ActivityIndicator, Text, ScrollView, TouchableOpacity } from "react-native";
 import { useRouter } from "expo-router";
 import { useAppAuth } from "@/utils/auth";
-import { useMutation, useQuery } from "convex/react";
+import { useMutation, useQuery, useConvexConnectionState } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Colors } from "@/constants/Colors";
 import { Theme } from "@/constants/Theme";
@@ -78,6 +78,10 @@ export default function ScreeningScreen() {
     pq16: new Array(PQ16_QUESTIONS.length).fill(null),
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState(false);
+  // Synchronous guard: a second tap before React re-renders must not submit twice.
+  const submittingRef = useRef(false);
+  const connection = useConvexConnectionState();
 
   const latestTriage = useQuery(api.triage.getLatest, user?.id ? {
     userId: user.id,
@@ -128,7 +132,9 @@ export default function ScreeningScreen() {
   const submitScreeningAttempt = useMutation(api.screening.submitScreeningAttempt);
 
   async function finishScreening() {
-    if (!user) return;
+    if (!user || submittingRef.current) return;
+    submittingRef.current = true;
+    setSubmitError(false);
     setIsSubmitting(true);
 
     try {
@@ -165,11 +171,15 @@ export default function ScreeningScreen() {
         await SecureStore.deleteItemAsync(key);
       } catch (e) {}
 
-      // 4. Navigate to main tabs (Emoty thanks the student there)
-      router.replace({ pathname: "/(auth)/(tabs)", params: { from: "screening" } } as any);
+      // 4. Show the calm results summary. Alerts and notifications were already created by the
+      //    mutation above; the results screen only reads the student's presentation outcome.
+      router.replace("/(auth)/screening-result" as any);
     } catch (error) {
       console.error("Failed to submit screening attempt", error);
+      // Answers stay in state and in the saved draft, so the student can simply try again.
+      submittingRef.current = false;
       setIsSubmitting(false);
+      setSubmitError(true);
     }
   }
 
@@ -194,6 +204,9 @@ export default function ScreeningScreen() {
           size="lg"
         />
         <ActivityIndicator size="small" color={Colors.primary} style={{ marginTop: 16 }} />
+        {!connection.isWebSocketConnected && (connection.hasEverConnected || connection.connectionRetries > 0) && (
+          <Text style={styles.waitingText} accessibilityLiveRegion="polite">{t("screening.submit.waiting")}</Text>
+        )}
       </View>
     );
   }
@@ -332,12 +345,18 @@ export default function ScreeningScreen() {
       </ScrollView>
 
       <View style={styles.footer}>
+        {submitError && (
+          <View style={styles.submitError} accessibilityLiveRegion="polite" accessibilityRole="alert">
+            <Ionicons name="information-circle-outline" size={20} color={Colors.textSecondary} />
+            <Text style={styles.submitErrorText}>{t("screening.submit.error")}</Text>
+          </View>
+        )}
         <TouchableOpacity
           style={[styles.submitButton, !allCompleted && styles.submitButtonDisabled]}
           onPress={() => finishScreening()}
           disabled={!allCompleted}
         >
-          <Text style={styles.submitButtonText}>{t("common.submit")}</Text>
+          <Text style={styles.submitButtonText}>{submitError ? t("screening.submit.retry") : t("common.submit")}</Text>
           <Ionicons name="arrow-forward" size={20} color={Colors.white} />
         </TouchableOpacity>
       </View>
@@ -497,6 +516,28 @@ const styles = StyleSheet.create({
     fontFamily: Theme.fontFamily.bold,
     fontSize: 16,
     color: Colors.white,
+  },
+  waitingText: {
+    marginTop: 16,
+    marginHorizontal: Theme.spacing.xl,
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#64748B',
+    textAlign: 'center',
+  },
+  submitError: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    marginBottom: 12,
+  },
+  submitErrorText: {
+    flex: 1,
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#475569',
   },
   forcedBanner: {
     backgroundColor: '#FEF2F2',

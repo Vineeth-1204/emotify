@@ -138,10 +138,14 @@ describe("student visibility of counsellor contact details", () => {
     const { mine, setVisible, counsellorA, entryId, as, s1 } = await setup();
     await setVisible("email", true);
     await setVisible("phone", true);
-    const full = JSON.stringify(await as(s1).query(api.counsellorAssignments.getMyCounsellor, {}));
-    for (const secret of [LOGIN_MOBILE, ACCOUNT_EMAIL, counsellorA, String(entryId), "North", "41", "8000000001", "Student"]) {
+    const response: any = await as(s1).query(api.counsellorAssignments.getMyCounsellor, {});
+    const full = JSON.stringify(response);
+    for (const secret of [LOGIN_MOBILE, ACCOUNT_EMAIL, counsellorA, String(entryId), "North", "8000000001", "Student"]) {
       expect(full, secret).not.toContain(secret);
     }
+    // Numeric profile fields are checked on the counsellor object only: the assignment
+    // timestamp elsewhere in the response can contain any digits.
+    expect(JSON.stringify(response.counsellor)).not.toContain("41");
     expect(Object.keys(await mine()).sort()).toEqual(["displayName", "email", "phone", "role"]);
   });
 });

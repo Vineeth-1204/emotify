@@ -256,7 +256,46 @@
     "resultSevere": "Significant Distress",
     "emergencyAlertTitle": "Support is Always Available",
     "emergencyAlertDesc": "Your responses suggest you may be experiencing significant distress. Please consider connecting with a trusted counselor or crisis support service.",
-    "emergencyContactHelpline": "Access Helpline Numbers"
+    "emergencyContactHelpline": "Access Helpline Numbers",
+    "result": {
+      "title": "Your check-in summary",
+      "steady": {
+        "heading": "Thank you for checking in.",
+        "body": "Your answers have been saved. Taking time to notice how you feel is a good step. How we feel can change from week to week, so check in again whenever you like, and reach out if things start to feel harder."
+      },
+      "support": {
+        "heading": "You deserve support, too.",
+        "body": "Some of your answers suggest that you may be going through a difficult time. You don't have to figure everything out on your own. Talking to a counsellor or someone you trust could help."
+      },
+      "prioritySupport": {
+        "heading": "You don't have to handle this alone.",
+        "body": "Your answers suggest that you're experiencing difficulties that deserve attention. Speaking with a counsellor soon could help you work through what is happening and find the right support."
+      },
+      "immediateSafety": {
+        "heading": "Your safety matters most right now.",
+        "body": "We're concerned for your safety. If you're in danger now, please call emergency services immediately.",
+        "bodyHelpline": "You don't have to go through this alone. You can also call {{helplineName}} on {{helplineNumber}} to talk to someone, at any time."
+      },
+      "actions": {
+        "home": "Go to my wellbeing space",
+        "tools": "Explore support options",
+        "counsellor": "Talk to a counsellor",
+        "connectCounsellor": "Connect with a counsellor",
+        "callEmergency": "Call emergency services ({{number}})",
+        "callHelpline": "Call {{helplineName}} ({{number}})",
+        "moreSupport": "More ways to get support"
+      },
+      "safetyFooter": "If you ever feel unsafe, you can call {{helplineName}} on {{helplineNumber}} at any time, or {{emergencyNumber}} in an emergency.",
+      "loading": "Preparing your summary…",
+      "offline": "Your answers are saved. We can't load your summary right now; it will appear when you're back online.",
+      "missing": "Your answers are saved, but we couldn't show your summary here. You can find support options on your home screen.",
+      "error": "Something went wrong while showing your summary. Your answers are saved."
+    },
+    "submit": {
+      "error": "We couldn't send your answers. They're still saved on this device, so you can try again.",
+      "retry": "Try again",
+      "waiting": "Waiting for a connection. Your answers will be sent when you're back online."
+    }
   },
   "companion": {
     "emergencyBannerSupportDesc": "{{name}} is here to support you but cannot replace emergency help. If you feel overwhelmed, free confidential help is open 24/7.",

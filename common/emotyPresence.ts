@@ -14,6 +14,7 @@
  */
 import { resolveAvatarPresentationState, type AvatarPresentationInputs, type EmotyAvatarState } from "./avatarPresentation";
 import type { EmotyNextActionType } from "./homeEmotyAction";
+import { screeningOutcomeView, type ScreeningOutcome } from "./screeningOutcome";
 
 export type EmotyMood =
   | "idle"
@@ -41,6 +42,7 @@ export type EmotyScene =
   | { scene: "checkin"; selectedMood?: CheckinMood | null }
   | { scene: "screening_intro"; answered: number; total: number; forcedRetest?: boolean }
   | { scene: "screening_submitting" }
+  | { scene: "screening_result"; outcome: ScreeningOutcome | null }
   | { scene: "reframe"; step: string; opening?: boolean }
   | { scene: "small_steps"; checkedIn: boolean; total: number; completed: number }
   | { scene: "companion" }
@@ -133,6 +135,10 @@ function sceneMoodAndLine(input: EmotyScene): { mood: EmotyMood; line: string | 
 
     case "screening_submitting":
       return { mood: "thinking", line: EMOTY_LINES.screeningSubmitting };
+
+    case "screening_result":
+      // The result card carries the words; Emoty only sets a calm expression.
+      return { mood: input.outcome ? screeningOutcomeView(input.outcome).emotyMood : "listening", line: null };
 
     case "reframe":
       if (input.step === "safety_mode") return { mood: "concerned", line: EMOTY_LINES.concerned };

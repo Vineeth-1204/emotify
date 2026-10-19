@@ -83,7 +83,10 @@ export default function TabLayout() {
         <View style={{ alignItems: 'center', marginBottom: 20 }}>
           <EmotyPresence presence={getEmotyPresence({ scene: "safety" })} layout="stacked" size="md" />
         </View>
-        <Text style={[styles.emergencyTitle, { color: safetyColors.error, textAlign: 'center' }]}>Safety Priority</Text>
+        {/* Calm, direct heading; the approved crisis guidance and every action below are unchanged. */}
+        <Text style={[styles.emergencyTitle, { color: safetyColors.text, textAlign: 'center' }]} accessibilityRole="header">
+          {t("screening.result.immediateSafety.heading")}
+        </Text>
         <Text style={[styles.emergencyText, { color: safetyColors.text, textAlign: 'center', marginVertical: Theme.spacing.xl, fontSize: 18 }]}>
           We're concerned for your safety. If you're in danger now, please call emergency services immediately.
         </Text>
@@ -92,7 +95,7 @@ export default function TabLayout() {
           <Button 
             title={`Call Emergency Services (${CRISIS_RESOURCES.emergencyNumber})`} 
             onPress={() => Linking.openURL(EMERGENCY_DIAL_URL)} 
-            variant="danger" 
+            variant="primary" 
             size="lg" 
           />
           <Button 

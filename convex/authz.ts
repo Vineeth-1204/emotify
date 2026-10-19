@@ -203,3 +203,16 @@ export async function getStaffRecipientsForStudent(ctx: { db: any }, studentKey:
   }
   return [...admins, ...counsellors].filter((u) => u.status !== "inactive");
 }
+
+/**
+ * The signed-in student and every key their records may be stored under (canonical id and
+ * legacy clerkId). Null for anonymous or non-student callers. Self-service student endpoints
+ * take no student argument and use this, so they can only ever read the caller's own data.
+ */
+export async function getSelfStudent(
+  ctx: { auth: { getUserIdentity: () => Promise<any> }; db: any }
+): Promise<{ user: AuthenticatedUser; keys: string[] } | null> {
+  const user = await getAuthenticatedUser(ctx);
+  if (!user || user.role !== "patient") return null;
+  return { user, keys: [String(user._id), ...(user.clerkId ? [user.clerkId] : [])] };
+}

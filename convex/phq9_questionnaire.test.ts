@@ -14,6 +14,7 @@ import {
   PHQ9_INSTRUCTION,
 } from "../constants/Screening";
 import { scorePHQ9, interpretPHQ9 } from "../utils/scoring";
+import { latestSubmission, staffViewer } from "../test-utils/screening";
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -198,7 +199,7 @@ describe("PHQ-9 Validated Questionnaire Wording & Scoring Tests", () => {
       subject: "student_item9_safety_test",
     });
 
-    const attempt = await t.mutation(api.screening.submitScreeningAttempt, {
+    const submitted: any = await t.mutation(api.screening.submitScreeningAttempt, {
       userId: "student_item9_safety_test",
       responses: {
         phq9: createPHQ9Record([0, 0, 0, 0, 0, 0, 0, 0, 2]),
@@ -206,6 +207,9 @@ describe("PHQ-9 Validated Questionnaire Wording & Scoring Tests", () => {
         pq16: createPQ16Record(0),
       },
     });
+    // The student sees only the safety outcome; the clinical record is read from the database.
+    expect(submitted.outcome).toBe("immediate_safety");
+    const attempt = await latestSubmission(t, "student_item9_safety_test");
 
     expect(attempt.suicideFlag).toBe(true);
     expect(attempt.triageLevel).toBe("suicide_flag");
@@ -282,9 +286,9 @@ describe("PHQ-9 Validated Questionnaire Wording & Scoring Tests", () => {
       });
     });
 
-    // Query historical attempt
-    const authedHistorical = t.withIdentity({ subject: historicalUserId });
-    const fetched = await authedHistorical.query(api.screening.getAttemptById, {
+    // Query historical attempt (raw clinical record reads are staff-only)
+    const staff = await staffViewer(t);
+    const fetched = await staff.query(api.screening.getAttemptById, {
       attemptId: historicalAttemptId,
     });
 
@@ -369,7 +373,7 @@ describe("PHQ-9 Validated Questionnaire Wording & Scoring Tests", () => {
     // Submit complete assessment
     // PHQ-9 answers: [1, 2, 1, 2, 0, 1, 1, 1, 0] -> sum = 9 (Mild depression)
     const phq9Answers = [1, 2, 1, 2, 0, 1, 1, 1, 0];
-    const attempt = await authedStudent.mutation(api.screening.submitScreeningAttempt, {
+    const submitted: any = await authedStudent.mutation(api.screening.submitScreeningAttempt, {
       userId: studentId,
       responses: {
         phq9: createPHQ9Record(phq9Answers),
@@ -377,6 +381,10 @@ describe("PHQ-9 Validated Questionnaire Wording & Scoring Tests", () => {
         pq16: createPQ16Record(0),
       },
     });
+    // Student UI receives only the outcome category
+    expect(submitted.status).toBe("submitted");
+    expect(submitted.attemptId).toBeUndefined();
+    const attempt = await latestSubmission(t, studentId);
 
     expect(attempt.attemptId).toBeDefined();
     expect(attempt.results.phq9.score).toBe(9);
@@ -384,8 +392,9 @@ describe("PHQ-9 Validated Questionnaire Wording & Scoring Tests", () => {
     expect(attempt.triageLevel).toBe("mild");
     expect(attempt.suicideFlag).toBe(false);
 
-    // Retrieve via counselor query (e.g. getScreeningHistory)
-    const history = await authedStudent.query(api.screening.getScreeningHistory, {
+    // Retrieve via counselor/staff query (e.g. getScreeningHistory)
+    const staff = await staffViewer(t);
+    const history = await staff.query(api.screening.getScreeningHistory, {
       userId: studentId,
     });
     expect(history).toHaveLength(1);

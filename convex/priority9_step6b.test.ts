@@ -4,6 +4,7 @@ import { expect, test, describe } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";
 import { assignAllPatientsToCounsellors } from "../test-utils/identity";
+import { latestSubmission } from "../test-utils/screening";
 import fs from "fs";
 import path from "path";
 
@@ -333,13 +334,17 @@ describe("Priority 9 Step 6B: Counselor Dashboard Intervention Timeline Integrat
     const { t, studentAId, counselorId } = await setupEnv();
     const asStudent = t.withIdentity({ subject: studentAId });
 
-    const sub = await asStudent.mutation(api.screening.submitScreeningAttempt, {
+    const subResponse = await asStudent.mutation(api.screening.submitScreeningAttempt, {
       responses: {
         phq9: makeAnswers(9, 1),
         gad7: makeAnswers(7, 1),
         pq16: makeAnswers(16, 0),
       },
     });
+    expect(subResponse).not.toHaveProperty("attemptId");
+    const sub = await latestSubmission(t, studentAId);
+    expect(sub.attemptId).toBeDefined();
+    expect(sub.triageId).toBeDefined();
 
     // Breathing session with validated provenance
     await asStudent.mutation(api.breathing.logSession, {

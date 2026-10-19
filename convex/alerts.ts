@@ -219,6 +219,8 @@ export const acknowledgeAlert = mutation({
 export const getPending = query({
   args: { userId: v.optional(v.string()) },
   handler: async (ctx, args) => {
+    // Staff-only clinical read: students use the minimal self-service endpoints instead.
+    await requireCounselorOrAdmin(ctx);
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
     const targetUserId = args.userId || identity.subject;
@@ -268,6 +270,8 @@ export const getPending = query({
 export const getAll = query({
   args: { userId: v.optional(v.string()) },
   handler: async (ctx, args) => {
+    // Staff-only clinical read: students use the minimal self-service endpoints instead.
+    await requireCounselorOrAdmin(ctx);
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
     const targetUserId = args.userId || identity.subject;
@@ -285,6 +289,8 @@ export const getAll = query({
 export const getAlertProvenance = query({
   args: { alertId: v.id("alerts") },
   handler: async (ctx, args) => {
+    // Staff-only clinical read: students use the minimal self-service endpoints instead.
+    await requireCounselorOrAdmin(ctx);
     const alert = await ctx.db.get(args.alertId);
     if (!alert) return null;
 
@@ -301,6 +307,8 @@ export const getAlertProvenance = query({
 export const getTriageAlerts = query({
   args: { triageId: v.id("triages") },
   handler: async (ctx, args) => {
+    // Staff-only clinical read: students use the minimal self-service endpoints instead.
+    await requireCounselorOrAdmin(ctx);
     const triage = await ctx.db.get(args.triageId);
     if (!triage) return [];
 

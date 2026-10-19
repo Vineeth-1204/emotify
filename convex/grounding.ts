@@ -10,6 +10,7 @@ import { v } from "convex/values";
 import { mutation, query } from "./functions";
 import { checkRateLimit } from "./rateLimiter";
 import { assertCanAccessStudent } from "./authz";
+import { latestTriageIdFor } from "./triage";
 
 const VALID_STATUSES = ["completed", "partial", "abandoned"] as const;
 const VALID_SOURCES = [
@@ -89,6 +90,10 @@ export const logSession = mutation({
       }
     }
 
+    // The crisis screen no longer receives triage ids: for a crisis-blocker session, link the
+    // student's latest triage on the server (same provenance as before).
+    const triageId = args.triageId ?? (args.sourceType === "crisis_blocker" ? await latestTriageIdFor(ctx, [userId]) : undefined);
+
     // Optional triage provenance validation
     if (args.triageId) {
       const triage = await ctx.db.get(args.triageId);
@@ -111,7 +116,7 @@ export const logSession = mutation({
       totalSteps: Math.floor(totalSteps),
       status: args.status,
       attemptId: args.attemptId,
-      triageId: args.triageId,
+      triageId,
       createdAt: now,
     });
   },

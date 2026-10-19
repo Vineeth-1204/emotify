@@ -169,96 +169,11 @@ export const getAlerts = query({
 
     const caller = await getAuthenticatedUser(ctx);
     const isStaff = caller && (caller.role === "admin" || caller.role === "counsellor");
-    const callerId = caller ? String(caller._id) : identity.subject;
 
-    // STEP 5D.1: User-scoped retrieval for non-staff students before database read
-    if (!isStaff) {
-      const canonicalId = caller ? String(caller._id) : callerId;
-      const searchIds = new Set<string>([canonicalId, callerId]);
-      if (caller?.clerkId) searchIds.add(caller.clerkId);
-
-      const dbAlerts: any[] = [];
-      const seenIds = new Set<string>();
-
-      for (const uid of Array.from(searchIds)) {
-        const userAlerts = await ctx.db
-          .query("alerts")
-          .withIndex("by_userId", (q) => q.eq("userId", uid))
-          .order("desc")
-          .collect();
-        for (const a of userAlerts) {
-          if (!seenIds.has(String(a._id))) {
-            seenIds.add(String(a._id));
-            dbAlerts.push(a);
-          }
-        }
-      }
-
-      // Check student's own latest triage using user-scoped index
-      let latestTriage: any = null;
-      for (const uid of Array.from(searchIds)) {
-        const triages = await ctx.db
-          .query("triages")
-          .withIndex("by_userId", (q) => q.eq("userId", uid))
-          .order("desc")
-          .take(1);
-        if (triages.length > 0) {
-          if (!latestTriage || (triages[0].createdAt || 0) > (latestTriage.createdAt || 0)) {
-            latestTriage = triages[0];
-          }
-        }
-      }
-
-      const alertUserIds = new Set(dbAlerts.map((a) => a.userId.toString()));
-      const synthesizedAlerts: any[] = [...dbAlerts];
-
-      if (latestTriage) {
-        const hasSuicide = latestTriage.suicideFlag || latestTriage.level === "suicide_flag";
-        const hasPsychosis = latestTriage.psychosisFlag || latestTriage.level === "psychosis_flag";
-        const isSevere = latestTriage.level === "severe";
-
-        if (hasSuicide && !alertUserIds.has(canonicalId)) {
-          synthesizedAlerts.push({
-            _id: `synth_suicide_${canonicalId}` as any,
-            userId: canonicalId,
-            type: "suicideRisk",
-            status: "active",
-            createdAt: latestTriage.createdAt || Date.now(),
-          });
-        }
-        if (hasPsychosis && !alertUserIds.has(canonicalId)) {
-          synthesizedAlerts.push({
-            _id: `synth_psychosis_${canonicalId}` as any,
-            userId: canonicalId,
-            type: "psychosisRisk",
-            status: "active",
-            createdAt: latestTriage.createdAt || Date.now(),
-          });
-        }
-        if (isSevere && !hasSuicide && !hasPsychosis && !alertUserIds.has(canonicalId)) {
-          synthesizedAlerts.push({
-            _id: `synth_severe_${canonicalId}` as any,
-            userId: canonicalId,
-            type: "deterioration",
-            status: "active",
-            createdAt: latestTriage.createdAt || Date.now(),
-          });
-        }
-      }
-
-      const patientName = caller ? (caller.full_name || (caller as any).alias || "Self") : "Self";
-      const patientMobile = caller?.mobile_number || "N/A";
-      const patientId = caller ? (caller.patientId || caller._id) : canonicalId;
-
-      return synthesizedAlerts
-        .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
-        .map((alert) => ({
-          ...alert,
-          patientName,
-          patientMobile,
-          patientId,
-        }));
-    }
+    // Alerts are a staff view. Students (who never use this dashboard query) get nothing: their
+    // own alert rows carry risk types, priority, provenance and staff handling metadata. The
+    // student crisis gate uses triage.getMySafetyStatus instead.
+    if (!isStaff) return [];
 
     // Staff path: EVERY open alert (never truncated) plus a bounded window of recently closed ones.
     const OPEN_ALERT_STATUSES = ["pending", "escalated", "active", "acknowledged"];
@@ -392,23 +307,12 @@ export const getActivityFeed = query({
       const searchIds = new Set<string>([canonicalId, callerId]);
       if (caller?.clerkId) searchIds.add(caller.clerkId);
 
-      const seenAlerts = new Set<string>();
       const seenEmotions = new Set<string>();
       const seenGoals = new Set<string>();
 
+      // Students see their own emotion logs and micro-goals only; alert items (risk type and
+      // handling status) are a staff view.
       for (const uid of Array.from(searchIds)) {
-        const uAlerts = await ctx.db
-          .query("alerts")
-          .withIndex("by_userId", (q) => q.eq("userId", uid))
-          .order("desc")
-          .take(15);
-        for (const a of uAlerts) {
-          if (!seenAlerts.has(String(a._id))) {
-            seenAlerts.add(String(a._id));
-            alerts.push(a);
-          }
-        }
-
         const uEmotions = await ctx.db
           .query("emotionLogs")
           .withIndex("by_userId", (q) => q.eq("userId", uid))
@@ -1173,6 +1077,8 @@ export const updateCounsellorStatus = mutation({
 export const getPatientTimeline = query({
   args: { userId: v.string() },
   handler: async (ctx, args) => {
+    // Staff-only clinical read: students use the minimal self-service endpoints instead.
+    await requireCounselorOrAdmin(ctx);
     await assertCanAccessStudent(ctx, args.userId);
 
     return await ctx.db

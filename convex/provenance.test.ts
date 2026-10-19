@@ -4,6 +4,8 @@ import { expect, test, describe } from "vitest";
 import { api, internal } from "./_generated/api";
 import schema from "./schema";
 import { assignAllPatientsToCounsellors } from "../test-utils/identity";
+import { latestSubmission, staffViewer } from "../test-utils/screening";
+import type { Id } from "./_generated/dataModel";
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -70,22 +72,27 @@ describe("Priority 4 Step 4: Clinical Event Provenance (PROV-01 to PROV-07)", ()
   test("PROV-01: Submit screening attempt links attempt <-> triage deterministically", async () => {
     const { t, studentAId } = await setupProvenanceEnvironment();
     const authedA = t.withIdentity({ subject: studentAId });
+    // Staff-only clinical reads are inspected as an admin
+    const admin = await staffViewer(t);
 
-    const submission = await authedA.mutation(api.screening.submitScreeningAttempt, {
+    const submissionResponse = await authedA.mutation(api.screening.submitScreeningAttempt, {
       responses: {
         phq9: makeAnswers(9, 1), // total 9 (mild)
         gad7: makeAnswers(7, 1), // total 7 (mild)
         pq16: makeAnswers(16, 0),
       },
     });
+    // Students receive only the minimal outcome; clinical ids/levels are read from the database
+    expect(submissionResponse).not.toHaveProperty("attemptId");
+    const submission = await latestSubmission(t, studentAId);
 
     expect(submission.attemptId).toBeDefined();
     expect(submission.triageId).toBeDefined();
 
     // Verify in database directly
     await t.run(async (ctx) => {
-      const attempt = await ctx.db.get(submission.attemptId);
-      const triage = await ctx.db.get(submission.triageId);
+      const attempt = await ctx.db.get(submission.attemptId as Id<"screeningAttempts">);
+      const triage = await ctx.db.get(submission.triageId as Id<"triages">);
 
       expect(attempt).not.toBeNull();
       expect(triage).not.toBeNull();
@@ -95,8 +102,16 @@ describe("Priority 4 Step 4: Clinical Event Provenance (PROV-01 to PROV-07)", ()
       expect(triage!.attemptId).toBe(attempt!._id);
     });
 
+    // The student can no longer read staff provenance views of their own attempt
+    await expect(
+      authedA.query(api.screening.getAttemptWithTriage, { attemptId: submission.attemptId })
+    ).rejects.toThrow(/Counselor or Admin access required/);
+    await expect(
+      authedA.query(api.triage.getTriageWithAttempt, { triageId: submission.triageId })
+    ).rejects.toThrow(/Counselor or Admin access required/);
+
     // Verify via provenance query
-    const attemptWithTriage = await authedA.query(api.screening.getAttemptWithTriage, {
+    const attemptWithTriage = await admin.query(api.screening.getAttemptWithTriage, {
       attemptId: submission.attemptId,
     });
     expect(attemptWithTriage).not.toBeNull();
@@ -104,7 +119,7 @@ describe("Priority 4 Step 4: Clinical Event Provenance (PROV-01 to PROV-07)", ()
     expect(attemptWithTriage!.triage?._id).toBe(submission.triageId);
 
     // Verify via reciprocal triage provenance query
-    const triageWithAttempt = await authedA.query(api.triage.getTriageWithAttempt, {
+    const triageWithAttempt = await admin.query(api.triage.getTriageWithAttempt, {
       triageId: submission.triageId,
     });
     expect(triageWithAttempt).not.toBeNull();
@@ -116,18 +131,23 @@ describe("Priority 4 Step 4: Clinical Event Provenance (PROV-01 to PROV-07)", ()
   test("PROV-02: High-risk screening creates alert linking alert -> triage and alert -> attempt", async () => {
     const { t, studentAId } = await setupProvenanceEnvironment();
     const authedA = t.withIdentity({ subject: studentAId });
+    // Staff-only clinical reads are inspected as an admin
+    const admin = await staffViewer(t);
 
     // High risk: PHQ-9 item 9 flag = 2 (suicide flag)
     const phq9Answers = makeAnswers(9, 1);
     phq9Answers["9"] = 2;
 
-    const submission = await authedA.mutation(api.screening.submitScreeningAttempt, {
+    const submissionResponse = await authedA.mutation(api.screening.submitScreeningAttempt, {
       responses: {
         phq9: phq9Answers,
         gad7: makeAnswers(7, 1),
         pq16: makeAnswers(16, 0),
       },
     });
+    // Students receive only the minimal outcome; clinical ids/levels are read from the database
+    expect(submissionResponse).not.toHaveProperty("attemptId");
+    const submission = await latestSubmission(t, studentAId);
 
     expect(submission.suicideFlag).toBe(true);
 
@@ -148,7 +168,7 @@ describe("Priority 4 Step 4: Clinical Event Provenance (PROV-01 to PROV-07)", ()
     });
 
     // Verify via getAttemptAlerts
-    const attemptAlerts = await authedA.query(api.screening.getAttemptAlerts, {
+    const attemptAlerts = await admin.query(api.screening.getAttemptAlerts, {
       attemptId: submission.attemptId,
     });
     expect(attemptAlerts.length).toBe(1);
@@ -156,14 +176,14 @@ describe("Priority 4 Step 4: Clinical Event Provenance (PROV-01 to PROV-07)", ()
     expect(attemptAlerts[0].triageId).toBe(submission.triageId);
 
     // Verify via getAlertProvenance
-    const provenance = await authedA.query(api.alerts.getAlertProvenance, { alertId });
+    const provenance = await admin.query(api.alerts.getAlertProvenance, { alertId });
     expect(provenance).not.toBeNull();
     expect(provenance!.alert._id).toBe(alertId);
     expect(provenance!.triage?._id).toBe(submission.triageId);
     expect(provenance!.attempt?._id).toBe(submission.attemptId);
 
     // Verify via getTriageAlerts
-    const triageAlerts = await authedA.query(api.alerts.getTriageAlerts, {
+    const triageAlerts = await admin.query(api.alerts.getTriageAlerts, {
       triageId: submission.triageId,
     });
     expect(triageAlerts.length).toBe(1);
@@ -174,15 +194,20 @@ describe("Priority 4 Step 4: Clinical Event Provenance (PROV-01 to PROV-07)", ()
   test("PROV-03: Low-risk screening creates attempt <-> triage without spurious alert", async () => {
     const { t, studentAId } = await setupProvenanceEnvironment();
     const authedA = t.withIdentity({ subject: studentAId });
+    // Staff-only clinical reads are inspected as an admin
+    const admin = await staffViewer(t);
 
     // Minimal score: 0 across all instruments
-    const submission = await authedA.mutation(api.screening.submitScreeningAttempt, {
+    const submissionResponse = await authedA.mutation(api.screening.submitScreeningAttempt, {
       responses: {
         phq9: makeAnswers(9, 0),
         gad7: makeAnswers(7, 0),
         pq16: makeAnswers(16, 0),
       },
     });
+    // Students receive only the minimal outcome; clinical ids/levels are read from the database
+    expect(submissionResponse).not.toHaveProperty("attemptId");
+    const submission = await latestSubmission(t, studentAId);
 
     expect(submission.triageLevel).toBe("mild");
     expect(submission.suicideFlag).toBe(false);
@@ -190,8 +215,8 @@ describe("Priority 4 Step 4: Clinical Event Provenance (PROV-01 to PROV-07)", ()
 
     // Verify attempt and triage are linked
     await t.run(async (ctx) => {
-      const attempt = await ctx.db.get(submission.attemptId);
-      const triage = await ctx.db.get(submission.triageId);
+      const attempt = await ctx.db.get(submission.attemptId as Id<"screeningAttempts">);
+      const triage = await ctx.db.get(submission.triageId as Id<"triages">);
       expect(attempt!.triageId).toBe(submission.triageId);
       expect(triage!.attemptId).toBe(submission.attemptId);
 
@@ -210,7 +235,7 @@ describe("Priority 4 Step 4: Clinical Event Provenance (PROV-01 to PROV-07)", ()
     });
 
     // Provenance query returns empty alert list
-    const attemptAlerts = await authedA.query(api.screening.getAttemptAlerts, {
+    const attemptAlerts = await admin.query(api.screening.getAttemptAlerts, {
       attemptId: submission.attemptId,
     });
     expect(attemptAlerts).toEqual([]);
@@ -222,32 +247,38 @@ describe("Priority 4 Step 4: Clinical Event Provenance (PROV-01 to PROV-07)", ()
     const authedA = t.withIdentity({ subject: studentAId });
 
     // Attempt 1: Mild
-    const sub1 = await authedA.mutation(api.screening.submitScreeningAttempt, {
+    const sub1Response = await authedA.mutation(api.screening.submitScreeningAttempt, {
       responses: {
         phq9: makeAnswers(9, 1),
         gad7: makeAnswers(7, 1),
         pq16: makeAnswers(16, 0),
       },
     });
+    // Students receive only the minimal outcome; clinical ids/levels are read from the database
+    expect(sub1Response).not.toHaveProperty("attemptId");
+    const sub1 = await latestSubmission(t, studentAId);
 
     // Attempt 2: Moderate
-    const sub2 = await authedA.mutation(api.screening.submitScreeningAttempt, {
+    const sub2Response = await authedA.mutation(api.screening.submitScreeningAttempt, {
       responses: {
         phq9: makeAnswers(9, 2),
         gad7: makeAnswers(7, 2),
         pq16: makeAnswers(16, 0),
       },
     });
+    // Students receive only the minimal outcome; clinical ids/levels are read from the database
+    expect(sub2Response).not.toHaveProperty("attemptId");
+    const sub2 = await latestSubmission(t, studentAId);
 
     expect(sub1.attemptId).not.toBe(sub2.attemptId);
     expect(sub1.triageId).not.toBe(sub2.triageId);
 
     // Verify reciprocal links are strictly isolated
     await t.run(async (ctx) => {
-      const attempt1 = await ctx.db.get(sub1.attemptId);
-      const triage1 = await ctx.db.get(sub1.triageId);
-      const attempt2 = await ctx.db.get(sub2.attemptId);
-      const triage2 = await ctx.db.get(sub2.triageId);
+      const attempt1 = await ctx.db.get(sub1.attemptId as Id<"screeningAttempts">);
+      const triage1 = await ctx.db.get(sub1.triageId as Id<"triages">);
+      const attempt2 = await ctx.db.get(sub2.attemptId as Id<"screeningAttempts">);
+      const triage2 = await ctx.db.get(sub2.triageId as Id<"triages">);
 
       expect(attempt1!.triageId).toBe(triage1!._id);
       expect(triage1!.attemptId).toBe(attempt1!._id);
@@ -265,6 +296,8 @@ describe("Priority 4 Step 4: Clinical Event Provenance (PROV-01 to PROV-07)", ()
   test("PROV-05: Existing historical records with undefined attemptId/triageId remain readable", async () => {
     const { t, studentAId } = await setupProvenanceEnvironment();
     const authedA = t.withIdentity({ subject: studentAId });
+    // Staff-only clinical reads are inspected as an admin
+    const admin = await staffViewer(t);
 
     // Seed historical records that lack provenance references
     let histTriageId: any = null;
@@ -317,27 +350,27 @@ describe("Priority 4 Step 4: Clinical Event Provenance (PROV-01 to PROV-07)", ()
     });
 
     // 1. Historical triage is readable via getLatest
-    const latestTriage = await authedA.query(api.triage.getLatest, { userId: studentAId });
+    const latestTriage = await admin.query(api.triage.getLatest, { userId: studentAId });
     expect(latestTriage).not.toBeNull();
     expect(latestTriage!._id).toBe(histTriageId);
     expect(latestTriage!.attemptId).toBeUndefined();
 
     // 2. Historical alert is readable via getAll
-    const alerts = await authedA.query(api.alerts.getAll, { userId: studentAId });
+    const alerts = await admin.query(api.alerts.getAll, { userId: studentAId });
     expect(alerts.length).toBe(1);
     expect(alerts[0]._id).toBe(histAlertId);
     expect(alerts[0].attemptId).toBeUndefined();
     expect(alerts[0].triageId).toBeUndefined();
 
     // 3. Provenance queries on historical records return null for unlinked relatives safely
-    const histAttemptProv = await authedA.query(api.screening.getAttemptWithTriage, {
+    const histAttemptProv = await admin.query(api.screening.getAttemptWithTriage, {
       attemptId: histAttemptId,
     });
     expect(histAttemptProv).not.toBeNull();
     expect(histAttemptProv!.attempt._id).toBe(histAttemptId);
     expect(histAttemptProv!.triage).toBeNull(); // Safely null, not crashing
 
-    const histAlertProv = await authedA.query(api.alerts.getAlertProvenance, {
+    const histAlertProv = await admin.query(api.alerts.getAlertProvenance, {
       alertId: histAlertId,
     });
     expect(histAlertProv).not.toBeNull();
@@ -357,13 +390,16 @@ describe("Priority 4 Step 4: Clinical Event Provenance (PROV-01 to PROV-07)", ()
     const phq9Answers = makeAnswers(9, 1);
     phq9Answers["9"] = 3;
 
-    const subA = await authedA.mutation(api.screening.submitScreeningAttempt, {
+    const subAResponse = await authedA.mutation(api.screening.submitScreeningAttempt, {
       responses: {
         phq9: phq9Answers,
         gad7: makeAnswers(7, 1),
         pq16: makeAnswers(16, 0),
       },
     });
+    // Students receive only the minimal outcome; clinical ids/levels are read from the database
+    expect(subAResponse).not.toHaveProperty("attemptId");
+    const subA = await latestSubmission(t, studentAId);
 
     let alertAId: any = null;
     await t.run(async (ctx) => {
@@ -377,23 +413,23 @@ describe("Priority 4 Step 4: Clinical Event Provenance (PROV-01 to PROV-07)", ()
     // Student B attempts to query Student A's provenance -> All must be DENIED
     await expect(
       authedB.query(api.screening.getAttemptWithTriage, { attemptId: subA.attemptId })
-    ).rejects.toThrow(/Students can access ONLY their own clinical data/);
+    ).rejects.toThrow(/Counselor or Admin access required|Students can access ONLY their own clinical data/);
 
     await expect(
       authedB.query(api.screening.getAttemptAlerts, { attemptId: subA.attemptId })
-    ).rejects.toThrow(/Students can access ONLY their own clinical data/);
+    ).rejects.toThrow(/Counselor or Admin access required|Students can access ONLY their own clinical data/);
 
     await expect(
       authedB.query(api.triage.getTriageWithAttempt, { triageId: subA.triageId })
-    ).rejects.toThrow(/Students can access ONLY their own clinical data/);
+    ).rejects.toThrow(/Counselor or Admin access required|Students can access ONLY their own clinical data/);
 
     await expect(
       authedB.query(api.alerts.getAlertProvenance, { alertId: alertAId })
-    ).rejects.toThrow(/Students can access ONLY their own clinical data/);
+    ).rejects.toThrow(/Counselor or Admin access required|Students can access ONLY their own clinical data/);
 
     await expect(
       authedB.query(api.alerts.getTriageAlerts, { triageId: subA.triageId })
-    ).rejects.toThrow(/Students can access ONLY their own clinical data/);
+    ).rejects.toThrow(/Counselor or Admin access required|Students can access ONLY their own clinical data/);
 
     // Counselor CAN access Student A's provenance data
     const counselorAttemptProv = await authedCounselor.query(api.screening.getAttemptWithTriage, {
@@ -413,6 +449,8 @@ describe("Priority 4 Step 4: Clinical Event Provenance (PROV-01 to PROV-07)", ()
   test("PROV-07: Independent alert does NOT receive fabricated attemptId or triageId", async () => {
     const { t, studentAId } = await setupProvenanceEnvironment();
     const authedA = t.withIdentity({ subject: studentAId });
+    // Staff-only clinical reads are inspected as an admin
+    const admin = await staffViewer(t);
 
     // Independent alert created via alerts.createAlert
     const alertId = await authedA.mutation(internal.alerts.createAlert, {
@@ -429,7 +467,7 @@ describe("Priority 4 Step 4: Clinical Event Provenance (PROV-01 to PROV-07)", ()
     });
 
     // Provenance query returns alert with null relatives
-    const provenance = await authedA.query(api.alerts.getAlertProvenance, { alertId });
+    const provenance = await admin.query(api.alerts.getAlertProvenance, { alertId });
     expect(provenance).not.toBeNull();
     expect(provenance!.alert._id).toBe(alertId);
     expect(provenance!.triage).toBeNull();

@@ -137,7 +137,7 @@ describe("screen wiring", () => {
   });
 
   test("the existing emergency screen keeps every action and the dismissal record, in a calmer style", () => {
-    for (const s of ["EMERGENCY_DIAL_URL", "HELPLINE_DIAL_URL", "emergencyContactPhone", "Talk to Counsellor Now", "recordEmergencyDismissal", 'latestTriage?.level === "suicide_flag"']) {
+    for (const s of ["EMERGENCY_DIAL_URL", "HELPLINE_DIAL_URL", "emergencyContactPhone", "Talk to Counsellor Now", "recordEmergencyDismissal", "api.triage.getMySafetyStatus", "const isEmergency = !!safetyStatus?.crisis && !dismissedEmergency;"]) {
       expect(tabsLayout, s).toContain(s);
     }
     expect(tabsLayout).not.toContain(">Safety Priority<");

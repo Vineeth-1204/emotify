@@ -740,6 +740,18 @@ export default defineSchema({
 
   // Counsellor caseload: which counsellor is responsible for which student.
   // Counsellors can only access students with an active assignment; admins see everyone.
+  // Idempotency records for screening submissions: one row per (student, client submission key).
+  // Server-only (never returned to clients). Deleted with the student's account.
+  screeningSubmissions: defineTable({
+    userId: v.string(), // canonical student id the submission was recorded for
+    key: v.string(), // client-generated random key, reused on retries of the same submission
+    fingerprint: v.string(), // SHA-256 of the canonical responses: a key cannot be reused for other answers
+    attemptId: v.id("screeningAttempts"),
+    triageId: v.id("triages"),
+    followUpId: v.id("followUps"),
+    createdAt: v.number(),
+  }).index("by_user_and_key", ["userId", "key"]),
+
   counsellorAssignments: defineTable({
     counsellorId: v.id("users"),
     studentId: v.id("users"),

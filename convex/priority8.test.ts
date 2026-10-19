@@ -436,8 +436,10 @@ describe("Priority 8 Step 2: Clinical Decoupling of Intervention Recommendations
     expect(session!.riskFlags).toContain("suicide");
 
     // Counselor alert is created
-    const alerts = await t.query(api.dashboard.getAlerts);
-    expect(alerts.some((a) => a.userId === uid_p8_user_safety_escalation_09 && a.type === "suicideRisk")).toBe(true);
+    // (stored alert; the dashboard alert list is staff-only, so the student sees none of it)
+    expect(await t.query(api.dashboard.getAlerts)).toEqual([]);
+    const alerts: any[] = await t.run(async (ctx: any) => ctx.db.query("alerts").collect());
+    expect(alerts.some((a: any) => a.userId === uid_p8_user_safety_escalation_09 && a.type === "suicideRisk")).toBe(true);
 
     // Recommendation generates safety/crisis recovery goals
     const goals = await t.action(api.cbt.recommendGoalAction, { sessionId });

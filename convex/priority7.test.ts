@@ -4,6 +4,7 @@ import { expect, test, describe } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";
 import { assignAllPatientsToCounsellors } from "../test-utils/identity";
+import { latestSubmission, staffViewer } from "../test-utils/screening";
 import type { Id } from "./_generated/dataModel";
 import { getLocalDateString, isValidCheckinDateStr, getPreviousDateStr } from "../utils/date";
 
@@ -189,9 +190,15 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
       },
     });
 
-    expect(result.attemptId).toBeDefined();
-    expect(result.attemptType).toBe("baseline");
-    const savedAttempt = await t.run(async (ctx) => ctx.db.get(result.attemptId));
+    // Students receive only the minimal submission result (no clinical ids/levels).
+    expect(result.status).toBe("submitted");
+    expect(result).not.toHaveProperty("attemptId");
+    expect(result).not.toHaveProperty("triageLevel");
+
+    const saved = await latestSubmission(t, studentAId);
+    expect(saved.attemptId).toBeDefined();
+    expect(saved.attemptType).toBe("baseline");
+    const savedAttempt = await t.run(async (ctx) => ctx.db.get(saved.attemptId as Id<"screeningAttempts">));
     expect(savedAttempt?.status).toBe("completed");
   });
 
@@ -411,15 +418,18 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
       suggestedAction: "Shoulder shrugs",
     });
 
+    // Clinical timeline is staff-only: inspect it as an admin
+    const admin = await staffViewer(t);
+
     // Default timeline query: emotionMaps is suppressed
-    const defaultTimeline = await studentASession.query(api.timeline.getStudentClinicalTimeline, {
+    const defaultTimeline = await admin.query(api.timeline.getStudentClinicalTimeline, {
       userId: studentAId,
     });
     const defaultMapEvents = defaultTimeline.filter((e) => e.eventType === "emotion_map");
     expect(defaultMapEvents.length).toBe(0);
 
     // Explicit monitoring filter: emotionMaps is included
-    const monitoringTimeline = await studentASession.query(api.timeline.getStudentClinicalTimeline, {
+    const monitoringTimeline = await admin.query(api.timeline.getStudentClinicalTimeline, {
       userId: studentAId,
       categoryFilter: "monitoring",
     });
@@ -438,23 +448,25 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
     const studentASession = t.withIdentity({ subject: studentAId });
 
     // Attempt 1: First attempt -> baseline
-    const attempt1 = await studentASession.mutation(api.screening.submitScreeningAttempt, {
+    await studentASession.mutation(api.screening.submitScreeningAttempt, {
       responses: {
         phq9: makePHQ9Responses(0),
         gad7: makeGAD7Responses(0),
         pq16: makePQ16Responses(0),
       },
     });
+    const attempt1 = await latestSubmission(t, studentAId);
     expect(attempt1.attemptType).toBe("baseline");
 
     // Attempt 2: Repeat screening -> reassessment
-    const attempt2 = await studentASession.mutation(api.screening.submitScreeningAttempt, {
+    await studentASession.mutation(api.screening.submitScreeningAttempt, {
       responses: {
         phq9: makePHQ9Responses(1),
         gad7: makeGAD7Responses(1),
         pq16: makePQ16Responses(1),
       },
     });
+    const attempt2 = await latestSubmission(t, studentAId);
     expect(attempt2.attemptType).toBe("reassessment");
   });
 
@@ -483,13 +495,14 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
     });
 
     // Next attempt submitted -> force_retest
-    const forcedAttempt = await studentASession.mutation(api.screening.submitScreeningAttempt, {
+    await studentASession.mutation(api.screening.submitScreeningAttempt, {
       responses: {
         phq9: makePHQ9Responses(2),
         gad7: makeGAD7Responses(2),
         pq16: makePQ16Responses(2),
       },
     });
+    const forcedAttempt = await latestSubmission(t, studentAId);
     expect(forcedAttempt.attemptType).toBe("force_retest");
   });
 
@@ -498,13 +511,14 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
     const studentASession = t.withIdentity({ subject: studentAId });
 
     // Completed Attempt 1
-    const completedAttempt = await studentASession.mutation(api.screening.submitScreeningAttempt, {
+    await studentASession.mutation(api.screening.submitScreeningAttempt, {
       responses: {
         phq9: makePHQ9Responses(1),
         gad7: makeGAD7Responses(1),
         pq16: makePQ16Responses(1),
       },
     });
+    const completedAttempt = await latestSubmission(t, studentAId);
     expect(completedAttempt.attemptId).toBeDefined();
 
     // Later In-Progress Attempt 2 inserted
@@ -530,8 +544,14 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
       });
     });
 
+    // Students may no longer call the staff clinical read
+    await expect(
+      studentASession.query(api.screening.getLatestAttempt, { userId: studentAId })
+    ).rejects.toThrow(/Counselor or Admin access required/);
+    const admin = await staffViewer(t);
+
     // getLatestAttempt must return the completed attempt, NOT the in-progress one
-    const latestAttempt = await studentASession.query(api.screening.getLatestAttempt, {
+    const latestAttempt = await admin.query(api.screening.getLatestAttempt, {
       userId: studentAId,
     });
     expect(latestAttempt).not.toBeNull();
@@ -539,7 +559,7 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
     expect(latestAttempt?._id).toBe(completedAttempt.attemptId);
 
     // getLatest query also returns latest completed screening
-    const latestScreening = await studentASession.query(api.screening.getLatest, {
+    const latestScreening = await admin.query(api.screening.getLatest, {
       userId: studentAId,
     });
     expect(latestScreening).not.toBeNull();
@@ -703,13 +723,14 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
     const studentASession = t.withIdentity({ subject: studentAId });
 
     // Submit a screening attempt that generates an alert
-    const attemptResult = await studentASession.mutation(api.screening.submitScreeningAttempt, {
+    await studentASession.mutation(api.screening.submitScreeningAttempt, {
       responses: {
         phq9: makePHQ9Responses(1, 2), // item 9 = 2 -> triggers suicideRisk alert
         gad7: makeGAD7Responses(1),
         pq16: makePQ16Responses(0),
       },
     });
+    const attemptResult = await latestSubmission(t, studentAId);
     expect(attemptResult.triageLevel).toBe("suicide_flag");
 
     // Retrieve generated alert
@@ -889,7 +910,7 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
 
     await expect(
       studentASession.query(api.alerts.getPending, { userId: studentBId })
-    ).rejects.toThrow(/Students can access ONLY their own clinical data/);
+    ).rejects.toThrow(/Counselor or Admin access required|Students can access ONLY their own clinical data/);
   });
 
   test("ALERT-VIS-08: Alert provenance remains unchanged (attemptId, triageId, createdAt, type)", async () => {
@@ -898,13 +919,16 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
     const counselorSession = t.withIdentity({ subject: counselorId });
 
     // Screening generating suicide alert
-    const attemptResult = await studentASession.mutation(api.screening.submitScreeningAttempt, {
+    const submitResult = await studentASession.mutation(api.screening.submitScreeningAttempt, {
       responses: {
         phq9: makePHQ9Responses(1, 1), // item 9 = 1 -> suicide alert
         gad7: makeGAD7Responses(1),
         pq16: makePQ16Responses(0),
       },
     });
+    expect(submitResult).not.toHaveProperty("attemptId");
+    expect(submitResult).not.toHaveProperty("triageId");
+    const attemptResult = await latestSubmission(t, studentAId);
 
     const pending = await counselorSession.query(api.alerts.getPending, { userId: studentAId });
     expect(pending.length).toBeGreaterThan(0);
@@ -1083,6 +1107,8 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
   test("INSIGHT-3A-06: completed screening attempts remain included", async () => {
     const { t, studentAId } = await setupTestEnvironment();
     const studentASession = t.withIdentity({ subject: studentAId });
+    // Staff-only clinical reads are inspected as an admin
+    const admin = await staffViewer(t);
 
     await studentASession.mutation(api.screening.submitScreeningAttempt, {
       responses: {
@@ -1096,7 +1122,7 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
     expect((stats as any).screenings).toBeUndefined();
     expect((stats as any).triages).toBeUndefined();
 
-    const screenings = await studentASession.query(api.screening.getAll, { userId: studentAId });
+    const screenings = await admin.query(api.screening.getAll, { userId: studentAId });
     expect(screenings.length).toBe(1);
     expect((screenings[0] as any).status).toBe("completed");
     expect(screenings[0].phq9_total).toBeDefined();
@@ -1107,6 +1133,8 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
   test("INSIGHT-3A-07: incomplete/abandoned screening attempts remain excluded", async () => {
     const { t, studentAId } = await setupTestEnvironment();
     const studentASession = t.withIdentity({ subject: studentAId });
+    // Staff-only clinical reads are inspected as an admin
+    const admin = await staffViewer(t);
 
     await t.run(async (ctx) => {
       // Completed attempt
@@ -1168,7 +1196,7 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
     const stats = await studentASession.query(api.insights.getDailyStats, { userId: studentAId });
     expect((stats as any).screenings).toBeUndefined();
 
-    const screenings = await studentASession.query(api.screening.getAll, { userId: studentAId });
+    const screenings = await admin.query(api.screening.getAll, { userId: studentAId });
     expect(screenings.length).toBe(1);
     expect((screenings[0] as any).status).toBe("completed");
   });
@@ -1176,6 +1204,8 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
   test("INSIGHT-3A-08: legacy WSAS/ReQoL placeholders are never exposed; PHQ-9 Item 9 is preserved", async () => {
     const { t, studentAId } = await setupTestEnvironment();
     const studentASession = t.withIdentity({ subject: studentAId });
+    // Staff-only clinical reads are inspected as an admin
+    const admin = await staffViewer(t);
 
     await t.run(async (ctx) => {
       await ctx.db.insert("screeningAttempts", {
@@ -1202,7 +1232,7 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
     const stats = await studentASession.query(api.insights.getDailyStats, { userId: studentAId });
     expect((stats as any).screenings).toBeUndefined();
 
-    const screenings = await studentASession.query(api.screening.getAll, { userId: studentAId });
+    const screenings = await admin.query(api.screening.getAll, { userId: studentAId });
     expect(screenings.length).toBe(1);
     const s = screenings[0];
     expect(s.phq9_total).toBe(14);
@@ -1212,7 +1242,7 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
     expect((s as any).reqol10_total).toBeUndefined();
     expect(s.phq9_item9_score).toBe(2);
 
-    const raw: any = await studentASession.query(api.screening.getLatestAttempt, { userId: studentAId });
+    const raw: any = await admin.query(api.screening.getLatestAttempt, { userId: studentAId });
     expect(Object.keys(raw.results).sort()).toEqual(["gad7", "phq9", "pq16"]);
     expect(Object.keys(raw.instrumentVersions).sort()).toEqual(["gad7", "phq9", "pq16"]);
 
@@ -1262,6 +1292,8 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
   test("INSIGHT-3A-12: historical clinical records are not silently deleted or overwritten", async () => {
     const { t, studentAId } = await setupTestEnvironment();
     const studentASession = t.withIdentity({ subject: studentAId });
+    // Staff-only clinical reads are inspected as an admin
+    const admin = await staffViewer(t);
 
     let legacyScreeningId: any;
     let checkinId: any;
@@ -1304,7 +1336,7 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
     expect(stats.totalCheckins).toBe(1);
     expect(stats.totalCalmPoints).toBe(10);
 
-    const screenings = await studentASession.query(api.screening.getAll, { userId: studentAId });
+    const screenings = await admin.query(api.screening.getAll, { userId: studentAId });
     expect(screenings.length).toBe(1);
     expect(screenings[0]._id).toBe(legacyScreeningId);
 
@@ -1322,6 +1354,8 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
   test("INSIGHT-3A-13: Lifetime aggregates and clinical history are not truncated by arbitrary record limits", async () => {
     const { t, studentAId } = await setupTestEnvironment();
     const studentASession = t.withIdentity({ subject: studentAId });
+    // Staff-only clinical reads are inspected as an admin
+    const admin = await staffViewer(t);
 
     await t.run(async (ctx) => {
       // 1. Insert 105 microGoals (>100 previously capped)
@@ -1431,7 +1465,7 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
     expect((stats as any).screenings).toBeUndefined();
     expect((stats as any).triages).toBeUndefined();
 
-    const allScreenings = await studentASession.query(api.screening.getAll, { userId: studentAId });
+    const allScreenings = await admin.query(api.screening.getAll, { userId: studentAId });
     expect(allScreenings.length).toBe(55);
 
     // Lifetime total checkins must NOT be truncated
@@ -1631,6 +1665,8 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
   test("INSIGHT-3B-06: Completed screening history remains correctly represented", async () => {
     const { t, studentAId } = await setupTestEnvironment();
     const studentASession = t.withIdentity({ subject: studentAId });
+    // Staff-only clinical reads are inspected as an admin
+    const admin = await staffViewer(t);
 
     await t.run(async (ctx) => {
       // 2 completed attempts
@@ -1694,7 +1730,7 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
     const stats = await studentASession.query(api.insights.getDailyStats, { userId: studentAId });
     expect((stats as any).screenings).toBeUndefined();
 
-    const screenings = await studentASession.query(api.screening.getAll, { userId: studentAId });
+    const screenings = await admin.query(api.screening.getAll, { userId: studentAId });
     expect(screenings.length).toBe(2);
     expect(screenings.every((s: any) => s.status === "completed")).toBe(true);
     expect(screenings[0].phq9_total).toBe(6);
@@ -2264,13 +2300,14 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
     const staffSession = t.withIdentity({ subject: adminId });
 
     // Submit screening attempt
-    const attempt = await studentSession.mutation(api.screening.submitScreeningAttempt, {
+    await studentSession.mutation(api.screening.submitScreeningAttempt, {
       responses: {
         phq9: makePHQ9Responses(1, 0), // 8 (mild)
         gad7: makeGAD7Responses(1), // 7 (mild)
         pq16: makePQ16Responses(0),
       },
     });
+    const attempt = await latestSubmission(t, studentAId);
 
     // Schedule follow-up with attemptId and triageId
     const followUpId = await staffSession.mutation(api.followUps.scheduleFollowUp, {
@@ -2287,7 +2324,7 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
       expect(followUp?.sourceType).toBe("screening");
 
       // The screening submission itself also schedules its review follow-up atomically
-      const auto = await ctx.db.get(attempt.followUpId);
+      const auto = await ctx.db.get(attempt.followUpId as Id<"followUps">);
       expect(auto?.attemptId).toBe(attempt.attemptId);
       expect(auto?.triageId).toBe(attempt.triageId);
       expect(auto?.sourceType).toBe("screening");
@@ -2299,13 +2336,14 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
     const studentSession = t.withIdentity({ subject: studentAId });
     const staffSession = t.withIdentity({ subject: adminId });
 
-    const attempt = await studentSession.mutation(api.screening.submitScreeningAttempt, {
+    await studentSession.mutation(api.screening.submitScreeningAttempt, {
       responses: {
         phq9: makePHQ9Responses(1, 0),
         gad7: makeGAD7Responses(1),
         pq16: makePQ16Responses(0),
       },
     });
+    const attempt = await latestSubmission(t, studentAId);
 
     const followUpId = await staffSession.mutation(api.followUps.scheduleFollowUp, {
       userId: studentAId,
@@ -2326,13 +2364,14 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
     const studentSession = t.withIdentity({ subject: studentAId });
     const staffSession = t.withIdentity({ subject: adminId });
 
-    const attempt = await studentSession.mutation(api.screening.submitScreeningAttempt, {
+    await studentSession.mutation(api.screening.submitScreeningAttempt, {
       responses: {
         phq9: makePHQ9Responses(2, 0), // 16 (severe)
         gad7: makeGAD7Responses(1),
         pq16: makePQ16Responses(0),
       },
     });
+    const attempt = await latestSubmission(t, studentAId);
 
     const followUpId = await staffSession.mutation(api.followUps.scheduleFollowUp, {
       userId: studentAId,
@@ -2460,13 +2499,14 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
     const studentBSession = t.withIdentity({ subject: studentBId });
 
     // Student A submits a screening attempt
-    const attemptA = await studentASession.mutation(api.screening.submitScreeningAttempt, {
+    await studentASession.mutation(api.screening.submitScreeningAttempt, {
       responses: {
         phq9: makePHQ9Responses(1, 0),
         gad7: makeGAD7Responses(1),
         pq16: makePQ16Responses(0),
       },
     });
+    const attemptA = await latestSubmission(t, studentAId);
 
     // Student B attempts to schedule follow-up passing Student A's attemptId
     await expect(
@@ -2489,13 +2529,14 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
     const staffSession = t.withIdentity({ subject: adminId });
 
     // Submit a high-risk attempt (PHQ item 9 = 2)
-    const attempt = await studentSession.mutation(api.screening.submitScreeningAttempt, {
+    await studentSession.mutation(api.screening.submitScreeningAttempt, {
       responses: {
         phq9: makePHQ9Responses(1, 2),
         gad7: makeGAD7Responses(1),
         pq16: makePQ16Responses(0),
       },
     });
+    const attempt = await latestSubmission(t, studentAId);
 
     expect(attempt.suicideFlag).toBe(true);
 
@@ -2685,13 +2726,14 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
     const studentSession = t.withIdentity({ subject: studentAId });
 
     // Submit screening attempt
-    const attempt = await studentSession.mutation(api.screening.submitScreeningAttempt, {
+    await studentSession.mutation(api.screening.submitScreeningAttempt, {
       responses: {
         phq9: makePHQ9Responses(1, 0),
         gad7: makeGAD7Responses(1),
         pq16: makePQ16Responses(0),
       },
     });
+    const attempt = await latestSubmission(t, studentAId);
 
     // Capture counts before updateProfile
     let attemptsBefore = 0;
@@ -2717,7 +2759,7 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
       expect(triagesAfter).toBe(triagesBefore);
       expect(alertsAfter).toBe(alertsBefore);
 
-      const attemptDoc = await ctx.db.get(attempt.attemptId);
+      const attemptDoc = await ctx.db.get(attempt.attemptId as Id<"screeningAttempts">);
       expect(attemptDoc?.triageLevel).toBe(attempt.triageLevel);
     });
   });

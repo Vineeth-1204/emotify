@@ -191,7 +191,7 @@ describe("P12 Step 6: Longitudinal Review & Unified Student Profile", () => {
       studentBClient.query(api.timeline.getStudentClinicalTimeline, {
         userId: studentAId,
       })
-    ).rejects.toThrow(/Students can access ONLY their own clinical data/);
+    ).rejects.toThrow(/Counselor or Admin access required|Students can access ONLY their own clinical data/);
   });
 
   test("TIMELINE-04: Counselor request appears with correct provenance", async () => {
@@ -567,8 +567,8 @@ describe("P12 Step 6: Longitudinal Review & Unified Student Profile", () => {
     expect(boundedTimeline.length).toBeLessThanOrEqual(5);
   });
 
-  test("TIMELINE-CARE-01: getStudentCounsellorRequests returns authorized student requests", async () => {
-    const { counselorClient, studentAClient, studentBClient, studentAId, t } = await setupEnvironment();
+  test("TIMELINE-CARE-01: getStudentCounsellorRequests returns requests to authorized staff and refuses students", async () => {
+    const { counselorClient, adminClient, studentAClient, studentBClient, studentAId, t } = await setupEnvironment();
 
     await t.run(async (ctx) => {
       await ctx.db.insert("counsellorRequests", {
@@ -587,19 +587,26 @@ describe("P12 Step 6: Longitudinal Review & Unified Student Profile", () => {
     expect(counselorView.length).toBe(1);
     expect(counselorView[0].notes).toBe("Student A needs exam anxiety support.");
 
-    // Student A can query own requests
-    const studentView = await studentAClient.query(
+    // Admin can query student A requests
+    const adminView = await adminClient.query(
       api.counsellorRequests.getStudentCounsellorRequests,
       { userId: studentAId }
     );
-    expect(studentView.length).toBe(1);
+    expect(adminView.length).toBe(1);
+
+    // Student A is refused this staff-only read, even for their own requests
+    await expect(
+      studentAClient.query(api.counsellorRequests.getStudentCounsellorRequests, {
+        userId: studentAId,
+      })
+    ).rejects.toThrow(/Counselor or Admin access required/);
 
     // Student B querying student A requests is rejected
     await expect(
       studentBClient.query(api.counsellorRequests.getStudentCounsellorRequests, {
         userId: studentAId,
       })
-    ).rejects.toThrow(/Students can access ONLY their own clinical data/);
+    ).rejects.toThrow(/Counselor or Admin access required|Students can access ONLY their own clinical data/);
   });
 
   test("TIMELINE-15: Existing P12 Step 2 tests pass", async () => {

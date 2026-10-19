@@ -4,6 +4,7 @@ import { expect, test, describe } from "vitest";
 import { api, internal } from "./_generated/api";
 import schema from "./schema";
 import { assignAllPatientsToCounsellors } from "../test-utils/identity";
+import { latestSubmission, staffViewer } from "../test-utils/screening";
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -79,10 +80,11 @@ describe("Priority 4 Step 5A: Clinical Timeline Backend Suite (TIMELINE-01 to TI
     return { t, studentAId, studentBId, counselorId, adminId };
   }
 
-  // TIMELINE-01: Student can retrieve their own timeline
-  test("TIMELINE-01: Student can retrieve their own timeline", async () => {
+  // TIMELINE-01: The clinical timeline is staff-only; a student is refused their own timeline (admin still sees it)
+  test("TIMELINE-01: Student is refused their own clinical timeline (staff-only); admin can still retrieve it", async () => {
     const { t, studentAId } = await setupTimelineEnvironment();
     const authedA = t.withIdentity({ subject: studentAId });
+    const staff = await staffViewer(t);
 
     // Submit screening
     await authedA.mutation(api.screening.submitScreeningAttempt, {
@@ -93,7 +95,13 @@ describe("Priority 4 Step 5A: Clinical Timeline Backend Suite (TIMELINE-01 to TI
       },
     });
 
-    const timeline = await authedA.query(api.timeline.getStudentClinicalTimeline, {
+    await expect(
+      authedA.query(api.timeline.getStudentClinicalTimeline, {
+        userId: studentAId,
+      })
+    ).rejects.toThrow(/Counselor or Admin access required/);
+
+    const timeline = await staff.query(api.timeline.getStudentClinicalTimeline, {
       userId: studentAId,
     });
 
@@ -111,7 +119,7 @@ describe("Priority 4 Step 5A: Clinical Timeline Backend Suite (TIMELINE-01 to TI
       authedB.query(api.timeline.getStudentClinicalTimeline, {
         userId: studentAId,
       })
-    ).rejects.toThrow(/Students can access ONLY their own clinical data/);
+    ).rejects.toThrow(/Counselor or Admin access required|Students can access ONLY their own clinical data/);
   });
 
   // TIMELINE-03: Unauthenticated access is denied
@@ -161,16 +169,19 @@ describe("Priority 4 Step 5A: Clinical Timeline Backend Suite (TIMELINE-01 to TI
   test("TIMELINE-06: Screening attempt appears with correct sourceId", async () => {
     const { t, studentAId } = await setupTimelineEnvironment();
     const authedA = t.withIdentity({ subject: studentAId });
+    // Clinical timeline is a staff-only read; inspect it as an admin.
+    const staff = await staffViewer(t);
 
-    const sub = await authedA.mutation(api.screening.submitScreeningAttempt, {
+    await authedA.mutation(api.screening.submitScreeningAttempt, {
       responses: {
         phq9: makeAnswers(9, 1),
         gad7: makeAnswers(7, 1),
         pq16: makeAnswers(16, 0),
       },
     });
+    const sub = await latestSubmission(t, studentAId);
 
-    const timeline = await authedA.query(api.timeline.getStudentClinicalTimeline, {
+    const timeline = await staff.query(api.timeline.getStudentClinicalTimeline, {
       userId: studentAId,
       categoryFilter: "screening",
     });
@@ -185,16 +196,19 @@ describe("Priority 4 Step 5A: Clinical Timeline Backend Suite (TIMELINE-01 to TI
   test("TIMELINE-07: Screening provenance contains actual attemptId and triageId", async () => {
     const { t, studentAId } = await setupTimelineEnvironment();
     const authedA = t.withIdentity({ subject: studentAId });
+    // Clinical timeline is a staff-only read; inspect it as an admin.
+    const staff = await staffViewer(t);
 
-    const sub = await authedA.mutation(api.screening.submitScreeningAttempt, {
+    await authedA.mutation(api.screening.submitScreeningAttempt, {
       responses: {
         phq9: makeAnswers(9, 1),
         gad7: makeAnswers(7, 1),
         pq16: makeAnswers(16, 0),
       },
     });
+    const sub = await latestSubmission(t, studentAId);
 
-    const timeline = await authedA.query(api.timeline.getStudentClinicalTimeline, {
+    const timeline = await staff.query(api.timeline.getStudentClinicalTimeline, {
       userId: studentAId,
       categoryFilter: "screening",
     });
@@ -209,16 +223,19 @@ describe("Priority 4 Step 5A: Clinical Timeline Backend Suite (TIMELINE-01 to TI
   test("TIMELINE-08: Triage event contains actual attemptId", async () => {
     const { t, studentAId } = await setupTimelineEnvironment();
     const authedA = t.withIdentity({ subject: studentAId });
+    // Clinical timeline is a staff-only read; inspect it as an admin.
+    const staff = await staffViewer(t);
 
-    const sub = await authedA.mutation(api.screening.submitScreeningAttempt, {
+    await authedA.mutation(api.screening.submitScreeningAttempt, {
       responses: {
         phq9: makeAnswers(9, 1),
         gad7: makeAnswers(7, 1),
         pq16: makeAnswers(16, 0),
       },
     });
+    const sub = await latestSubmission(t, studentAId);
 
-    const timeline = await authedA.query(api.timeline.getStudentClinicalTimeline, {
+    const timeline = await staff.query(api.timeline.getStudentClinicalTimeline, {
       userId: studentAId,
       categoryFilter: "triage",
     });
@@ -233,20 +250,23 @@ describe("Priority 4 Step 5A: Clinical Timeline Backend Suite (TIMELINE-01 to TI
   test("TIMELINE-09: High-risk alert contains actual alertId, triageId and attemptId", async () => {
     const { t, studentAId } = await setupTimelineEnvironment();
     const authedA = t.withIdentity({ subject: studentAId });
+    // Clinical timeline is a staff-only read; inspect it as an admin.
+    const staff = await staffViewer(t);
 
     // High risk: suicide flag
     const phq9Ans = makeAnswers(9, 1);
     phq9Ans["9"] = 2;
 
-    const sub = await authedA.mutation(api.screening.submitScreeningAttempt, {
+    await authedA.mutation(api.screening.submitScreeningAttempt, {
       responses: {
         phq9: phq9Ans,
         gad7: makeAnswers(7, 1),
         pq16: makeAnswers(16, 0),
       },
     });
+    const sub = await latestSubmission(t, studentAId);
 
-    const timeline = await authedA.query(api.timeline.getStudentClinicalTimeline, {
+    const timeline = await staff.query(api.timeline.getStudentClinicalTimeline, {
       userId: studentAId,
       categoryFilter: "safety",
     });
@@ -263,12 +283,14 @@ describe("Priority 4 Step 5A: Clinical Timeline Backend Suite (TIMELINE-01 to TI
   test("TIMELINE-10: Independent/manual alert does not receive fabricated provenance", async () => {
     const { t, studentAId } = await setupTimelineEnvironment();
     const authedA = t.withIdentity({ subject: studentAId });
+    // Clinical timeline is a staff-only read; inspect it as an admin.
+    const staff = await staffViewer(t);
 
     const alertId = await authedA.mutation(internal.alerts.createAlert, {
       type: "manual_sos",
     });
 
-    const timeline = await authedA.query(api.timeline.getStudentClinicalTimeline, {
+    const timeline = await staff.query(api.timeline.getStudentClinicalTimeline, {
       userId: studentAId,
       categoryFilter: "safety",
     });
@@ -284,6 +306,8 @@ describe("Priority 4 Step 5A: Clinical Timeline Backend Suite (TIMELINE-01 to TI
   test("TIMELINE-11: Historical records with undefined provenance remain readable and unlinked", async () => {
     const { t, studentAId } = await setupTimelineEnvironment();
     const authedA = t.withIdentity({ subject: studentAId });
+    // Clinical timeline is a staff-only read; inspect it as an admin.
+    const staff = await staffViewer(t);
 
     let histTriageId: any = null;
     await t.run(async (ctx) => {
@@ -297,7 +321,7 @@ describe("Priority 4 Step 5A: Clinical Timeline Backend Suite (TIMELINE-01 to TI
       });
     });
 
-    const timeline = await authedA.query(api.timeline.getStudentClinicalTimeline, {
+    const timeline = await staff.query(api.timeline.getStudentClinicalTimeline, {
       userId: studentAId,
       categoryFilter: "triage",
     });
@@ -312,16 +336,20 @@ describe("Priority 4 Step 5A: Clinical Timeline Backend Suite (TIMELINE-01 to TI
   test("TIMELINE-12: Multiple screening attempts remain isolated and do not cross-link", async () => {
     const { t, studentAId } = await setupTimelineEnvironment();
     const authedA = t.withIdentity({ subject: studentAId });
+    // Clinical timeline is a staff-only read; inspect it as an admin.
+    const staff = await staffViewer(t);
 
-    const sub1 = await authedA.mutation(api.screening.submitScreeningAttempt, {
+    await authedA.mutation(api.screening.submitScreeningAttempt, {
       responses: { phq9: makeAnswers(9, 1), gad7: makeAnswers(7, 1), pq16: makeAnswers(16, 0) },
     });
+    const sub1 = await latestSubmission(t, studentAId);
 
-    const sub2 = await authedA.mutation(api.screening.submitScreeningAttempt, {
+    await authedA.mutation(api.screening.submitScreeningAttempt, {
       responses: { phq9: makeAnswers(9, 2), gad7: makeAnswers(7, 2), pq16: makeAnswers(16, 0) },
     });
+    const sub2 = await latestSubmission(t, studentAId);
 
-    const timeline = await authedA.query(api.timeline.getStudentClinicalTimeline, {
+    const timeline = await staff.query(api.timeline.getStudentClinicalTimeline, {
       userId: studentAId,
       categoryFilter: "screening",
     });
@@ -339,13 +367,15 @@ describe("Priority 4 Step 5A: Clinical Timeline Backend Suite (TIMELINE-01 to TI
   test("TIMELINE-13: Duplicate screening mirror records do not produce duplicate modern screening events", async () => {
     const { t, studentAId } = await setupTimelineEnvironment();
     const authedA = t.withIdentity({ subject: studentAId });
+    // Clinical timeline is a staff-only read; inspect it as an admin.
+    const staff = await staffViewer(t);
 
     // Submit single screening attempt (internally mirrors to `screenings` table)
     await authedA.mutation(api.screening.submitScreeningAttempt, {
       responses: { phq9: makeAnswers(9, 1), gad7: makeAnswers(7, 1), pq16: makeAnswers(16, 0) },
     });
 
-    const timeline = await authedA.query(api.timeline.getStudentClinicalTimeline, {
+    const timeline = await staff.query(api.timeline.getStudentClinicalTimeline, {
       userId: studentAId,
       categoryFilter: "screening",
     });
@@ -359,6 +389,8 @@ describe("Priority 4 Step 5A: Clinical Timeline Backend Suite (TIMELINE-01 to TI
   test("TIMELINE-14: Events are sorted newest -> oldest", async () => {
     const { t, studentAId } = await setupTimelineEnvironment();
     const authedA = t.withIdentity({ subject: studentAId });
+    // Clinical timeline is a staff-only read; inspect it as an admin.
+    const staff = await staffViewer(t);
 
     // Insert records with deliberate timestamp intervals
     const now = Date.now();
@@ -386,7 +418,7 @@ describe("Priority 4 Step 5A: Clinical Timeline Backend Suite (TIMELINE-01 to TI
       });
     });
 
-    const timeline = await authedA.query(api.timeline.getStudentClinicalTimeline, {
+    const timeline = await staff.query(api.timeline.getStudentClinicalTimeline, {
       userId: studentAId,
     });
 
@@ -400,6 +432,8 @@ describe("Priority 4 Step 5A: Clinical Timeline Backend Suite (TIMELINE-01 to TI
   test("TIMELINE-15: Identical timestamps have deterministic ordering", async () => {
     const { t, studentAId } = await setupTimelineEnvironment();
     const authedA = t.withIdentity({ subject: studentAId });
+    // Clinical timeline is a staff-only read; inspect it as an admin.
+    const staff = await staffViewer(t);
 
     const fixedTime = 1700000000000;
     await t.run(async (ctx) => {
@@ -419,8 +453,8 @@ describe("Priority 4 Step 5A: Clinical Timeline Backend Suite (TIMELINE-01 to TI
       });
     });
 
-    const timeline1 = await authedA.query(api.timeline.getStudentClinicalTimeline, { userId: studentAId });
-    const timeline2 = await authedA.query(api.timeline.getStudentClinicalTimeline, { userId: studentAId });
+    const timeline1 = await staff.query(api.timeline.getStudentClinicalTimeline, { userId: studentAId });
+    const timeline2 = await staff.query(api.timeline.getStudentClinicalTimeline, { userId: studentAId });
 
     expect(timeline1.map((e) => e.id)).toEqual(timeline2.map((e) => e.id));
   });
@@ -429,6 +463,8 @@ describe("Priority 4 Step 5A: Clinical Timeline Backend Suite (TIMELINE-01 to TI
   test("TIMELINE-16: Default timeline does not contain raw companion messages", async () => {
     const { t, studentAId } = await setupTimelineEnvironment();
     const authedA = t.withIdentity({ subject: studentAId });
+    // Clinical timeline is a staff-only read; inspect it as an admin.
+    const staff = await staffViewer(t);
 
     await t.run(async (ctx) => {
       await ctx.db.insert("companionMessages", {
@@ -447,7 +483,7 @@ describe("Priority 4 Step 5A: Clinical Timeline Backend Suite (TIMELINE-01 to TI
       });
     });
 
-    const timeline = await authedA.query(api.timeline.getStudentClinicalTimeline, {
+    const timeline = await staff.query(api.timeline.getStudentClinicalTimeline, {
       userId: studentAId,
     });
 
@@ -461,6 +497,8 @@ describe("Priority 4 Step 5A: Clinical Timeline Backend Suite (TIMELINE-01 to TI
   test("TIMELINE-17: Default timeline does not become flooded by high-frequency telemetry", async () => {
     const { t, studentAId } = await setupTimelineEnvironment();
     const authedA = t.withIdentity({ subject: studentAId });
+    // Clinical timeline is a staff-only read; inspect it as an admin.
+    const staff = await staffViewer(t);
 
     // Insert 5 emotion logs and 5 daily checkins
     await t.run(async (ctx) => {
@@ -481,13 +519,13 @@ describe("Priority 4 Step 5A: Clinical Timeline Backend Suite (TIMELINE-01 to TI
     });
 
     // Default timeline query
-    const defaultTimeline = await authedA.query(api.timeline.getStudentClinicalTimeline, {
+    const defaultTimeline = await staff.query(api.timeline.getStudentClinicalTimeline, {
       userId: studentAId,
     });
     expect(defaultTimeline.length).toBe(0); // Excluded from default view
 
     // Explicit monitoring query
-    const monitoringTimeline = await authedA.query(api.timeline.getStudentClinicalTimeline, {
+    const monitoringTimeline = await staff.query(api.timeline.getStudentClinicalTimeline, {
       userId: studentAId,
       categoryFilter: "monitoring",
     });
@@ -523,6 +561,8 @@ describe("Priority 4 Step 5A: Clinical Timeline Backend Suite (TIMELINE-01 to TI
   test("TIMELINE-19: No timeline event leaks another student's data", async () => {
     const { t, studentAId, studentBId } = await setupTimelineEnvironment();
     const authedA = t.withIdentity({ subject: studentAId });
+    // Clinical timeline is a staff-only read; inspect it as an admin.
+    const staff = await staffViewer(t);
     const authedB = t.withIdentity({ subject: studentBId });
 
     // Student A has screening
@@ -536,7 +576,7 @@ describe("Priority 4 Step 5A: Clinical Timeline Backend Suite (TIMELINE-01 to TI
       timestamp: Date.now(),
     });
 
-    const timelineA = await authedA.query(api.timeline.getStudentClinicalTimeline, {
+    const timelineA = await staff.query(api.timeline.getStudentClinicalTimeline, {
       userId: studentAId,
     });
 
@@ -548,6 +588,8 @@ describe("Priority 4 Step 5A: Clinical Timeline Backend Suite (TIMELINE-01 to TI
   test("TIMELINE-20: Event IDs are deterministic and unique", async () => {
     const { t, studentAId } = await setupTimelineEnvironment();
     const authedA = t.withIdentity({ subject: studentAId });
+    // Clinical timeline is a staff-only read; inspect it as an admin.
+    const staff = await staffViewer(t);
 
     // Create high-risk screening (generates screeningAttempt, triage, alert)
     const phq9Ans = makeAnswers(9, 2);
@@ -556,7 +598,7 @@ describe("Priority 4 Step 5A: Clinical Timeline Backend Suite (TIMELINE-01 to TI
       responses: { phq9: phq9Ans, gad7: makeAnswers(7, 2), pq16: makeAnswers(16, 0) },
     });
 
-    const timeline = await authedA.query(api.timeline.getStudentClinicalTimeline, {
+    const timeline = await staff.query(api.timeline.getStudentClinicalTimeline, {
       userId: studentAId,
     });
 

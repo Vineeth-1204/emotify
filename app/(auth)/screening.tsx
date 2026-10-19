@@ -10,6 +10,8 @@ import { Questionnaire } from "@/components/screening/Questionnaire";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import * as SecureStore from "expo-secure-store";
+import * as Crypto from "expo-crypto";
+import { getOrCreateSubmissionKey, clearSubmissionKey } from "@/common/screeningSubmissionKey";
 import { useLanguage } from "@/context/LanguageContext";
 import { useAvatar } from "@/context/AvatarContext";
 import { getEmotyPresence } from "@/common/emotyPresence";
@@ -83,11 +85,9 @@ export default function ScreeningScreen() {
   const submittingRef = useRef(false);
   const connection = useConvexConnectionState();
 
-  const latestTriage = useQuery(api.triage.getLatest, user?.id ? {
-    userId: user.id,
-  } : "skip");
+  const safetyStatus = useQuery(api.triage.getMySafetyStatus, user?.id ? {} : "skip");
 
-  const isForceRetest = latestTriage?.level === "force_retest";
+  const isForceRetest = !!safetyStatus?.forceRetest;
 
   // Load persisted progress on mount/user change
   useEffect(() => {
@@ -121,6 +121,8 @@ export default function ScreeningScreen() {
 
   async function persistAnswers(nextAnswers: ScreeningState) {
     if (!user?.id) return;
+    // Different answers are a different submission: drop any pending idempotency key.
+    await clearSubmissionKey(SecureStore, user.id);
     try {
       const key = `${SCREENING_STORE_KEY}_${user.id}`;
       await SecureStore.setItemAsync(key, JSON.stringify(nextAnswers));
@@ -154,10 +156,15 @@ export default function ScreeningScreen() {
         pq16Responses[`pq16_q${idx + 1}`] = val;
       });
 
-      // 2. Authoritative server-side scoring, triage, alerts, follow-up and completion (one transaction)
+      // 2. Idempotency key for this submission: reused on every retry (including after an app
+      //    restart), so a submission the server already committed is never recorded twice.
+      const submissionKey = await getOrCreateSubmissionKey(SecureStore, user.id, () => Crypto.randomUUID());
+
+      // 3. Authoritative server-side scoring, triage, alerts, follow-up and completion (one transaction)
       await submitScreeningAttempt({
         userId: user.id,
         startedAt: screeningStartTime,
+        submissionKey,
         responses: {
           phq9: phq9Responses,
           gad7: gad7Responses,
@@ -165,13 +172,14 @@ export default function ScreeningScreen() {
         },
       });
 
-      // 3. Delete cached draft progress
+      // 4. Confirmed: delete the draft and its key. The next check-in is a new submission.
       try {
         const key = `${SCREENING_STORE_KEY}_${user.id}`;
         await SecureStore.deleteItemAsync(key);
       } catch (e) {}
+      await clearSubmissionKey(SecureStore, user.id);
 
-      // 4. Show the calm results summary. Alerts and notifications were already created by the
+      // 5. Show the calm results summary. Alerts and notifications were already created by the
       //    mutation above; the results screen only reads the student's presentation outcome.
       router.replace("/(auth)/screening-result" as any);
     } catch (error) {

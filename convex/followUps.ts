@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./functions";
 import { checkRateLimit } from "./rateLimiter";
-import { assertCanAccessStudent, getAuthenticatedUser, getStaffScope, getStaffRecipientsForStudent } from "./authz";
+import { assertCanAccessStudent, getAuthenticatedUser, getStaffScope, getStaffRecipientsForStudent, requireCounselorOrAdmin } from "./authz";
 import type { Doc } from "./_generated/dataModel";
 import { sanitizePlainText } from "./sanitizer";
 
@@ -222,7 +222,17 @@ export const getStudentFollowUps = query({
     deduped.sort((a, b) => (b.dueDate ?? b.createdAt) - (a.dueDate ?? a.createdAt));
 
     if (!isStaff) {
-      return deduped.map(({ notes, completedBy, ...safe }) => safe);
+      // Students get only what the Appointments screen shows: no notes, staff names,
+      // screening/triage/appointment links or internal source categories.
+      return deduped.map((f) => ({
+        _id: f._id,
+        type: f.type,
+        dueDate: f.dueDate,
+        completed: f.completed,
+        status: f.status,
+        completedAt: f.completedAt,
+        selfInitiated: f.sourceType === "self_initiated",
+      }));
     }
 
     return deduped;
@@ -232,6 +242,8 @@ export const getStudentFollowUps = query({
 export const getFollowUpById = query({
   args: { id: v.id("followUps") },
   handler: async (ctx, args) => {
+    // Staff-only clinical read: students use the minimal self-service endpoints instead.
+    await requireCounselorOrAdmin(ctx);
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated: Login required.");
 
@@ -435,6 +447,8 @@ export const markComplete = mutation({
 export const getFollowUpsByAppointmentId = query({
   args: { appointmentId: v.id("appointments") },
   handler: async (ctx, args) => {
+    // Staff-only clinical read: students use the minimal self-service endpoints instead.
+    await requireCounselorOrAdmin(ctx);
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return [];
 

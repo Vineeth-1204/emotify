@@ -33,28 +33,26 @@ export default function TabLayout() {
     clerkId: user!.id,
   } : "skip");
 
-  const latestTriage = useQuery(api.triage.getLatest, isReady ? {
-    userId: user!.id,
-  } : "skip");
+  // Minimal server-derived gate (no triage record, level or ids reach the app).
+  const safetyStatus = useQuery(api.triage.getMySafetyStatus, isReady ? {} : "skip");
 
   const createCounsellorRequest = useMutation(api.counsellorRequests.create);
   const recordEmergencyDismissal = useMutation(api.alerts.recordEmergencyScreenDismissal);
 
   React.useEffect(() => {
-    if (latestTriage?.level === "force_retest") {
+    if (safetyStatus?.forceRetest) {
       router.replace("/(auth)/screening");
     }
-  }, [latestTriage?.level]);
+  }, [safetyStatus?.forceRetest]);
 
-  const isEmergency = latestTriage?.level === "suicide_flag" && !dismissedEmergency;
+  const isEmergency = !!safetyStatus?.crisis && !dismissedEmergency;
 
   const handleTalkToCounselor = async () => {
     if (!user) return;
     try {
-      // Canonical counselor request record (server notifies staff)
+      // Canonical counselor request record (server notifies staff and links the latest triage)
       await createCounsellorRequest({
         sourceType: "emergency_modal",
-        triageId: latestTriage?._id ? (latestTriage._id as any) : undefined,
         situation_text: "Student requested immediate counselor contact from emergency modal",
       });
 
@@ -124,10 +122,8 @@ export default function TabLayout() {
             title="5-4-3-2-1 Sensory Grounding" 
             onPress={() => router.push({
               pathname: "/(auth)/tools/grounding",
-              params: {
-                sourceType: "crisis_blocker",
-                triageId: latestTriage?._id ? (latestTriage._id as string) : undefined,
-              }
+              // The server links the latest triage to crisis-blocker sessions.
+              params: { sourceType: "crisis_blocker" }
             } as any)} 
             size="lg" 
           />
@@ -136,7 +132,7 @@ export default function TabLayout() {
     );
   }
 
-  const isScreeningComplete = (!!appUser?.screeningComplete) && latestTriage?.level !== "force_retest";
+  const isScreeningComplete = (!!appUser?.screeningComplete) && !safetyStatus?.forceRetest;
 
   return (
     <Tabs

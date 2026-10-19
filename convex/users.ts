@@ -1327,6 +1327,7 @@ const USER_OWNED_TABLES: Array<{ table: string; index: string; field: string; id
   { table: "sessions", index: "by_userId", field: "userId", idOnly: true },
   { table: "appointments", index: "by_userId", field: "userId", idOnly: true },
   { table: "screenings", index: "by_userId", field: "userId" },
+  { table: "screeningSubmissions", index: "by_user_and_key", field: "userId" },
   { table: "screeningAttempts", index: "by_userId", field: "userId" },
   { table: "triages", index: "by_userId", field: "userId" },
   { table: "alerts", index: "by_userId", field: "userId" },

@@ -4,6 +4,7 @@ import { expect, test, describe } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";
 import { assignAllPatientsToCounsellors } from "../test-utils/identity";
+import { latestSubmission } from "../test-utils/screening";
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -76,13 +77,15 @@ describe("Priority 4: Role-Based Authorization & Access Control Suite", () => {
 
     // 5. Submit screening for Student A
     const authedA = t.withIdentity({ subject: studentAId });
-    const attemptA = await authedA.mutation(api.screening.submitScreeningAttempt, {
+    await authedA.mutation(api.screening.submitScreeningAttempt, {
       responses: {
         phq9: makeAnswers(9, 1),
         gad7: makeAnswers(7, 1),
         pq16: makeAnswers(16, 0),
       },
     });
+    // Students get only a minimal outcome back; read the stored attempt id from the database.
+    const attemptA = await latestSubmission(t, studentAId);
 
     // Legacy fixtures: counsellors share every student (caseload assignments)
     await assignAllPatientsToCounsellors(t);
@@ -97,14 +100,27 @@ describe("Priority 4: Role-Based Authorization & Access Control Suite", () => {
     };
   }
 
-  test("1. Student CAN access ONLY their own clinical data", async () => {
-    const { t, studentAId, attemptAId } = await setupTestEnvironment();
+  test("1. Student is refused the raw clinical record and sees ONLY their own minimal result summary", async () => {
+    const { t, studentAId, adminId, attemptAId } = await setupTestEnvironment();
 
     const authedA = t.withIdentity({ subject: studentAId });
-    const savedAttempt = await authedA.query(api.screening.getAttemptById, {
+    // Raw clinical reads are staff-only, even for the student's own attempt
+    await expect(
+      authedA.query(api.screening.getAttemptById, {
+        attemptId: attemptAId,
+      })
+    ).rejects.toThrow("Unauthorized: Counselor or Admin access required.");
+
+    // The student's own minimal self-service view
+    const summary = await authedA.query(api.screening.getMyResultSummary, {});
+    expect(summary.status).toBe("ready");
+    expect((summary as any).outcome).toBeDefined();
+
+    // The record itself is still available to an admin
+    const authedAdmin = t.withIdentity({ subject: adminId });
+    const savedAttempt = await authedAdmin.query(api.screening.getAttemptById, {
       attemptId: attemptAId,
     });
-
     expect(savedAttempt).toBeDefined();
     expect(savedAttempt?.userId).toBe(studentAId);
   });
@@ -118,7 +134,7 @@ describe("Priority 4: Role-Based Authorization & Access Control Suite", () => {
       authedB.query(api.screening.getAttemptById, {
         attemptId: attemptAId,
       })
-    ).rejects.toThrow("Unauthorized: Students can access ONLY their own clinical data.");
+    ).rejects.toThrow(/Counselor or Admin access required|Students can access ONLY/);
   });
 
   test("3. Student CANNOT access another student's appointments (DENIED)", async () => {
@@ -225,6 +241,6 @@ describe("Priority 4: Role-Based Authorization & Access Control Suite", () => {
       t.query(api.screening.getAttemptById, {
         attemptId: attemptAId,
       })
-    ).rejects.toThrow("Unauthenticated: Login required to access clinical data.");
+    ).rejects.toThrow(/^Unauthenticated: Login required/);
   });
 });

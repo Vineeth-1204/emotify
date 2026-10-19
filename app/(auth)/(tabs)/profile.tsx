@@ -34,7 +34,8 @@ export default function ProfileScreen() {
   const styles = useStyles(stylesFactory);
 
   const dbUser = useQuery(api.users.getByClerkId, isReady && userId ? { clerkId: userId } : "skip");
-  const exportScreenings = useQuery(api.screening.getAll, isReady && userId ? { userId: userId } : "skip");
+  // Own questionnaire totals for the personal data export (no ids, triage or flags).
+  const exportScreenings = useQuery(api.screening.exportMyScreenings, isReady ? {} : "skip");
 
   const { t, language, setLanguage, supportedLanguages, activeLanguageOption } = useLanguage();
   const { avatarName, avatarGender, setEmotyPreferences } = useAvatar();
@@ -235,8 +236,8 @@ export default function ProfileScreen() {
       const csvRows = [];
       csvRows.push("Screening Data");
       csvRows.push("UserID,PHQ9,GAD7,PQ16,Item9,Date");
-      exportScreenings.forEach((s: any) => {
-        csvRows.push(`${userId},${s.phq9_total},${s.gad7_total},${s.pq16_total},${s.phq9_item9_score},${new Date(s.createdAt).toISOString()}`);
+      exportScreenings.forEach((s) => {
+        csvRows.push(`${userId},${s.phq9Total},${s.gad7Total},${s.pq16Total},${s.phq9Item9},${new Date(s.completedAt).toISOString()}`);
       });
       csvRows.push("");
 

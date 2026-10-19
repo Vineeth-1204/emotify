@@ -15,7 +15,6 @@ import { getEmotyPresence, type CheckinMood } from "@/common/emotyPresence";
 import { EmotyPresence } from "@/components/avatar/EmotyPresence";
 import { useThemeColors, useStyles } from "@/context/MoodThemeContext";
 import { Button } from "@/components/ui/Button";
-import { getDisplayLevel } from "@/utils/triage";
 import { generateInsightMessage } from "@/utils/insights";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
@@ -285,13 +284,9 @@ export default function DashboardScreen() {
     clerkId: user!.id,
   } : "skip");
 
-  const latestScreening = useQuery(api.screening.getLatest, isReady ? {
-    userId: user!.id,
-  } : "skip");
-
-  const latestTriage = useQuery(api.triage.getLatest, isReady ? {
-    userId: user!.id,
-  } : "skip");
+  // Server-derived, minimal views: no raw scores, triage records or ids reach the app.
+  const wellbeing = useQuery(api.screening.getMyWellbeingIndicators, isReady ? {} : "skip");
+  const safetyStatus = useQuery(api.triage.getMySafetyStatus, isReady ? {} : "skip");
 
   const recentEmotions = useQuery(api.emotionLogs.getRecent, isReady ? {
     userId: user!.id,
@@ -348,7 +343,7 @@ export default function DashboardScreen() {
     }
   }, [user?.id]);
 
-  const isScreeningComplete = (appUser ? !!appUser.screeningComplete : false) && latestTriage?.level !== "force_retest";
+  const isScreeningComplete = (appUser ? !!appUser.screeningComplete : false) && !safetyStatus?.forceRetest;
 
   // Mount detection for daily check-in (synced with Convex dailyCheckins & SecureStore)
   React.useEffect(() => {
@@ -448,7 +443,7 @@ export default function DashboardScreen() {
     }
   };
 
-  if (appUser === undefined || latestScreening === undefined || latestTriage === undefined || appointments === undefined) {
+  if (appUser === undefined || wellbeing === undefined || safetyStatus === undefined || appointments === undefined) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color={colors.primary} />
@@ -458,16 +453,9 @@ export default function DashboardScreen() {
 
   const alias = appUser?.alias || "there";
 
-  const displayLevel = isScreeningComplete
-    ? (latestTriage ? getDisplayLevel(latestTriage.level as any) : "Assessment Pending")
-    : "Initial Screening Required";
-
-  const phq9Score = latestScreening?.phq9_total ?? 0;
-  const gad7Score = latestScreening?.gad7_total ?? 0;
-
   const { recommendation } = isScreeningComplete
     ? generateInsightMessage({
-      triage_level: latestTriage?.level as any || 'mild',
+      triage_level: safetyStatus?.elevatedSupport ? 'severe' : 'mild',
       alias,
       recentEmotions: recentEmotions ?? [],
       recentTools: recentJpmr ?? [],
@@ -476,7 +464,7 @@ export default function DashboardScreen() {
       recommendation: "Welcome to Emotify! Please complete your initial screening test to assess your wellbeing and unlock personalized therapeutic tools."
     };
 
-  const isSevere = latestTriage && ["severe", "suicide_flag", "psychosis_flag"].includes(latestTriage.level);
+  const isSevere = !!safetyStatus?.elevatedSupport;
 
   const homePresence = getEmotyPresence({
     scene: "home",
@@ -1289,9 +1277,12 @@ export default function DashboardScreen() {
         )}
 
         {/* Visual Wellbeing Metrics (Humanized, Student-Friendly) */}
-        {isScreeningComplete && (() => {
-          const emotionalPercentage = Math.round(((27 - phq9Score) / 27) * 100);
-          const calmnessPercentage = Math.round(((21 - gad7Score) / 21) * 100);
+        {isScreeningComplete && wellbeing && (() => {
+          const { emotionalBalance, mindCalmness } = wellbeing;
+          const emotionalPercentage = emotionalBalance.percent;
+          const calmnessPercentage = mindCalmness.percent;
+          const EMOTIONAL_BADGE = { optimal: t("home.badgeOptimal"), good: t("home.badgeGood"), balanced: t("home.badgeBalanced"), needsCare: t("home.badgeNeedsCare") };
+          const CALM_BADGE = { serene: t("home.badgeSerene"), calm: t("home.badgeCalm"), mildTension: t("home.badgeMildTension"), needsCare: t("home.badgeNeedsCare") };
 
           return (
             <View style={styles.scoreRow}>
@@ -1302,8 +1293,8 @@ export default function DashboardScreen() {
                     <Ionicons name="pulse-outline" size={18} color={colors.primary} />
                   </View>
                   <View style={styles.scoreBadgeMini}>
-                    <Text style={[styles.scoreBadgeMiniText, { color: phq9Score >= 10 ? colors.error : colors.success }]}>
-                      {phq9Score <= 4 ? t("home.badgeOptimal") : phq9Score <= 9 ? t("home.badgeGood") : phq9Score <= 14 ? t("home.badgeBalanced") : t("home.badgeNeedsCare")}
+                    <Text style={[styles.scoreBadgeMiniText, { color: colors[emotionalBalance.badgeTone] }]}>
+                      {EMOTIONAL_BADGE[emotionalBalance.badge]}
                     </Text>
                   </View>
                 </View>
@@ -1316,7 +1307,7 @@ export default function DashboardScreen() {
                       styles.metricFill,
                       {
                         width: `${Math.min(Math.max(emotionalPercentage, 5), 100)}%`,
-                        backgroundColor: phq9Score <= 9 ? colors.success : phq9Score <= 14 ? colors.warning : colors.error
+                        backgroundColor: colors[emotionalBalance.barTone]
                       }
                     ]}
                   />
@@ -1331,8 +1322,8 @@ export default function DashboardScreen() {
                     <Ionicons name="heart-outline" size={18} color={colors.secondary} />
                   </View>
                   <View style={styles.scoreBadgeMini}>
-                    <Text style={[styles.scoreBadgeMiniText, { color: gad7Score >= 10 ? colors.error : colors.success }]}>
-                      {gad7Score <= 4 ? t("home.badgeSerene") : gad7Score <= 9 ? t("home.badgeCalm") : gad7Score <= 14 ? t("home.badgeMildTension") : t("home.badgeNeedsCare")}
+                    <Text style={[styles.scoreBadgeMiniText, { color: colors[mindCalmness.badgeTone] }]}>
+                      {CALM_BADGE[mindCalmness.badge]}
                     </Text>
                   </View>
                 </View>
@@ -1345,7 +1336,7 @@ export default function DashboardScreen() {
                       styles.metricFill,
                       {
                         width: `${Math.min(Math.max(calmnessPercentage, 5), 100)}%`,
-                        backgroundColor: gad7Score <= 7 ? colors.success : gad7Score <= 12 ? colors.warning : colors.error
+                        backgroundColor: colors[mindCalmness.barTone]
                       }
                     ]}
                   />

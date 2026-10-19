@@ -240,8 +240,8 @@ describe("P12 Step 3: Counselor Request Flow Alignment", () => {
     });
   });
 
-  test("REQUEST-FLOW-08: Student can retrieve own request status", async () => {
-    const { t, studentAId } = await setupEnvironment();
+  test("REQUEST-FLOW-08: Student can retrieve own request status via getMyRequests; staff-only getRequestById is refused", async () => {
+    const { t, studentAId, adminId } = await setupEnvironment();
     const authedStudent = t.withIdentity({ subject: String(studentAId) });
 
     const reqId = await authedStudent.mutation(api.counsellorRequests.create, {
@@ -253,7 +253,16 @@ describe("P12 Step 3: Counselor Request Flow Alignment", () => {
     expect(myRequests[0]._id).toBe(reqId);
     expect(myRequests[0].status).toBe("pending");
 
-    const singleReq = await authedStudent.query(api.counsellorRequests.getRequestById, {
+    // The single-request read is a staff-only clinical read now, even for the owner
+    await expect(
+      authedStudent.query(api.counsellorRequests.getRequestById, {
+        requestId: reqId,
+      })
+    ).rejects.toThrow(/Counselor or Admin access required/);
+
+    // The request itself is still available to staff
+    const authedAdmin = t.withIdentity({ subject: String(adminId) });
+    const singleReq = await authedAdmin.query(api.counsellorRequests.getRequestById, {
       requestId: reqId,
     });
     expect(singleReq).not.toBeNull();
@@ -274,7 +283,7 @@ describe("P12 Step 3: Counselor Request Flow Alignment", () => {
       authedStudentB.query(api.counsellorRequests.getRequestById, {
         requestId: reqIdA,
       })
-    ).rejects.toThrow(/Unauthorized: Cannot view another student's counselor request/);
+    ).rejects.toThrow(/Counselor or Admin access required|Unauthorized: Cannot view another student's counselor request/);
 
     // Student B's list should not include Student A's request
     const bRequests = await authedStudentB.query(api.counsellorRequests.getMyRequests, {});

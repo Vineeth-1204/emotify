@@ -4,6 +4,7 @@ import { expect, test, describe } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";
 import { assignAllPatientsToCounsellors } from "../test-utils/identity";
+import { latestSubmission } from "../test-utils/screening";
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -75,13 +76,15 @@ describe("Priority 4 Step 3: Authorization & Access Control Suite (AUTH-01 to AU
 
     // Student A submits screening
     const authedA = t.withIdentity({ subject: studentAId });
-    const attemptA = await authedA.mutation(api.screening.submitScreeningAttempt, {
+    await authedA.mutation(api.screening.submitScreeningAttempt, {
       responses: {
         phq9: makeAnswers(9, 1),
         gad7: makeAnswers(7, 1),
         pq16: makeAnswers(16, 0),
       },
     });
+    // Students get only a minimal outcome back; read the stored attempt id from the database.
+    const attemptA = await latestSubmission(t, studentAId);
 
     // Student A starts CBT session
     const cbtA = await authedA.mutation(api.cbt.startSession, { forceNew: true });
@@ -116,11 +119,23 @@ describe("Priority 4 Step 3: Authorization & Access Control Suite (AUTH-01 to AU
     ).rejects.toThrow(/Unauthenticated/);
   });
 
-  // AUTH-02: Student A → Student A screening = ALLOWED
-  test("AUTH-02: Student A accessing Student A screening is ALLOWED", async () => {
-    const { t, studentAId, attemptAId } = await setupEnvironment();
+  // AUTH-02: Student A → own raw screening record = REFUSED (staff-only); own result summary = ALLOWED
+  test("AUTH-02: Student A is refused the raw clinical screening record but sees their own result summary", async () => {
+    const { t, studentAId, adminId, attemptAId } = await setupEnvironment();
     const authedA = t.withIdentity({ subject: studentAId });
-    const res = await authedA.query(api.screening.getAttemptById, { attemptId: attemptAId });
+    await expect(
+      authedA.query(api.screening.getAttemptById, { attemptId: attemptAId })
+    ).rejects.toThrow(/Counselor or Admin access required/);
+
+    // The student's permitted minimal view of their own result
+    const summary = await authedA.query(api.screening.getMyResultSummary, {});
+    expect(summary.status).toBe("ready");
+    expect((summary as any).outcome).toBeDefined();
+    expect((summary as any).attemptId).toBeUndefined();
+
+    // The clinical record is still available to staff
+    const authedAdmin = t.withIdentity({ subject: adminId });
+    const res = await authedAdmin.query(api.screening.getAttemptById, { attemptId: attemptAId });
     expect(res).toBeDefined();
     expect(res?.userId).toBe(studentAId);
   });
@@ -131,7 +146,7 @@ describe("Priority 4 Step 3: Authorization & Access Control Suite (AUTH-01 to AU
     const authedB = t.withIdentity({ subject: studentBId });
     await expect(
       authedB.query(api.screening.getAttemptById, { attemptId: attemptAId })
-    ).rejects.toThrow(/Students can access ONLY their own clinical data/);
+    ).rejects.toThrow(/Counselor or Admin access required|Students can access ONLY/);
   });
 
   // AUTH-04: Student A → Student B CBT = DENIED
@@ -158,7 +173,7 @@ describe("Priority 4 Step 3: Authorization & Access Control Suite (AUTH-01 to AU
     const authedB = t.withIdentity({ subject: studentBId });
     await expect(
       authedB.query(api.triage.getLatestByUserId, { userId: studentAId })
-    ).rejects.toThrow(/Students can access ONLY their own clinical data/);
+    ).rejects.toThrow(/Counselor or Admin access required|Students can access ONLY/);
   });
 
   // AUTH-07: Student → unblockPatient = DENIED

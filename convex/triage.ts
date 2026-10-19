@@ -1,11 +1,13 @@
 import { v } from "convex/values";
 import { mutation, query } from "./functions";
-import { assertCanAccessStudent, requireCounselorOrAdmin } from "./authz";
+import { assertCanAccessStudent, requireCounselorOrAdmin, getSelfStudent } from "./authz";
 
 /** Get latest triage for a specific user (used by admin or given userId) */
 export const getLatestByUserId = query({
   args: { userId: v.string() },
   handler: async (ctx, args) => {
+    // Staff-only clinical read: students use the minimal self-service endpoints instead.
+    await requireCounselorOrAdmin(ctx);
     // Assert authorization: Student can only view their own triage; Counselor/Admin can view any student's triage
     await assertCanAccessStudent(ctx, args.userId);
 
@@ -113,6 +115,8 @@ export const unblockPatient = mutation({
 export const getLatest = query({
   args: { userId: v.optional(v.string()) },
   handler: async (ctx, args) => {
+    // Staff-only clinical read: students use the minimal self-service endpoints instead.
+    await requireCounselorOrAdmin(ctx);
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return null;
     const targetUserId = args.userId || identity.subject;
@@ -150,6 +154,8 @@ export const getLatest = query({
 export const getTriageWithAttempt = query({
   args: { triageId: v.id("triages") },
   handler: async (ctx, args) => {
+    // Staff-only clinical read: students use the minimal self-service endpoints instead.
+    await requireCounselorOrAdmin(ctx);
     const triage = await ctx.db.get(args.triageId);
     if (!triage) return null;
 
@@ -170,3 +176,43 @@ export const getTriageWithAttempt = query({
   },
 });
 
+
+/** Triage levels for which the app shows the elevated-support experience (unchanged list). */
+const ELEVATED_SUPPORT_LEVELS = new Set(["severe", "suicide_flag", "psychosis_flag"]);
+
+/**
+ * Student: the minimum the app needs to gate the existing safety experiences, derived on the
+ * server from my latest triage record:
+ *   crisis          -> latest level is "suicide_flag" (full-screen crisis support)
+ *   forceRetest     -> staff requested a new screening ("force_retest")
+ *   elevatedSupport -> severe, suicide_flag or psychosis_flag (calmer Emoty, counsellor-guided tools)
+ * Replaces reading the full triage record (id, level, flags, timestamps) via triage.getLatest.
+ */
+export const getMySafetyStatus = query({
+  args: {},
+  handler: async (ctx) => {
+    const self = await getSelfStudent(ctx);
+    if (!self) return null;
+    let latest: any = null;
+    for (const key of self.keys) {
+      const row = await ctx.db.query("triages").withIndex("by_userId", (q) => q.eq("userId", key)).order("desc").first();
+      if (row && (!latest || row._creationTime > latest._creationTime)) latest = row;
+    }
+    const level: string | undefined = latest?.level;
+    return {
+      crisis: level === "suicide_flag",
+      forceRetest: level === "force_retest",
+      elevatedSupport: !!level && ELEVATED_SUPPORT_LEVELS.has(level),
+    };
+  },
+});
+
+/** Server-side: the student's latest triage id, for provenance links the client no longer sees. */
+export async function latestTriageIdFor(ctx: { db: any }, keys: string[]) {
+  let latest: any = null;
+  for (const key of keys) {
+    const row = await ctx.db.query("triages").withIndex("by_userId", (q: any) => q.eq("userId", key)).order("desc").first();
+    if (row && (!latest || row._creationTime > latest._creationTime)) latest = row;
+  }
+  return latest?._id ?? undefined;
+}

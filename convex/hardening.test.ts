@@ -2,6 +2,7 @@
 import { convexTest } from "convex-test";
 import { expect, test, describe } from "vitest";
 import { api, internal } from "./_generated/api";
+import { staffViewer } from "../test-utils/screening";
 import schema from "./schema";
 import type { Id } from "./_generated/dataModel";
 
@@ -420,7 +421,9 @@ describe("Priority 5 Step 2: Clinical Architecture Hardening Suite", () => {
       saved_reframe_flag: true,
     });
 
-    const timeline = await studentSession.query(api.timeline.getStudentClinicalTimeline, { userId: studentAId });
+    // The clinical timeline is a staff view; the student cannot read it directly.
+    await expect(studentSession.query(api.timeline.getStudentClinicalTimeline, { userId: studentAId })).rejects.toThrow(/Counselor or Admin access required/);
+    const timeline = await (await staffViewer(t)).query(api.timeline.getStudentClinicalTimeline, { userId: studentAId });
     const reframeEvents = timeline.filter((e) => e.eventType === "reframe_completed");
     expect(reframeEvents.length).toBe(1);
     expect(reframeEvents[0].sourceTable).toBe("reframeLogs");

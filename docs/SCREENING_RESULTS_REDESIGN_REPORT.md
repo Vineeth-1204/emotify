@@ -167,6 +167,8 @@ Scope: the student-facing experience after the PHQ-9, GAD-7 and PQ-16 screening.
 
 ## 7. Unresolved concerns
 
+> **Update:** concerns 2 and 3 were resolved in the follow-up [SCREENING_DATA_MINIMIZATION_AND_IDEMPOTENCY_REPORT.md](./SCREENING_DATA_MINIMIZATION_AND_IDEMPOTENCY_REPORT.md): students now get a minimal submit response and minimal self-service reads, staff clinical reads are server-enforced staff-only, and submissions are idempotent per (student, submission key).
+
 1. **Clinical review of the copy.** The new wording, especially the "steady" body and the second crisis paragraph, needs approval from the clinical lead. The crisis sentence itself is the existing one.
 2. **The submit response still exposes internals.** `submitScreeningAttempt` still returns `triageId`, `followUpId`, `triageLevel`, the flags and the per-instrument results to the student's client.
    - The app ignores them, and the new screen does not use them.

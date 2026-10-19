@@ -58,16 +58,18 @@ describe("each triage level: same backend records as before, calm outcome for th
     test(`${level}`, async () => {
       const { as, assigned, rows } = await setup();
       const res: any = await as(assigned).mutation(api.screening.submitScreeningAttempt, { responses: RESPONSES[level] });
-      expect(res.triageLevel).toBe(level);
+      // The student response carries only the calm outcome: no level, flags, scores or ids.
+      expect(res).toEqual({ status: "submitted", outcome: EXPECTED[level].outcome, replayed: false });
 
       const after = await rows();
+      expect(after.attempts[0].triageLevel).toBe(level);
       expect(after.attempts).toHaveLength(1);
       expect(after.triages).toHaveLength(1);
       expect(after.followUps).toHaveLength(1);
       const expected = EXPECTED[level];
       expect(after.alerts.map((a) => a.type)).toEqual(expected.alertType ? [expected.alertType] : []);
       if (expected.alertType) {
-        expect(after.alerts[0]).toMatchObject({ source: "screening", attemptId: res.attemptId, triageId: res.triageId, status: "pending" });
+        expect(after.alerts[0]).toMatchObject({ source: "screening", attemptId: after.attempts[0]._id, triageId: after.triages[0]._id, status: "pending" });
       }
 
       // Alerts and notifications exist before the student has looked at anything
@@ -111,11 +113,12 @@ describe("the summary is independent of alerting and private", () => {
     expect(await as(unassigned).query(api.screening.getMyResultSummary, {})).toEqual({ status: "none" });
     expect(await t.query(api.screening.getMyResultSummary, {})).toEqual({ status: "unauthenticated" });
 
-    const res: any = await as(assigned).mutation(api.screening.submitScreeningAttempt, { responses: RESPONSES.suicide_flag });
+    await as(assigned).mutation(api.screening.submitScreeningAttempt, { responses: RESPONSES.suicide_flag });
+    const res = await t.run(async (ctx) => (await ctx.db.query("screeningAttempts").collect())[0]);
     const summary = await as(assigned).query(api.screening.getMyResultSummary, {});
     expect(Object.keys(summary).sort()).toEqual(["completedAt", "outcome", "status"]);
     const text = JSON.stringify(summary);
-    for (const secret of [String(res.attemptId), String(res.triageId), "suicide", "flag", "score", "severity", "phq", counsellorA, "9000000001"]) {
+    for (const secret of [String(res._id), String(res.triageId), "suicide", "flag", "score", "severity", "phq", counsellorA, "9000000001"]) {
       expect(text, secret).not.toContain(secret);
     }
   });

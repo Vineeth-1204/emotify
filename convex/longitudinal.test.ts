@@ -4,6 +4,7 @@ import { expect, test, describe } from "vitest";
 import { api, internal } from "./_generated/api";
 import schema from "./schema";
 import { assignAllPatientsToCounsellors } from "../test-utils/identity";
+import { latestSubmission, staffViewer } from "../test-utils/screening";
 import type { Id } from "./_generated/dataModel";
 
 const modules = import.meta.glob("./**/*.ts");
@@ -119,11 +120,13 @@ describe("Priority 5 Step 3: Longitudinal Readiness & Screening Migration Suite"
     const studentSession = t.withIdentity({ subject: studentAId });
 
     // Submit Attempt 1
-    const res1 = await studentSession.mutation(api.screening.submitScreeningAttempt, {
+    const res1Response = await studentSession.mutation(api.screening.submitScreeningAttempt, {
       patientId: "STU-ALPHA",
       responses: mildResponses,
       startedAt: Date.now() - 60000,
     });
+    expect(res1Response).not.toHaveProperty("attemptId");
+    const res1 = await latestSubmission(t, studentAId);
     expect(res1.attemptId).toBeDefined();
 
     // Verify Attempt 1 stored
@@ -135,11 +138,13 @@ describe("Priority 5 Step 3: Longitudinal Readiness & Screening Migration Suite"
     });
 
     // Submit Attempt 2 later
-    const res2 = await studentSession.mutation(api.screening.submitScreeningAttempt, {
+    const res2Response = await studentSession.mutation(api.screening.submitScreeningAttempt, {
       patientId: "STU-ALPHA",
       responses: moderateResponses,
       startedAt: Date.now() - 30000,
     });
+    expect(res2Response).not.toHaveProperty("attemptId");
+    const res2 = await latestSubmission(t, studentAId);
     expect(res2.attemptId).toBeDefined();
     expect(res2.attemptId).not.toEqual(res1.attemptId);
 
@@ -167,11 +172,13 @@ describe("Priority 5 Step 3: Longitudinal Readiness & Screening Migration Suite"
     const studentSession = t.withIdentity({ subject: studentAId });
 
     // Submit screening attempt
-    const res = await studentSession.mutation(api.screening.submitScreeningAttempt, {
+    const resResponse = await studentSession.mutation(api.screening.submitScreeningAttempt, {
       patientId: "STU-ALPHA",
       responses: moderateResponses,
       startedAt: Date.now() - 10000,
     });
+    expect(resResponse).not.toHaveProperty("attemptId");
+    const res = await latestSubmission(t, studentAId);
 
     // Verify ZERO rows inserted into legacy screenings table
     await t.run(async (ctx) => {
@@ -179,15 +186,20 @@ describe("Priority 5 Step 3: Longitudinal Readiness & Screening Migration Suite"
       expect(legacyRows.length).toBe(0);
     });
 
+    // Staff-only clinical reads: the student is refused, an admin sees the authoritative data
+    await expect(studentSession.query(api.screening.getLatest, {})).rejects.toThrow(/Counselor or Admin access required/);
+    await expect(studentSession.query(api.screening.getAll, {})).rejects.toThrow(/Counselor or Admin access required/);
+    const admin = await staffViewer(t);
+
     // Verify getLatest returns authoritative data mapped correctly
-    const latest = await studentSession.query(api.screening.getLatest, {});
+    const latest = await admin.query(api.screening.getLatest, { userId: studentAId });
     expect(latest).not.toBeNull();
     expect(latest?.phq9_total).toBe(7);
     expect(latest?.gad7_total).toBe(6);
     expect(latest?.attemptId).toEqual(res.attemptId);
 
     // Verify getAll returns authoritative data
-    const all = await studentSession.query(api.screening.getAll, {});
+    const all = await admin.query(api.screening.getAll, { userId: studentAId });
     expect(all.length).toBe(1);
     expect(all[0].phq9_total).toBe(7);
     expect(all[0].attemptId).toEqual(res.attemptId);
@@ -210,13 +222,17 @@ describe("Priority 5 Step 3: Longitudinal Readiness & Screening Migration Suite"
       });
     });
 
+    // Staff-only clinical reads: the student is refused, an admin sees the legacy fallback
+    await expect(studentSession.query(api.screening.getLatest, {})).rejects.toThrow(/Counselor or Admin access required/);
+    const admin = await staffViewer(t);
+
     // Query getLatest & getAll
-    const latest = await studentSession.query(api.screening.getLatest, {});
+    const latest = await admin.query(api.screening.getLatest, { userId: studentAId });
     expect(latest).not.toBeNull();
     expect(latest?.phq9_total).toBe(11);
     expect(latest?.gad7_total).toBe(9);
 
-    const all = await studentSession.query(api.screening.getAll, {});
+    const all = await admin.query(api.screening.getAll, { userId: studentAId });
     expect(all.length).toBe(1);
     expect(all[0].phq9_total).toBe(11);
   });
@@ -239,11 +255,13 @@ describe("Priority 5 Step 3: Longitudinal Readiness & Screening Migration Suite"
       pq16: makePQ16Responses(0),
     };
 
-    const res2 = await studentSession.mutation(api.screening.submitScreeningAttempt, {
+    const res2Response = await studentSession.mutation(api.screening.submitScreeningAttempt, {
       patientId: "STU-ALPHA",
       responses: escalatedMild,
       startedAt: Date.now() - 5000,
     });
+    expect(res2Response).not.toHaveProperty("attemptId");
+    const res2 = await latestSubmission(t, studentAId);
 
     // Verify escalation alert created and linked to Attempt 2
     await t.run(async (ctx) => {
@@ -272,8 +290,14 @@ describe("Priority 5 Step 3: Longitudinal Readiness & Screening Migration Suite"
       startedAt: Date.now() - 10000,
     });
 
-    // Student B queries their own screening - should be empty
-    const bScreenings = await sessionB.query(api.screening.getAll, {});
+    // Student B can no longer use the staff screening read at all (own or other)
+    await expect(sessionB.query(api.screening.getAll, {})).rejects.toThrow(/Counselor or Admin access required/);
+    await expect(
+      sessionB.query(api.screening.getAll, { userId: studentAId })
+    ).rejects.toThrow(/Counselor or Admin access required|Students can access ONLY/);
+
+    // Student B's own self-service export is empty (does not leak Student A's records)
+    const bScreenings = await sessionB.query(api.screening.exportMyScreenings, {});
     expect(bScreenings.length).toBe(0);
 
     // Student B attempts to query Student A's clinical timeline - should be rejected
@@ -288,18 +312,22 @@ describe("Priority 5 Step 3: Longitudinal Readiness & Screening Migration Suite"
     const sessionCounselor = t.withIdentity({ subject: counselorId });
 
     // Submit Attempt 1
-    const res1 = await sessionA.mutation(api.screening.submitScreeningAttempt, {
+    const res1Response = await sessionA.mutation(api.screening.submitScreeningAttempt, {
       patientId: "STU-ALPHA",
       responses: mildResponses,
       startedAt: Date.now() - 30000,
     });
+    expect(res1Response).not.toHaveProperty("attemptId");
+    const res1 = await latestSubmission(t, studentAId);
 
     // Submit Attempt 2
-    const res2 = await sessionA.mutation(api.screening.submitScreeningAttempt, {
+    const res2Response = await sessionA.mutation(api.screening.submitScreeningAttempt, {
       patientId: "STU-ALPHA",
       responses: moderateResponses,
       startedAt: Date.now() - 10000,
     });
+    expect(res2Response).not.toHaveProperty("attemptId");
+    const res2 = await latestSubmission(t, studentAId);
 
     // Counselor views Student A's timeline
     const timeline = await sessionCounselor.query(api.timeline.getStudentClinicalTimeline, {

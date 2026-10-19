@@ -3,6 +3,7 @@ import { mutation, query } from "./functions";
 import { checkRateLimit } from "./rateLimiter";
 import { requireCounselorOrAdmin, getAuthenticatedUser, assertCanAccessStudent, getStaffRecipientsForStudent } from "./authz";
 import { sanitizePlainText } from "./sanitizer";
+import { latestTriageIdFor } from "./triage";
 
 export const create = mutation({
   args: {
@@ -80,6 +81,11 @@ export const create = mutation({
       }
     }
 
+    // The crisis screen no longer receives triage ids; link the request to the student's latest
+    // triage on the server so provenance is unchanged.
+    const triageId =
+      args.triageId ?? (args.sourceType === "emergency_modal" && !isStaff ? await latestTriageIdFor(ctx, Array.from(searchIds)) : undefined);
+
     const requestId = await ctx.db.insert("counsellorRequests", {
       user_id: effectiveUserId,
       thought_original: args.thought_original ? sanitizePlainText(args.thought_original) : undefined,
@@ -88,7 +94,7 @@ export const create = mutation({
       status: "pending",
       sourceType: args.sourceType || "self_initiated",
       attemptId: args.attemptId,
-      triageId: args.triageId,
+      triageId,
       updatedAt: Date.now(),
     });
 
@@ -216,6 +222,8 @@ export const getMyRequests = query({
 export const getStudentCounsellorRequests = query({
   args: { userId: v.string() },
   handler: async (ctx, args) => {
+    // Staff-only clinical read: students use the minimal self-service endpoints instead.
+    await requireCounselorOrAdmin(ctx);
     await assertCanAccessStudent(ctx, args.userId);
 
     let targetUser: any = null;
@@ -262,6 +270,8 @@ export const getStudentCounsellorRequests = query({
 export const getRequestById = query({
   args: { requestId: v.id("counsellorRequests") },
   handler: async (ctx, args) => {
+    // Staff-only clinical read: students use the minimal self-service endpoints instead.
+    await requireCounselorOrAdmin(ctx);
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated: Login required.");
 

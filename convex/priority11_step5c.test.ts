@@ -13,6 +13,7 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
     let studentAId = "";
     let studentBId = "";
     let counselorId = "";
+    let adminId = "";
 
     await t.run(async (ctx) => {
       studentAId = await ctx.db.insert("users", {
@@ -43,18 +44,39 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
         created_at: Date.now(),
         updated_at: Date.now(),
       });
+
+      adminId = await ctx.db.insert("users", {
+        full_name: "Admin",
+        mobile_number: "9876543204",
+        role: "admin",
+        status: "active",
+        created_at: Date.now(),
+        updated_at: Date.now(),
+      });
+
+      // The counsellor is assigned to Student A only.
+      await ctx.db.insert("counsellorAssignments", {
+        counsellorId: counselorId as any,
+        studentId: studentAId as any,
+        assignedBy: adminId as any,
+        assignedAt: Date.now(),
+        active: true,
+      });
     });
 
     const authedA = t.withIdentity({ subject: studentAId });
     const authedB = t.withIdentity({ subject: studentBId });
     const authedCounselor = t.withIdentity({ subject: counselorId });
+    const authedAdmin = t.withIdentity({ subject: adminId });
+    // The clinical timeline is a staff-only read: Student A's timeline is read by A's assigned counsellor.
+    const staffA = authedCounselor;
 
-    return { t, studentAId, studentBId, counselorId, authedA, authedB, authedCounselor };
+    return { t, studentAId, studentBId, counselorId, adminId, authedA, authedB, authedCounselor, authedAdmin, staffA };
   }
 
   // P11-5C-TL-01: First page returns default maximum of 50.
   test("P11-5C-TL-01: First page returns default maximum of 50 events", async () => {
-    const { t, studentAId, authedA } = await setupTestEnvironment();
+    const { t, studentAId, staffA } = await setupTestEnvironment();
 
     // Insert 60 clinical notes
     await t.run(async (ctx) => {
@@ -69,7 +91,7 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
       }
     });
 
-    const res = await authedA.query(api.timeline.getStudentClinicalTimeline, {
+    const res = await staffA.query(api.timeline.getStudentClinicalTimeline, {
       userId: studentAId,
       paginate: true,
     });
@@ -80,7 +102,7 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
 
   // P11-5C-TL-02: Explicit limit works.
   test("P11-5C-TL-02: Explicit limit works", async () => {
-    const { t, studentAId, authedA } = await setupTestEnvironment();
+    const { t, studentAId, staffA } = await setupTestEnvironment();
 
     await t.run(async (ctx) => {
       for (let i = 0; i < 30; i++) {
@@ -94,7 +116,7 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
       }
     });
 
-    const res = await authedA.query(api.timeline.getStudentClinicalTimeline, {
+    const res = await staffA.query(api.timeline.getStudentClinicalTimeline, {
       userId: studentAId,
       limit: 15,
       paginate: true,
@@ -106,7 +128,7 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
 
   // P11-5C-TL-03: Maximum limit is capped at 100.
   test("P11-5C-TL-03: Maximum limit is capped at 100", async () => {
-    const { t, studentAId, authedA } = await setupTestEnvironment();
+    const { t, studentAId, staffA } = await setupTestEnvironment();
 
     await t.run(async (ctx) => {
       for (let i = 0; i < 120; i++) {
@@ -121,7 +143,7 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
     });
 
     // Request limit of 150 -> should be capped at 100
-    const res = await authedA.query(api.timeline.getStudentClinicalTimeline, {
+    const res = await staffA.query(api.timeline.getStudentClinicalTimeline, {
       userId: studentAId,
       limit: 150,
       paginate: true,
@@ -133,7 +155,7 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
 
   // P11-5C-TL-04: Second page using nextCursor contains no events from page 1.
   test("P11-5C-TL-04: Second page using nextCursor contains no events from page 1", async () => {
-    const { t, studentAId, authedA } = await setupTestEnvironment();
+    const { t, studentAId, staffA } = await setupTestEnvironment();
 
     await t.run(async (ctx) => {
       for (let i = 0; i < 25; i++) {
@@ -147,7 +169,7 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
       }
     });
 
-    const page1 = await authedA.query(api.timeline.getStudentClinicalTimeline, {
+    const page1 = await staffA.query(api.timeline.getStudentClinicalTimeline, {
       userId: studentAId,
       limit: 10,
       paginate: true,
@@ -155,7 +177,7 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
     expect(page1.events).toHaveLength(10);
     expect(page1.nextCursor).not.toBeNull();
 
-    const page2 = await authedA.query(api.timeline.getStudentClinicalTimeline, {
+    const page2 = await staffA.query(api.timeline.getStudentClinicalTimeline, {
       userId: studentAId,
       limit: 10,
       cursor: page1.nextCursor!,
@@ -170,7 +192,7 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
 
   // P11-5C-TL-05: Repeated pagination eventually covers all eligible synthetic events without duplication.
   test("P11-5C-TL-05: Repeated pagination eventually covers all eligible synthetic events without duplication", async () => {
-    const { t, studentAId, authedA } = await setupTestEnvironment();
+    const { t, studentAId, staffA } = await setupTestEnvironment();
 
     const totalEvents = 23;
     await t.run(async (ctx) => {
@@ -190,7 +212,7 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
     let currentCursor: string | null | undefined = undefined;
 
     for (let loop = 0; loop < 10; loop++) {
-      const res: any = await authedA.query(api.timeline.getStudentClinicalTimeline, {
+      const res: any = await staffA.query(api.timeline.getStudentClinicalTimeline, {
         userId: studentAId,
         limit: pageSize,
         cursor: currentCursor,
@@ -212,7 +234,7 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
 
   // P11-5C-TL-06: Events with identical timestamps are deterministically ordered by eventId.
   test("P11-5C-TL-06: Events with identical timestamps are deterministically ordered by eventId descending", async () => {
-    const { t, studentAId, authedA } = await setupTestEnvironment();
+    const { t, studentAId, staffA } = await setupTestEnvironment();
 
     const sameTime = 1700005000000;
     await t.run(async (ctx) => {
@@ -232,8 +254,8 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
       });
     });
 
-    const res1 = await authedA.query(api.timeline.getStudentClinicalTimeline, { userId: studentAId, paginate: true });
-    const res2 = await authedA.query(api.timeline.getStudentClinicalTimeline, { userId: studentAId, paginate: true });
+    const res1 = await staffA.query(api.timeline.getStudentClinicalTimeline, { userId: studentAId, paginate: true });
+    const res2 = await staffA.query(api.timeline.getStudentClinicalTimeline, { userId: studentAId, paginate: true });
 
     expect(res1.events).toHaveLength(2);
     expect(res2.events).toHaveLength(2);
@@ -246,7 +268,7 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
 
   // P11-5C-TL-07: Cursor resumes correctly when multiple events share the same timestamp.
   test("P11-5C-TL-07: Cursor resumes correctly when multiple events share the same timestamp", async () => {
-    const { t, studentAId, authedA } = await setupTestEnvironment();
+    const { t, studentAId, staffA } = await setupTestEnvironment();
 
     const sameTime = 1700007000000;
     await t.run(async (ctx) => {
@@ -263,7 +285,7 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
     });
 
     // Page with limit = 1
-    const p1 = await authedA.query(api.timeline.getStudentClinicalTimeline, {
+    const p1 = await staffA.query(api.timeline.getStudentClinicalTimeline, {
       userId: studentAId,
       limit: 1,
       paginate: true,
@@ -272,7 +294,7 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
     expect(p1.nextCursor).not.toBeNull();
 
     // Page 2
-    const p2 = await authedA.query(api.timeline.getStudentClinicalTimeline, {
+    const p2 = await staffA.query(api.timeline.getStudentClinicalTimeline, {
       userId: studentAId,
       limit: 1,
       cursor: p1.nextCursor!,
@@ -282,7 +304,7 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
     expect(p2.events[0].occurredAt).toBe(sameTime);
 
     // Page 3
-    const p3 = await authedA.query(api.timeline.getStudentClinicalTimeline, {
+    const p3 = await staffA.query(api.timeline.getStudentClinicalTimeline, {
       userId: studentAId,
       limit: 1,
       cursor: p2.nextCursor!,
@@ -295,17 +317,17 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
 
   // P11-5C-TL-08: Malformed cursor is rejected safely.
   test("P11-5C-TL-08: Malformed cursor is rejected safely", async () => {
-    const { studentAId, authedA } = await setupTestEnvironment();
+    const { studentAId, staffA } = await setupTestEnvironment();
 
     await expect(
-      authedA.query(api.timeline.getStudentClinicalTimeline, {
+      staffA.query(api.timeline.getStudentClinicalTimeline, {
         userId: studentAId,
         cursor: "not-a-valid-base64-json-cursor",
       })
     ).rejects.toThrow(/Malformed or invalid timeline cursor/);
 
     await expect(
-      authedA.query(api.timeline.getStudentClinicalTimeline, {
+      staffA.query(api.timeline.getStudentClinicalTimeline, {
         userId: studentAId,
         cursor: btoa(JSON.stringify({ bad: "object" })),
       })
@@ -314,7 +336,7 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
 
   // P11-5C-TL-09: Student A cannot use a cursor to access Student B's timeline.
   test("P11-5C-TL-09: Student A cannot use a cursor to access Student B's timeline", async () => {
-    const { t, studentAId, studentBId, authedB } = await setupTestEnvironment();
+    const { t, studentAId, studentBId, authedB, authedAdmin, staffA } = await setupTestEnvironment();
 
     await t.run(async (ctx) => {
       await ctx.db.insert("clinicalTimelines", {
@@ -329,30 +351,54 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
     // Create a forged cursor bound to Student A
     const cursorForA = btoa(JSON.stringify({ t: 1700000000000, id: "clinicalTimelines_dummy", u: studentAId }));
 
-    // Student B queries their own timeline using Student A's cursor -> Rejected because cursor is bound to student A!
+    // Student B can no longer read the clinical timeline at all (staff-only), cursor or not.
     await expect(
       authedB.query(api.timeline.getStudentClinicalTimeline, {
         userId: studentBId,
         cursor: cursorForA,
       })
+    ).rejects.toThrow(/Counselor or Admin access required/);
+
+    // A staff caller allowed to read Student B's timeline (admin) still cannot reuse a cursor bound
+    // to Student A -> Rejected because cursor is bound to student A!
+    await expect(
+      authedAdmin.query(api.timeline.getStudentClinicalTimeline, {
+        userId: studentBId,
+        cursor: cursorForA,
+      })
     ).rejects.toThrow(/Cursor does not match requested student timeline/);
+
+    // Student A's assigned counsellor cannot pivot to Student B with A's cursor either.
+    await expect(
+      staffA.query(api.timeline.getStudentClinicalTimeline, {
+        userId: studentBId,
+        cursor: cursorForA,
+      })
+    ).rejects.toThrow(/not in your caseload/);
   });
 
   // P11-5C-TL-10: Student authorization remains enforced before timeline queries.
   test("P11-5C-TL-10: Student authorization remains enforced before timeline queries", async () => {
-    const { studentAId, authedB } = await setupTestEnvironment();
+    const { studentAId, studentBId, authedB, staffA } = await setupTestEnvironment();
 
     // Student B attempts to query Student A's timeline
     await expect(
       authedB.query(api.timeline.getStudentClinicalTimeline, {
         userId: studentAId,
       })
-    ).rejects.toThrow(/Students can access ONLY their own clinical data/);
+    ).rejects.toThrow(/Counselor or Admin access required|Students can access ONLY their own clinical data/);
+
+    // A counsellor assigned only to Student A cannot query Student B's timeline.
+    await expect(
+      staffA.query(api.timeline.getStudentClinicalTimeline, {
+        userId: studentBId,
+      })
+    ).rejects.toThrow(/not in your caseload/);
   });
 
   // P11-5C-TL-10B: Existing caller without cursor or paginate receives raw event array exactly as before.
   test("P11-5C-TL-10B: Existing caller without cursor or paginate receives raw event array exactly as before", async () => {
-    const { t, studentAId, authedA } = await setupTestEnvironment();
+    const { t, studentAId, staffA } = await setupTestEnvironment();
 
     await t.run(async (ctx) => {
       await ctx.db.insert("clinicalTimelines", {
@@ -364,7 +410,7 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
       });
     });
 
-    const res = await authedA.query(api.timeline.getStudentClinicalTimeline, {
+    const res = await staffA.query(api.timeline.getStudentClinicalTimeline, {
       userId: studentAId,
     });
 
@@ -376,7 +422,7 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
 
   // P11-5C-TL-11: Existing event categories remain unchanged.
   test("P11-5C-TL-11: Existing event categories remain unchanged", async () => {
-    const { t, studentAId, authedA } = await setupTestEnvironment();
+    const { t, studentAId, staffA } = await setupTestEnvironment();
 
     await t.run(async (ctx) => {
       await ctx.db.insert("triages", {
@@ -395,7 +441,7 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
       });
     });
 
-    const res = await authedA.query(api.timeline.getStudentClinicalTimeline, {
+    const res = await staffA.query(api.timeline.getStudentClinicalTimeline, {
       userId: studentAId,
       paginate: true,
     });
@@ -407,7 +453,7 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
 
   // P11-5C-TL-12: Existing provenance fields remain unchanged.
   test("P11-5C-TL-12: Existing provenance fields remain unchanged", async () => {
-    const { t, studentAId, authedA } = await setupTestEnvironment();
+    const { t, studentAId, staffA } = await setupTestEnvironment();
 
     let attemptDocId!: any;
     let triageDocId!: any;
@@ -440,7 +486,7 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
       });
     });
 
-    const res = await authedA.query(api.timeline.getStudentClinicalTimeline, {
+    const res = await staffA.query(api.timeline.getStudentClinicalTimeline, {
       userId: studentAId,
       paginate: true,
     });
@@ -453,7 +499,7 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
 
   // P11-5C-TL-13: Raw AI companion messages do not enter the timeline.
   test("P11-5C-TL-13: Raw AI companion messages do not enter the timeline", async () => {
-    const { t, studentAId, authedA } = await setupTestEnvironment();
+    const { t, studentAId, staffA } = await setupTestEnvironment();
 
     await t.run(async (ctx) => {
       await ctx.db.insert("companionMessages", {
@@ -472,7 +518,7 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
       });
     });
 
-    const res = await authedA.query(api.timeline.getStudentClinicalTimeline, {
+    const res = await staffA.query(api.timeline.getStudentClinicalTimeline, {
       userId: studentAId,
       paginate: true,
     });
@@ -484,7 +530,7 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
 
   // P11-5C-TL-14: CBT/reframe deduplication remains intact across pages.
   test("P11-5C-TL-14: CBT/reframe deduplication remains intact across pages", async () => {
-    const { t, studentAId, authedA } = await setupTestEnvironment();
+    const { t, studentAId, staffA } = await setupTestEnvironment();
 
     const tSession = 1700005000000;
     await t.run(async (ctx) => {
@@ -526,7 +572,7 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
     });
 
     // Page 1 with limit = 1 -> returns CBT session
-    const p1 = await authedA.query(api.timeline.getStudentClinicalTimeline, {
+    const p1 = await staffA.query(api.timeline.getStudentClinicalTimeline, {
       userId: studentAId,
       limit: 1,
       paginate: true,
@@ -536,7 +582,7 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
     expect(p1.nextCursor).not.toBeNull();
 
     // Page 2 -> queries next items. The linked reframeLog must NOT appear as a duplicate event!
-    const p2 = await authedA.query(api.timeline.getStudentClinicalTimeline, {
+    const p2 = await staffA.query(api.timeline.getStudentClinicalTimeline, {
       userId: studentAId,
       limit: 10,
       cursor: p1.nextCursor!,
@@ -548,7 +594,7 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
 
   // P11-5C-TL-15: Abandoned/incomplete events remain excluded where existing semantics exclude them.
   test("P11-5C-TL-15: Abandoned/incomplete events remain excluded where existing semantics exclude them", async () => {
-    const { t, studentAId, authedA } = await setupTestEnvironment();
+    const { t, studentAId, staffA } = await setupTestEnvironment();
 
     await t.run(async (ctx) => {
       // Incomplete JPMR
@@ -574,7 +620,7 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
       });
     });
 
-    const res = await authedA.query(api.timeline.getStudentClinicalTimeline, {
+    const res = await staffA.query(api.timeline.getStudentClinicalTimeline, {
       userId: studentAId,
       paginate: true,
     });
@@ -584,7 +630,7 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
 
   // P11-5C-TL-16: Category filtering remains correct across multiple pages.
   test("P11-5C-TL-16: Category filtering remains correct across multiple pages", async () => {
-    const { t, studentAId, authedA } = await setupTestEnvironment();
+    const { t, studentAId, staffA } = await setupTestEnvironment();
 
     await t.run(async (ctx) => {
       for (let i = 0; i < 15; i++) {
@@ -606,7 +652,7 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
     });
 
     // Query filter "triage" with limit = 5
-    const p1 = await authedA.query(api.timeline.getStudentClinicalTimeline, {
+    const p1 = await staffA.query(api.timeline.getStudentClinicalTimeline, {
       userId: studentAId,
       categoryFilter: "triage",
       limit: 5,
@@ -616,7 +662,7 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
     expect(p1.events.every((e: any) => e.category === "triage")).toBe(true);
     expect(p1.nextCursor).not.toBeNull();
 
-    const p2 = await authedA.query(api.timeline.getStudentClinicalTimeline, {
+    const p2 = await staffA.query(api.timeline.getStudentClinicalTimeline, {
       userId: studentAId,
       categoryFilter: "triage",
       limit: 5,
@@ -633,9 +679,9 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
 
   // P11-5C-TL-17: An empty timeline returns events = [] and nextCursor = null.
   test("P11-5C-TL-17: An empty timeline returns events = [] and nextCursor = null", async () => {
-    const { studentAId, authedA } = await setupTestEnvironment();
+    const { studentAId, staffA } = await setupTestEnvironment();
 
-    const res = await authedA.query(api.timeline.getStudentClinicalTimeline, {
+    const res = await staffA.query(api.timeline.getStudentClinicalTimeline, {
       userId: studentAId,
       paginate: true,
     });
@@ -646,7 +692,7 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
 
   // P11-5C-TL-18: A final page returns nextCursor = null.
   test("P11-5C-TL-18: A final page returns nextCursor = null", async () => {
-    const { t, studentAId, authedA } = await setupTestEnvironment();
+    const { t, studentAId, staffA } = await setupTestEnvironment();
 
     await t.run(async (ctx) => {
       await ctx.db.insert("clinicalTimelines", {
@@ -658,7 +704,7 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
       });
     });
 
-    const res = await authedA.query(api.timeline.getStudentClinicalTimeline, {
+    const res = await staffA.query(api.timeline.getStudentClinicalTimeline, {
       userId: studentAId,
       limit: 10,
       paginate: true,
@@ -670,7 +716,7 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
 
   // LARGE DATASET TEST
   test("P11-5C-LARGE: Multi-source synthetic dataset verifies deterministic traversal across pages", async () => {
-    const { t, studentAId, authedA } = await setupTestEnvironment();
+    const { t, studentAId, staffA } = await setupTestEnvironment();
 
     const tBase = 1700000000000;
     let expectedEligibleEventCount = 0;
@@ -765,7 +811,7 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
 
     while (true) {
       pageCount++;
-      const res: any = await authedA.query(api.timeline.getStudentClinicalTimeline, {
+      const res: any = await staffA.query(api.timeline.getStudentClinicalTimeline, {
         userId: studentAId,
         limit: pageSize,
         cursor: cursor,
@@ -792,7 +838,7 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
 
   // P11-5C-TL-20: Stress test with >250 eligible events sharing the exact same timestamp.
   test("P11-5C-TL-20: Create >250 eligible events sharing exact same timestamp and paginate through all", async () => {
-    const { t, studentAId, authedA } = await setupTestEnvironment();
+    const { t, studentAId, staffA } = await setupTestEnvironment();
 
     const sameTime = 1700099999000;
     const totalCount = 260;
@@ -829,7 +875,7 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
 
     while (true) {
       pageCount++;
-      const res: any = await authedA.query(api.timeline.getStudentClinicalTimeline, {
+      const res: any = await staffA.query(api.timeline.getStudentClinicalTimeline, {
         userId: studentAId,
         limit: pageSize,
         cursor: cursor,
@@ -853,7 +899,7 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
   // P11-5C-TL-21: Multi-source same-timestamp stress test (>250 events across multiple sources)
   // and cursor resumption in the middle of a same-timestamp cluster.
   test("P11-5C-TL-21: Multi-source same-timestamp stress (>250 events) with deterministic ID tie-breaking and mid-cluster resumption", async () => {
-    const { t, studentAId, authedA } = await setupTestEnvironment();
+    const { t, studentAId, staffA } = await setupTestEnvironment();
 
     const sameTime = 1700088888000;
     const triageCount = 130;
@@ -890,7 +936,7 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
 
     while (true) {
       pageCount++;
-      const res: any = await authedA.query(api.timeline.getStudentClinicalTimeline, {
+      const res: any = await staffA.query(api.timeline.getStudentClinicalTimeline, {
         userId: studentAId,
         limit: pageSize,
         cursor: cursor,
@@ -929,7 +975,7 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
       JSON.stringify({ t: midEvent.occurredAt, id: midEvent.id, u: studentAId })
     ).toString("base64");
 
-    const midRes: any = await authedA.query(api.timeline.getStudentClinicalTimeline, {
+    const midRes: any = await staffA.query(api.timeline.getStudentClinicalTimeline, {
       userId: studentAId,
       limit: 50,
       cursor: encodedMidCursor,
@@ -943,7 +989,7 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
 
   // P11-5C-TL-22: Category filtering stress test (300 raw events: 200 excluded, 100 eligible, same timestamp)
   test("P11-5C-TL-22: Category filtering stress with 200 excluded and 100 eligible records at same timestamp", async () => {
-    const { t, studentAId, authedA } = await setupTestEnvironment();
+    const { t, studentAId, staffA } = await setupTestEnvironment();
 
     const sameTime = 1700077777000;
     const excludedCount = 200;
@@ -981,7 +1027,7 @@ describe("Priority 11 Step 5C: Clinical Timeline Query Bounding & Deterministic 
 
     while (true) {
       pageCount++;
-      const res: any = await authedA.query(api.timeline.getStudentClinicalTimeline, {
+      const res: any = await staffA.query(api.timeline.getStudentClinicalTimeline, {
         userId: studentAId,
         categoryFilter: "note",
         limit: pageSize,

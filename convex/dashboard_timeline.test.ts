@@ -4,6 +4,7 @@ import { expect, test, describe } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";
 import { assignAllPatientsToCounsellors } from "../test-utils/identity";
+import { latestSubmission } from "../test-utils/screening";
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -233,13 +234,15 @@ describe("Priority 4 Step 5B: Dashboard Clinical Timeline Integration Suite (DAS
     const phq9Ans = makeAnswers(9, 1);
     phq9Ans["9"] = 2; // Suicide risk flag
 
-    const sub = await asStudent.mutation(api.screening.submitScreeningAttempt, {
+    await asStudent.mutation(api.screening.submitScreeningAttempt, {
       responses: {
         phq9: phq9Ans,
         gad7: makeAnswers(7, 1),
         pq16: makeAnswers(16, 0),
       },
     });
+    // Students only receive a minimal outcome; read the created clinical ids from the database.
+    const sub = await latestSubmission(t, studentId);
 
     const asCounselor = t.withIdentity({ subject: counselorId });
     const events = await asCounselor.query(api.timeline.getStudentClinicalTimeline, {

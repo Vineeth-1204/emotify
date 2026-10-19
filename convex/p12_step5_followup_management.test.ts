@@ -192,14 +192,14 @@ describe("P12 Step 5: Follow-Up Management System", () => {
   test("FOLLOWUP-04: Student can retrieve only their own follow-ups", async () => {
     const { counselorClient, studentAClient, studentAId, studentBId } = await setupEnvironment();
 
-    await counselorClient.mutation(api.followUps.create, {
+    const fuAId = await counselorClient.mutation(api.followUps.create, {
       userId: studentAId,
       type: "counselor_checkin",
       dueDate: Date.now() + 86400000,
       notes: "Student A private counselor notes.",
     });
 
-    await counselorClient.mutation(api.followUps.create, {
+    const fuBId = await counselorClient.mutation(api.followUps.create, {
       userId: studentBId,
       type: "counselor_checkin",
       dueDate: Date.now() + 86400000,
@@ -208,9 +208,23 @@ describe("P12 Step 5: Follow-Up Management System", () => {
 
     const studentAFollowUps = await studentAClient.query(api.followUps.getStudentFollowUps, {});
     expect(studentAFollowUps.length).toBe(1);
-    expect(studentAFollowUps[0].userId).toBe(studentAId);
-    // Student-visible sanitization: internal notes should be stripped for student
+    // Ownership: the only follow-up returned is Student A's own (the student view no longer carries userId)
+    expect(studentAFollowUps[0]._id).toBe(fuAId);
+    expect(studentAFollowUps.some((f: any) => f._id === fuBId)).toBe(false);
+    // Student-visible sanitization: only the minimal fields; internal notes and clinical links stripped
+    const allowedStudentFields = ["_id", "type", "dueDate", "completed", "status", "completedAt", "selfInitiated"];
+    for (const key of Object.keys(studentAFollowUps[0])) {
+      expect(allowedStudentFields).toContain(key);
+    }
     expect((studentAFollowUps[0] as any).notes).toBeUndefined();
+    expect((studentAFollowUps[0] as any).userId).toBeUndefined();
+    expect((studentAFollowUps[0] as any).attemptId).toBeUndefined();
+    expect((studentAFollowUps[0] as any).triageId).toBeUndefined();
+    expect((studentAFollowUps[0] as any).sourceType).toBeUndefined();
+
+    // Staff still see the full record, owned by Student A
+    const staffView: any[] = await counselorClient.query(api.followUps.getStudentFollowUps, { userId: studentAId });
+    expect(staffView.find((f) => f._id === fuAId)?.userId).toBe(studentAId);
   });
 
   test("FOLLOWUP-05: Student cannot retrieve another student's follow-up", async () => {

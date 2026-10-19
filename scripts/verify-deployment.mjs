@@ -12,8 +12,9 @@
  *   5. Re-login issues a new token and revokes the previous one.
  *   6. (optional, needs admin) Deactivation revokes access and blocks login;
  *      reactivation allows a fresh login.
- *   7. (optional, creates real alerts - DEV deployments only) PHQ-9 item 9 raises a
- *      suicide flag + follow-up, and an emergency-screen dismissal is recorded.
+ *   7. (optional, creates real alerts - DEV deployments only) PHQ-9 item 9 raises the
+ *      crisis gate + follow-up, a retry with the same submission key is de-duplicated, and
+ *      an emergency-screen dismissal is recorded.
  *   8. (optional, needs admin + counsellor test accounts) Caseload authorization: the
  *      counsellor is refused while the test student is unassigned and allowed once
  *      assigned; the student's My Counsellor shows the counsellor without login details.
@@ -201,9 +202,17 @@ async function main() {
       const c = clientWith(s.token);
       const zeros = (n) => Object.fromEntries(Array.from({ length: n }, (_, i) => [String(i + 1), 0]));
       const phq9 = { ...zeros(9), 9: 1 };
-      const res = await c.mutation(api.screening.submitScreeningAttempt, { responses: { phq9, gad7: zeros(7), pq16: zeros(16) } });
-      assert(res.triageLevel === "suicide_flag", `triage was ${res.triageLevel}`);
-      assert(res.followUpId, "no follow-up created");
+      const submission = { responses: { phq9, gad7: zeros(7), pq16: zeros(16) }, submissionKey: `verify-${webcrypto.randomUUID()}` };
+      const res = await c.mutation(api.screening.submitScreeningAttempt, submission);
+      // Students receive only the presentation outcome (no ids, level or flags).
+      assert(res.outcome === "immediate_safety", `outcome was ${res.outcome}`);
+      assert(res.triageLevel === undefined && res.attemptId === undefined, "student response exposes clinical internals");
+      assert((await c.query(api.triage.getMySafetyStatus, {}))?.crisis === true, "safety gate not raised");
+      const followUps = await c.query(api.followUps.getStudentFollowUps, {});
+      assert(followUps.some((f) => f.type === "screening_review" && !f.completed), "no follow-up created");
+      // Retrying the same submission must not create a second attempt or alert
+      const replay = await c.mutation(api.screening.submitScreeningAttempt, submission);
+      assert(replay.replayed === true && replay.outcome === "immediate_safety", "retry was not de-duplicated");
       await c.mutation(api.alerts.recordEmergencyScreenDismissal, {});
       await clientWith().mutation(api.users.logout, { token: s.token });
     });

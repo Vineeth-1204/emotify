@@ -230,8 +230,15 @@ describe("Deployment verification: JWT_PRIVATE_JWK", () => {
     const gad7 = Object.fromEntries(Array.from({ length: 7 }, (_, i) => [String(i + 1), 0]));
     const pq16 = Object.fromEntries(Array.from({ length: 16 }, (_, i) => [String(i + 1), 0]));
     const attempt: any = await student.mutation(api.screening.submitScreeningAttempt, { responses: { phq9, gad7, pq16 } });
-    expect(attempt.triageLevel).toBe("suicide_flag");
-    expect(attempt.followUpId).toBeTruthy();
+    // The student sees only the calm outcome; the crisis gate reads the minimal safety status.
+    expect(attempt).toEqual({ status: "submitted", outcome: "immediate_safety", replayed: false });
+    expect(await student.query(api.triage.getMySafetyStatus, {})).toMatchObject({ crisis: true });
+    const recorded = await t.run(async (ctx: any) => ({
+      attempt: (await ctx.db.query("screeningAttempts").collect())[0],
+      followUps: await ctx.db.query("followUps").collect(),
+    }));
+    expect(recorded.attempt.triageLevel).toBe("suicide_flag");
+    expect(recorded.followUps.some((f: any) => f.attemptId === recorded.attempt._id)).toBe(true);
 
     // Companion crisis message → controlled crisis response + alert, without calling the model
     const crisis: any = await student.action(api.companion.generateAIResponse, {

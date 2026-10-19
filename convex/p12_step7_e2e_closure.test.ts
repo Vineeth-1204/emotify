@@ -320,7 +320,7 @@ describe("P12 Step 7: Final Closure & End-to-End Verification", () => {
       studentBClient.query(api.counsellorRequests.getStudentCounsellorRequests, {
         userId: studentAId,
       })
-    ).rejects.toThrow(/Students can access ONLY their own clinical data/);
+    ).rejects.toThrow(/Counselor or Admin access required|Students can access ONLY/);
 
     // Student B attempting to read Student A follow-ups -> rejected
     await expect(

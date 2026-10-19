@@ -72,7 +72,7 @@ export const AvatarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const isReady = Boolean(isAuthenticated && isConvexAuthed && user?.id);
 
   const dbUser = useQuery(api.users.getByClerkId, isReady ? { clerkId: user!.id } : 'skip');
-  const latestTriage = useQuery(api.triage.getLatest, isReady ? { userId: user!.id } : 'skip');
+  const safetyStatus = useQuery(api.triage.getMySafetyStatus, isReady ? {} : 'skip');
   const userGoals = useQuery(api.microGoals.getUserGoals, isReady ? { userId: user!.id } : 'skip');
   const backendPrefs = useQuery(
     api.users.getEmotyPreferences,
@@ -207,7 +207,7 @@ export const AvatarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, [dbUser?.age]);
 
   // Section A.1: Safety State Guard
-  const isSevereTriage = latestTriage && ['suicide_flag', 'psychosis_flag', 'severe'].includes(latestTriage.level);
+  const isSevereTriage = !!safetyStatus?.elevatedSupport;
 
   useEffect(() => {
     if (isSevereTriage && !isSafetyActive) {

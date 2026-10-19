@@ -11,6 +11,7 @@ import {
   type StaffScope,
 } from "./authz";
 import { sanitizePlainText } from "./sanitizer";
+import { normaliseEmail, normalisePhone, validateNewEntryLink } from "./counsellorDirectory";
 
 // Helper to resolve patient name dynamically by userId (clerkId or user _id)
 async function getPatientName(ctx: any, userId: string): Promise<string> {
@@ -1134,14 +1135,20 @@ export const addCounsellor = mutation({
     role: v.string(),
     availability: v.array(v.string()),
     maxWorkload: v.number(),
+    userId: v.optional(v.id("users")),
   },
   handler: async (ctx, args) => {
     await requireAdmin(ctx);
+    await validateNewEntryLink(ctx, args.userId);
 
     return await ctx.db.insert("counsellors", {
+      userId: args.userId,
+      // Contact details are never shared with students until an admin approves each field.
+      shareEmailWithStudents: false,
+      sharePhoneWithStudents: false,
       name: args.name,
-      email: args.email,
-      phone: args.phone,
+      email: normaliseEmail(args.email),
+      phone: normalisePhone(args.phone),
       role: args.role,
       availability: args.availability,
       maxWorkload: args.maxWorkload,

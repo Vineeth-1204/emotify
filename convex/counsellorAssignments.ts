@@ -2,7 +2,8 @@ import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { mutation, query } from "./functions";
-import { requireAdmin, assertCanAccessStudent, getAuthenticatedUser } from "./authz";
+import { requireAdmin, requireCounselorOrAdmin, assertCanAccessStudent, getAuthenticatedUser } from "./authz";
+import { approvedContacts, directoryEntryForCounsellor } from "./counsellorDirectory";
 import { logAuditEvent } from "./audit";
 
 /**
@@ -257,10 +258,14 @@ export async function endAssignmentsForDeletedUser(ctx: MutationCtx, userId: Id<
   return { endedAsStudent: asStudent.length, endedAsCounsellor: asCounsellor.length };
 }
 
-/** Staff: the counsellor currently responsible for a student (null if unassigned). */
+/**
+ * Staff: the counsellor currently responsible for a student (null if unassigned).
+ * Staff-only: it returns internal ids. Students use getMyCounsellor.
+ */
 export const getForStudent = query({
   args: { studentId: v.id("users") },
   handler: async (ctx, args) => {
+    await requireCounselorOrAdmin(ctx);
     await assertCanAccessStudent(ctx, String(args.studentId));
     const active = await ctx.db
       .query("counsellorAssignments")
@@ -454,10 +459,11 @@ export const getMyCaseloadSize = query({
  * Student: my assigned counsellor. Identity comes only from the session; there is no
  * student argument, so a student can never read another student's assignment.
  *
- * Returns only what a student may see: the counsellor's display name, role and the
- * institution's directory contact details (the staff directory entry linked to the
- * counsellor's account, which administrators maintain for sharing). The counsellor's
- * login mobile number, account email, ids and any clinical data are never returned.
+ * Returns only what a student may see: the counsellor's display name, role, assignment
+ * date, and each institutional contact field from the linked staff-directory entry only
+ * if an admin has approved that field for students (counsellorDirectory.approvedContacts).
+ * The counsellor's login mobile number, account email, ids and any clinical data are
+ * never returned. Approval is read on every call, so revoking it takes effect at once.
  */
 export const getMyCounsellor = query({
   args: {},
@@ -476,18 +482,14 @@ export const getMyCounsellor = query({
     if (!counsellor || counsellor.role !== "counsellor") return { status: "unassigned" as const };
     if (counsellor.status === "inactive") return { status: "unavailable" as const };
 
-    const directory = await ctx.db
-      .query("counsellors")
-      .withIndex("by_userId", (q) => q.eq("userId", counsellor._id))
-      .filter((q) => q.eq(q.field("status"), "active"))
-      .first();
+    const contacts = approvedContacts(await directoryEntryForCounsellor(ctx, counsellor._id));
     return {
       status: "assigned" as const,
       counsellor: {
         displayName: counsellor.full_name || "Your counsellor",
         role: "Counsellor",
-        email: directory?.email || null,
-        phone: directory?.phone || null,
+        email: contacts.email,
+        phone: contacts.phone,
       },
       assignedAt: active.assignedAt,
     };

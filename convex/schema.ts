@@ -607,6 +607,13 @@ export default defineSchema({
     rating: v.number(),
     status: v.string(), // "active" | "inactive" | "on_leave"
     createdAt: v.number(),
+    // Student visibility of the institutional contact fields above. Each is approved
+    // separately by an admin; a missing value means NOT approved (never implies consent).
+    // Changing the stored value or the linked account clears the approval.
+    shareEmailWithStudents: v.optional(v.boolean()),
+    sharePhoneWithStudents: v.optional(v.boolean()),
+    contactApprovalUpdatedAt: v.optional(v.number()),
+    contactApprovalUpdatedBy: v.optional(v.id("users")),
   })
     .index("by_status", ["status"])
     .index("by_userId", ["userId"]),

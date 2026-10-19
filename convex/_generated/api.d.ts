@@ -19,6 +19,7 @@ import type * as clinicalScoring from "../clinicalScoring.js";
 import type * as companion from "../companion.js";
 import type * as companionQuickActions from "../companionQuickActions.js";
 import type * as counsellorAssignments from "../counsellorAssignments.js";
+import type * as counsellorDirectory from "../counsellorDirectory.js";
 import type * as counsellorRequests from "../counsellorRequests.js";
 import type * as crons from "../crons.js";
 import type * as dashboard from "../dashboard.js";
@@ -73,6 +74,7 @@ declare const fullApi: ApiFromModules<{
   companion: typeof companion;
   companionQuickActions: typeof companionQuickActions;
   counsellorAssignments: typeof counsellorAssignments;
+  counsellorDirectory: typeof counsellorDirectory;
   counsellorRequests: typeof counsellorRequests;
   crons: typeof crons;
   dashboard: typeof dashboard;

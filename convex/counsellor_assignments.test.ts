@@ -373,7 +373,7 @@ describe("student: my counsellor", () => {
     for (const secret of ["9000000001", "asha.login@example.edu", counsellorA, "triage", "alert", "phq"]) expect(text).not.toContain(secret);
   });
 
-  test("institution directory contact details are shown when linked to the counsellor's account", async () => {
+  test("linked directory contact details stay hidden until approved (see counsellor_contact_approval.test.ts)", async () => {
     const { t, admin, counsellorA, s1, as } = await setup();
     await t.run(async (ctx) => {
       await ctx.db.insert("counsellors", {
@@ -382,8 +382,9 @@ describe("student: my counsellor", () => {
       });
     });
     await as(admin).mutation(api.counsellorAssignments.assign, { studentId: s1 as any, counsellorId: counsellorA as any });
+    // Legacy entry without approval fields: linking alone never shares contact details
     const mine: any = await as(s1).query(api.counsellorAssignments.getMyCounsellor, {});
-    expect(mine.counsellor).toMatchObject({ email: "counselling@college.edu", phone: "0441234567" });
+    expect(mine.counsellor).toMatchObject({ email: null, phone: null });
   });
 
   test("unassigned, reassigned, deactivated-counsellor and non-student states", async () => {
@@ -410,6 +411,8 @@ describe("student: my counsellor", () => {
     // getMyCounsellor takes no student argument: s2 always gets s2's counsellor
     expect(((await as(s2).query(api.counsellorAssignments.getMyCounsellor, {})) as any).counsellor.displayName).toBe("Counsellor Bala");
     await expect(as(s2).query(api.counsellorAssignments.getForStudent, { studentId: s1 as any })).rejects.toThrow(/Unauthorized/);
+    // getForStudent returns internal ids, so it is staff-only even for the student's own record
+    await expect(as(s1).query(api.counsellorAssignments.getForStudent, { studentId: s1 as any })).rejects.toThrow(/Unauthorized/);
   });
 });
 

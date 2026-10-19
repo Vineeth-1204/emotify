@@ -6,6 +6,7 @@ import {
   Bell,
   BrainCircuit,
   CalendarDays,
+  Contact,
   FileText,
   Inbox,
   LayoutDashboard,
@@ -39,6 +40,11 @@ export default function DashboardLayout() {
           {isAdmin && (
             <NavLink to="/assignments" className={({ isActive }) => isActive ? "nav-item active" : "nav-item"}>
               <UserCog size={18} /> Assignments
+            </NavLink>
+          )}
+          {isAdmin && (
+            <NavLink to="/counsellors" className={({ isActive }) => isActive ? "nav-item active" : "nav-item"}>
+              <Contact size={18} /> Counsellor directory
             </NavLink>
           )}
           <NavLink to="/alerts" className={({ isActive }) => isActive ? "nav-item active" : "nav-item"}>

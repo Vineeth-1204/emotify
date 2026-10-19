@@ -14,12 +14,19 @@
  *      reactivation allows a fresh login.
  *   7. (optional, creates real alerts - DEV deployments only) PHQ-9 item 9 raises a
  *      suicide flag + follow-up, and an emergency-screen dismissal is recorded.
+ *   8. (optional, needs admin + counsellor test accounts) Caseload authorization: the
+ *      counsellor is refused while the test student is unassigned and allowed once
+ *      assigned; the student's My Counsellor shows the counsellor without login details.
+ *      With VERIFY_DIRECTORY_ENTRY_ID (the test counsellor's directory entry), approving
+ *      and revoking the institutional email takes effect on the next student read.
+ *      The previous assignment and approval state are restored afterwards.
  *
  * Usage (use a dedicated TEST student account, never a real student):
  *   CONVEX_URL=https://<deployment>.convex.cloud \
  *   VERIFY_STUDENT_MOBILE=... VERIFY_STUDENT_PASSWORD=... \
  *   [VERIFY_ADMIN_MOBILE=... VERIFY_ADMIN_PASSWORD=...] \
  *   [VERIFY_SAFETY=1] \
+ *   [VERIFY_COUNSELLOR_MOBILE=... VERIFY_COUNSELLOR_PASSWORD=... [VERIFY_DIRECTORY_ENTRY_ID=...]] \
  *   node scripts/verify-deployment.mjs
  *
  * Signing in as the admin here signs that admin out of other devices (one session per user).
@@ -37,6 +44,8 @@ const SITE_URL = process.env.CONVEX_SITE_URL || CONVEX_URL?.replace(/\.convex\.c
 const STUDENT = { mobile: process.env.VERIFY_STUDENT_MOBILE, password: process.env.VERIFY_STUDENT_PASSWORD };
 const ADMIN = { mobile: process.env.VERIFY_ADMIN_MOBILE, password: process.env.VERIFY_ADMIN_PASSWORD };
 const RUN_SAFETY = process.env.VERIFY_SAFETY === "1";
+const COUNSELLOR = { mobile: process.env.VERIFY_COUNSELLOR_MOBILE, password: process.env.VERIFY_COUNSELLOR_PASSWORD };
+const DIRECTORY_ENTRY_ID = process.env.VERIFY_DIRECTORY_ENTRY_ID;
 const OLD_STATIC_KID = "static-key-1";
 
 if (!CONVEX_URL || !STUDENT.mobile || !STUDENT.password) {
@@ -201,6 +210,60 @@ async function main() {
     console.log("NOTE  safety check created a real alert for the test student; resolve it in the dashboard.");
   } else {
     console.log("SKIP  safety flow (set VERIFY_SAFETY=1 on a DEV deployment; it creates real alerts)");
+  }
+
+  if (ADMIN.mobile && ADMIN.password && COUNSELLOR.mobile && COUNSELLOR.password) {
+    await check("caseload authorization, My Counsellor and contact approval", async () => {
+      const admin = await login(ADMIN);
+      assert(admin?.token, admin?.error || "admin login failed");
+      const student = await login(STUDENT);
+      assert(student?.token, student?.error || "student login failed");
+      const counsellor = await login(COUNSELLOR);
+      assert(counsellor?.token, counsellor?.error || "counsellor login failed");
+      const studentId = claimsOf(student.token).sub;
+      const counsellorId = claimsOf(counsellor.token).sub;
+      const asAdmin = clientWith(admin.token);
+      const asStudent = clientWith(student.token);
+      const asCounsellor = clientWith(counsellor.token);
+      const counsellorCanRead = async () => {
+        try {
+          await asCounsellor.query(api.screening.getAll, { userId: studentId });
+          return true;
+        } catch {
+          return false;
+        }
+      };
+
+      const previous = await asAdmin.query(api.counsellorAssignments.getForStudent, { studentId });
+      const entry = DIRECTORY_ENTRY_ID ? (await asAdmin.query(api.counsellorDirectory.listForAdmin, {})).find((e) => e._id === DIRECTORY_ENTRY_ID) : null;
+      if (DIRECTORY_ENTRY_ID) assert(entry && entry.linkedAccount && String(entry.linkedAccount._id) === counsellorId, "VERIFY_DIRECTORY_ENTRY_ID is not linked to the test counsellor");
+      try {
+        await asAdmin.mutation(api.counsellorAssignments.unassign, { studentId });
+        assert(!(await counsellorCanRead()), "counsellor can read an unassigned student's records");
+        assert((await asStudent.query(api.counsellorAssignments.getMyCounsellor, {})).status === "unassigned", "student not shown as unassigned");
+
+        await asAdmin.mutation(api.counsellorAssignments.assign, { studentId, counsellorId });
+        assert(await counsellorCanRead(), "assigned counsellor cannot read the student's records");
+        const mine = await asStudent.query(api.counsellorAssignments.getMyCounsellor, {});
+        assert(mine.status === "assigned", `My Counsellor status is ${mine.status}`);
+        const text = JSON.stringify(mine);
+        assert(!text.includes(COUNSELLOR.mobile) && !text.includes(counsellorId), "student response contains login or id details");
+
+        if (entry) {
+          await asAdmin.mutation(api.counsellorDirectory.setContactVisibility, { entryId: entry._id, field: "email", visible: true });
+          assert((await asStudent.query(api.counsellorAssignments.getMyCounsellor, {})).counsellor.email === (entry.email.trim() || null), "approved email not shown");
+          await asAdmin.mutation(api.counsellorDirectory.setContactVisibility, { entryId: entry._id, field: "email", visible: false });
+          assert((await asStudent.query(api.counsellorAssignments.getMyCounsellor, {})).counsellor.email === null, "revoked email still shown");
+        }
+      } finally {
+        if (entry) await asAdmin.mutation(api.counsellorDirectory.setContactVisibility, { entryId: entry._id, field: "email", visible: entry.shareEmailWithStudents });
+        if (previous && previous.counsellorActive) await asAdmin.mutation(api.counsellorAssignments.assign, { studentId, counsellorId: previous.counsellorId });
+        else await asAdmin.mutation(api.counsellorAssignments.unassign, { studentId });
+        for (const t of [student.token, counsellor.token, admin.token]) await clientWith().mutation(api.users.logout, { token: t });
+      }
+    });
+  } else {
+    console.log("SKIP  caseload flow (set VERIFY_ADMIN_* and VERIFY_COUNSELLOR_MOBILE / VERIFY_COUNSELLOR_PASSWORD)");
   }
 
   console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) failed.`);

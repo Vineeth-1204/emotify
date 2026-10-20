@@ -3,6 +3,8 @@ import { internalAction, internalMutation, internalQuery } from "./_generated/se
 import { internal } from "./_generated/api";
 import { pushCopyFor } from "./notify";
 import { MOBILE_DESTINATION_ROUTES, isNotificationDestination, type NotificationDestination } from "../common/notificationRoutes";
+import { readStoredEmotyPreferences } from "../common/companionName";
+import { resolveAvatarCharacterId, getNotificationAvatarUrl } from "../common/avatarNotification";
 
 const FORBIDDEN_LOCKSCREEN_TERMS =
   /depress|anxiety disorder|psychos|suicid|risk|score|symptom|severe|crisis|emergency|attempt|diagnos/i;
@@ -27,6 +29,9 @@ export interface ExpoPushMessage {
   channelId?: string;
   data?: Record<string, any>;
   priority?: "default" | "normal" | "high";
+  richContent?: {
+    image?: string;
+  };
 }
 
 const EXPO_PUSH_SEND_URL = "https://exp.host/--/api/v2/push/send";
@@ -127,11 +132,14 @@ export const getDeliveryContext = internalQuery({
     const tokens = recipient
       ? (await ctx.db.query("pushTokens").withIndex("by_userId", (q) => q.eq("userId", String(recipient._id))).take(20)).map((t) => t.token)
       : [];
+    const prefs = recipient ? readStoredEmotyPreferences(recipient) : undefined;
     return {
       type: n.type,
       destination: n.destination,
       pushStatus: n.pushStatus,
       recipientActive: !!recipient && recipient.status !== "inactive",
+      recipientRole: recipient?.role ?? null,
+      avatarGender: prefs?.avatarGender ?? null,
       tokens,
     };
   },
@@ -282,6 +290,12 @@ export const deliverNotification = internalAction({
     const destination: NotificationDestination = isNotificationDestination(delivery.destination) ? delivery.destination : "notifications";
     // Only ids and a destination key travel in the payload; `route` is for older app builds.
     const data = { notificationId: String(args.notificationId), destination, route: MOBILE_DESTINATION_ROUTES[destination] };
+
+    // Resolve student's selected avatar (boy or girl). Non-student roles or missing preferences fall back to standard app icon.
+    const isStudent = delivery.recipientRole === "student" || !delivery.recipientRole;
+    const avatarCharacter = isStudent ? resolveAvatarCharacterId(delivery.avatarGender) : null;
+    const avatarUrl = getNotificationAvatarUrl(avatarCharacter, process.env.CONVEX_SITE_URL);
+
     const messages: ExpoPushMessage[] = delivery.tokens.map((to: string) => ({
       to,
       title: copy.title,
@@ -290,6 +304,7 @@ export const deliverNotification = internalAction({
       channelId: copy.channelId,
       data,
       priority: copy.channelId === "default" ? "default" : "high",
+      ...(avatarUrl ? { richContent: { image: avatarUrl } } : {}),
     }));
 
     const outcome = await sendToExpo(messages);
@@ -357,6 +372,18 @@ export const checkReceipts = internalAction({
   },
 });
 
+/** Internal query to resolve a user's companion avatar gender for push actions */
+export const getUserAvatarGender = internalQuery({
+  args: { userId: v.string() },
+  handler: async (ctx, args) => {
+    const id = ctx.db.normalizeId("users", args.userId);
+    const user = id ? await ctx.db.get(id) : null;
+    if (!user || (user.role && user.role !== "student")) return null;
+    const prefs = readStoredEmotyPreferences(user);
+    return prefs?.avatarGender ?? null;
+  },
+});
+
 /**
  * Server-side Action: Dispatches privacy-safe mobile push notifications via the Expo Push API.
  * Kept for direct server use; business events go through notify.createNotification, which
@@ -369,6 +396,7 @@ export const sendPushNotification = internalAction({
     body: v.string(),
     data: v.optional(v.any()),
     channelId: v.optional(v.string()), // "default" | "appointments" | "important" | "reminders"
+    avatarGender: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     // 1. Content Privacy Check
@@ -387,6 +415,14 @@ export const sendPushNotification = internalAction({
       return { status: "no_tokens", sentCount: 0 };
     }
 
+    // 3. Resolve student's selected avatar (boy or girl)
+    const rawGender =
+      args.avatarGender !== undefined
+        ? args.avatarGender
+        : await ctx.runQuery(internal.pushNotifications.getUserAvatarGender, { userId: args.userId });
+    const avatarCharacter = resolveAvatarCharacterId(rawGender);
+    const avatarUrl = getNotificationAvatarUrl(avatarCharacter, process.env.CONVEX_SITE_URL);
+
     const messages: ExpoPushMessage[] = tokens.map((token) => ({
       to: token,
       title: args.title,
@@ -395,6 +431,7 @@ export const sendPushNotification = internalAction({
       channelId: args.channelId || "default",
       data: args.data || {},
       priority: "high",
+      ...(avatarUrl ? { richContent: { image: avatarUrl } } : {}),
     }));
 
     const outcome = await sendToExpo(messages);

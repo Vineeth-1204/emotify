@@ -1,6 +1,7 @@
 import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
 import { getPublicJwk, getJwtIssuer } from "./authHelpers";
+import { getAvatarBytes } from "./avatarMedia";
 
 const http = httpRouter();
 
@@ -57,6 +58,50 @@ http.route({
       headers: getCorsHeaders(),
     });
   }),
+});
+
+function avatarResponse(character: "boy" | "girl"): Response {
+  const bytes = getAvatarBytes(character);
+  if (!bytes) {
+    return new Response(JSON.stringify({ error: "Avatar not found" }), {
+      status: 404,
+      headers: getCorsHeaders(),
+    });
+  }
+  return new Response(bytes as unknown as BodyInit, {
+    status: 200,
+    headers: {
+      "Content-Type": "image/jpeg",
+      "Content-Length": String(bytes.byteLength),
+      "Cache-Control": "public, max-age=31536000, immutable",
+      "Access-Control-Allow-Origin": "*",
+    },
+  });
+}
+
+// Notification avatar delivery for boy and girl Emotify characters
+http.route({
+  path: "/api/avatar/boy",
+  method: "GET",
+  handler: httpAction(async () => avatarResponse("boy")),
+});
+
+http.route({
+  path: "/api/avatar/boy.jpg",
+  method: "GET",
+  handler: httpAction(async () => avatarResponse("boy")),
+});
+
+http.route({
+  path: "/api/avatar/girl",
+  method: "GET",
+  handler: httpAction(async () => avatarResponse("girl")),
+});
+
+http.route({
+  path: "/api/avatar/girl.jpg",
+  method: "GET",
+  handler: httpAction(async () => avatarResponse("girl")),
 });
 
 export default http;

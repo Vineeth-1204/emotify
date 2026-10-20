@@ -168,7 +168,7 @@ describe("live-push flag", () => {
   test("accepts common spellings outside tests and nothing else", () => {
     const original = process.env.NODE_ENV;
     try {
-      process.env.NODE_ENV = "production";
+      (process.env as any).NODE_ENV = "production";
       for (const value of ["true", "TRUE", " true ", "1", "yes", "on"]) {
         process.env.EXPO_PUSH_LIVE = value;
         expect(isLivePushEnabled(), value).toBe(true);
@@ -178,11 +178,11 @@ describe("live-push flag", () => {
         expect(isLivePushEnabled(), value).toBe(false);
       }
       // Under tests only the explicit stub value turns it on, so tests never reach the real API.
-      process.env.NODE_ENV = "test";
+      (process.env as any).NODE_ENV = "test";
       process.env.EXPO_PUSH_LIVE = "true";
       expect(isLivePushEnabled()).toBe(false);
     } finally {
-      process.env.NODE_ENV = original;
+      (process.env as any).NODE_ENV = original;
     }
   });
 });

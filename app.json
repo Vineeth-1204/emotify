@@ -56,8 +56,7 @@
       [
         "expo-notifications",
         {
-          "icon": "./assets/splash-icon.png",
-          "color": "#6366F1"
+          "icon": "./assets/notification-icon.png"
         }
       ]
     ],

@@ -197,8 +197,8 @@ describe("Phase 2: Push Message Payload Construction with Rich Content", () => {
   });
 });
 
-describe("Phase 2 & 3: End-to-End Notification Delivery with Avatar", () => {
-  test("AVATAR-DELIVERY-01: deliverNotification includes boy avatar URL for student with male preference", async () => {
+describe("Phase 2 & 3: End-to-End Notification Delivery with Brand Icon", () => {
+  test("BRAND-NOTIF-01: deliverNotification delivers appointment-status notification with brand icon", async () => {
     vi.useFakeTimers();
     process.env.EXPO_PUSH_LIVE = "stubbed-fetch";
     const sent: any[] = [];
@@ -206,7 +206,7 @@ describe("Phase 2 & 3: End-to-End Notification Delivery with Avatar", () => {
       if (url.includes("/api/v2/push/send")) {
         const body = JSON.parse(init.body);
         sent.push(...body);
-        return new Response(JSON.stringify({ data: body.map(() => ({ status: "ok", id: "ticket-boy-1" })) }), { status: 200 });
+        return new Response(JSON.stringify({ data: body.map(() => ({ status: "ok", id: "ticket-appt-1" })) }), { status: 200 });
       }
       return new Response("{}", { status: 200 });
     });
@@ -214,194 +214,7 @@ describe("Phase 2 & 3: End-to-End Notification Delivery with Avatar", () => {
     const t = convexTest(schema, modules);
     const student = await t.run(async (ctx) => {
       const u = await ctx.db.insert("users", {
-        full_name: "Student Boy",
-        role: "student",
-        status: "active",
-        created_at: Date.now(),
-        mitraPreferences: { name: "Emoty", avatarGender: "male" },
-      });
-      await ctx.db.insert("pushTokens", {
-        userId: u,
-        token: "ExponentPushToken[boy_student_token]",
-        platform: "android",
-        updatedAt: Date.now(),
-      });
-      return u;
-    });
-
-    await t.run(async (ctx) => {
-      await createNotification(ctx, {
-        recipientId: student,
-        type: "appointment_confirmed",
-        title: "In-App Title",
-        message: "In-app message",
-      });
-    });
-
-    await t.finishAllScheduledFunctions(vi.runAllTimers);
-
-    expect(sent.length).toBe(1);
-    expect(sent[0].richContent?.image).toBe("https://emotify-test.convex.site/api/avatar/boy.jpg");
-    expect(sent[0].body).toBe("Your appointment status has changed.");
-  });
-
-  test("AVATAR-DELIVERY-02: deliverNotification includes girl avatar URL for student with female preference", async () => {
-    vi.useFakeTimers();
-    process.env.EXPO_PUSH_LIVE = "stubbed-fetch";
-    const sent: any[] = [];
-    vi.stubGlobal("fetch", async (url: string, init?: any) => {
-      if (url.includes("/api/v2/push/send")) {
-        const body = JSON.parse(init.body);
-        sent.push(...body);
-        return new Response(JSON.stringify({ data: body.map(() => ({ status: "ok", id: "ticket-girl-1" })) }), { status: 200 });
-      }
-      return new Response("{}", { status: 200 });
-    });
-
-    const t = convexTest(schema, modules);
-    const student = await t.run(async (ctx) => {
-      const u = await ctx.db.insert("users", {
-        full_name: "Student Girl",
-        role: "student",
-        status: "active",
-        created_at: Date.now(),
-        mitraPreferences: { name: "Emoty", avatarGender: "female" },
-      });
-      await ctx.db.insert("pushTokens", {
-        userId: u,
-        token: "ExponentPushToken[girl_student_token]",
-        platform: "android",
-        updatedAt: Date.now(),
-      });
-      return u;
-    });
-
-    await t.run(async (ctx) => {
-      await createNotification(ctx, {
-        recipientId: student,
-        type: "appointment_confirmed",
-        title: "In-App Title",
-        message: "In-app message",
-      });
-    });
-
-    await t.finishAllScheduledFunctions(vi.runAllTimers);
-
-    expect(sent.length).toBe(1);
-    expect(sent[0].richContent?.image).toBe("https://emotify-test.convex.site/api/avatar/girl.jpg");
-    expect(sent[0].body).toBe("Your appointment status has changed.");
-  });
-
-  test("AVATAR-DELIVERY-03: deliverNotification cleanly falls back to standard icon when student has no avatar preference", async () => {
-    vi.useFakeTimers();
-    process.env.EXPO_PUSH_LIVE = "stubbed-fetch";
-    const sent: any[] = [];
-    vi.stubGlobal("fetch", async (url: string, init?: any) => {
-      if (url.includes("/api/v2/push/send")) {
-        const body = JSON.parse(init.body);
-        sent.push(...body);
-        return new Response(JSON.stringify({ data: body.map(() => ({ status: "ok", id: "ticket-nopref-1" })) }), { status: 200 });
-      }
-      return new Response("{}", { status: 200 });
-    });
-
-    const t = convexTest(schema, modules);
-    const student = await t.run(async (ctx) => {
-      const u = await ctx.db.insert("users", {
-        full_name: "Student No Pref",
-        role: "student",
-        status: "active",
-        created_at: Date.now(),
-      });
-      await ctx.db.insert("pushTokens", {
-        userId: u,
-        token: "ExponentPushToken[nopref_student_token]",
-        platform: "android",
-        updatedAt: Date.now(),
-      });
-      return u;
-    });
-
-    await t.run(async (ctx) => {
-      await createNotification(ctx, {
-        recipientId: student,
-        type: "appointment_confirmed",
-        title: "In-App Title",
-        message: "In-app message",
-      });
-    });
-
-    await t.finishAllScheduledFunctions(vi.runAllTimers);
-
-    expect(sent.length).toBe(1);
-    expect(sent[0].richContent).toBeUndefined();
-    expect(sent[0].body).toBe("Your appointment status has changed.");
-  });
-
-  test("AVATAR-DELIVERY-04: deliverNotification cleanly falls back to standard icon for counsellor recipient", async () => {
-    vi.useFakeTimers();
-    process.env.EXPO_PUSH_LIVE = "stubbed-fetch";
-    const sent: any[] = [];
-    vi.stubGlobal("fetch", async (url: string, init?: any) => {
-      if (url.includes("/api/v2/push/send")) {
-        const body = JSON.parse(init.body);
-        sent.push(...body);
-        return new Response(JSON.stringify({ data: body.map(() => ({ status: "ok", id: "ticket-counsellor-1" })) }), { status: 200 });
-      }
-      return new Response("{}", { status: 200 });
-    });
-
-    const t = convexTest(schema, modules);
-    const counsellor = await t.run(async (ctx) => {
-      const u = await ctx.db.insert("users", {
-        full_name: "Counsellor Alice",
-        role: "counsellor",
-        status: "active",
-        created_at: Date.now(),
-        mitraPreferences: { name: "Emoty", avatarGender: "female" },
-      });
-      await ctx.db.insert("pushTokens", {
-        userId: u,
-        token: "ExponentPushToken[counsellor_token]",
-        platform: "android",
-        updatedAt: Date.now(),
-      });
-      return u;
-    });
-
-    await t.run(async (ctx) => {
-      await createNotification(ctx, {
-        recipientId: counsellor,
-        type: "appointment_request_received",
-        title: "In-App Title",
-        message: "In-app message",
-      });
-    });
-
-    await t.finishAllScheduledFunctions(vi.runAllTimers);
-
-    expect(sent.length).toBe(1);
-    expect(sent[0].richContent).toBeUndefined();
-    expect(sent[0].body).toBe("You have a new appointment request.");
-  });
-
-  test("AVATAR-DELIVERY-05: deliverNotification includes boy avatar URL for production student with role 'patient'", async () => {
-    vi.useFakeTimers();
-    process.env.EXPO_PUSH_LIVE = "stubbed-fetch";
-    const sent: any[] = [];
-    vi.stubGlobal("fetch", async (url: string, init?: any) => {
-      if (url.includes("/api/v2/push/send")) {
-        const body = JSON.parse(init.body);
-        sent.push(...body);
-        return new Response(JSON.stringify({ data: body.map(() => ({ status: "ok", id: "ticket-patient-boy-1" })) }), { status: 200 });
-      }
-      return new Response("{}", { status: 200 });
-    });
-
-    const t = convexTest(schema, modules);
-    const student = await t.run(async (ctx) => {
-      const u = await ctx.db.insert("users", {
-        full_name: "Patient Boy",
+        full_name: "Student User",
         role: "patient",
         status: "active",
         created_at: Date.now(),
@@ -409,7 +222,7 @@ describe("Phase 2 & 3: End-to-End Notification Delivery with Avatar", () => {
       });
       await ctx.db.insert("pushTokens", {
         userId: u,
-        token: "ExponentPushToken[patient_boy_token]",
+        token: "ExponentPushToken[student_token_1]",
         platform: "android",
         updatedAt: Date.now(),
       });
@@ -428,11 +241,12 @@ describe("Phase 2 & 3: End-to-End Notification Delivery with Avatar", () => {
     await t.finishAllScheduledFunctions(vi.runAllTimers);
 
     expect(sent.length).toBe(1);
-    expect(sent[0].richContent?.image).toBe("https://emotify-test.convex.site/api/avatar/boy.jpg");
+    expect(sent[0].richContent).toBeUndefined(); // Uses authoritative brand logo notification icon
+    expect(sent[0].channelId).toBe("appointments");
     expect(sent[0].body).toBe("Your appointment status has changed.");
   });
 
-  test("AVATAR-DELIVERY-06: deliverNotification includes girl avatar URL for production student with role 'patient'", async () => {
+  test("BRAND-NOTIF-02: deliverNotification delivers general-update notification with brand icon", async () => {
     vi.useFakeTimers();
     process.env.EXPO_PUSH_LIVE = "stubbed-fetch";
     const sent: any[] = [];
@@ -440,7 +254,7 @@ describe("Phase 2 & 3: End-to-End Notification Delivery with Avatar", () => {
       if (url.includes("/api/v2/push/send")) {
         const body = JSON.parse(init.body);
         sent.push(...body);
-        return new Response(JSON.stringify({ data: body.map(() => ({ status: "ok", id: "ticket-patient-girl-1" })) }), { status: 200 });
+        return new Response(JSON.stringify({ data: body.map(() => ({ status: "ok", id: "ticket-gen-1" })) }), { status: 200 });
       }
       return new Response("{}", { status: 200 });
     });
@@ -448,7 +262,7 @@ describe("Phase 2 & 3: End-to-End Notification Delivery with Avatar", () => {
     const t = convexTest(schema, modules);
     const student = await t.run(async (ctx) => {
       const u = await ctx.db.insert("users", {
-        full_name: "Patient Girl",
+        full_name: "Student User",
         role: "patient",
         status: "active",
         created_at: Date.now(),
@@ -456,7 +270,7 @@ describe("Phase 2 & 3: End-to-End Notification Delivery with Avatar", () => {
       });
       await ctx.db.insert("pushTokens", {
         userId: u,
-        token: "ExponentPushToken[patient_girl_token]",
+        token: "ExponentPushToken[student_token_2]",
         platform: "android",
         updatedAt: Date.now(),
       });
@@ -475,11 +289,12 @@ describe("Phase 2 & 3: End-to-End Notification Delivery with Avatar", () => {
     await t.finishAllScheduledFunctions(vi.runAllTimers);
 
     expect(sent.length).toBe(1);
-    expect(sent[0].richContent?.image).toBe("https://emotify-test.convex.site/api/avatar/girl.jpg");
+    expect(sent[0].richContent).toBeUndefined(); // Uses authoritative brand logo notification icon
+    expect(sent[0].channelId).toBe("default");
     expect(sent[0].body).toBe("You have an update from Emotify.");
   });
 
-  test("AVATAR-DELIVERY-07: deliverNotification reflects dynamic avatar change immediately on subsequent notifications", async () => {
+  test("BRAND-NOTIF-03: deliverNotification delivers routine reminder notification with brand icon", async () => {
     vi.useFakeTimers();
     process.env.EXPO_PUSH_LIVE = "stubbed-fetch";
     const sent: any[] = [];
@@ -487,7 +302,7 @@ describe("Phase 2 & 3: End-to-End Notification Delivery with Avatar", () => {
       if (url.includes("/api/v2/push/send")) {
         const body = JSON.parse(init.body);
         sent.push(...body);
-        return new Response(JSON.stringify({ data: body.map(() => ({ status: "ok", id: `ticket-${sent.length}` })) }), { status: 200 });
+        return new Response(JSON.stringify({ data: body.map(() => ({ status: "ok", id: "ticket-routine-1" })) }), { status: 200 });
       }
       return new Response("{}", { status: 200 });
     });
@@ -495,131 +310,34 @@ describe("Phase 2 & 3: End-to-End Notification Delivery with Avatar", () => {
     const t = convexTest(schema, modules);
     const student = await t.run(async (ctx) => {
       const u = await ctx.db.insert("users", {
-        full_name: "Morphing Student",
+        full_name: "Morning Student",
         role: "patient",
         status: "active",
         created_at: Date.now(),
-        mitraPreferences: { name: "Emoty", avatarGender: "male" },
       });
       await ctx.db.insert("pushTokens", {
         userId: u,
-        token: "ExponentPushToken[morph_token]",
+        token: "ExponentPushToken[student_routine_token]",
         platform: "android",
         updatedAt: Date.now(),
       });
       return u;
     });
 
-    // 1st notification: male preference -> boy avatar
     await t.run(async (ctx) => {
       await createNotification(ctx, {
         recipientId: student,
-        type: "appointment_confirmed",
-        title: "First",
-        message: "First notification",
+        type: "routine_morning",
+        title: "Morning Routine",
+        message: "Time for your morning affirmation.",
       });
     });
+
     await t.finishAllScheduledFunctions(vi.runAllTimers);
 
     expect(sent.length).toBe(1);
-    expect(sent[0].richContent?.image).toBe("https://emotify-test.convex.site/api/avatar/boy.jpg");
-
-    // Student changes avatar preference in profile to female
-    await t.run(async (ctx) => {
-      await ctx.db.patch(student, {
-        mitraPreferences: { name: "Emoty", avatarGender: "female" },
-      });
-    });
-
-    // 2nd notification: newly selected female preference -> girl avatar
-    await t.run(async (ctx) => {
-      await createNotification(ctx, {
-        recipientId: student,
-        type: "counsellor_assigned",
-        title: "Second",
-        message: "Second notification after profile update",
-      });
-    });
-    await t.finishAllScheduledFunctions(vi.runAllTimers);
-
-    expect(sent.length).toBe(2);
-    expect(sent[1].richContent?.image).toBe("https://emotify-test.convex.site/api/avatar/girl.jpg");
-  });
-
-  test("AVATAR-DELIVERY-08: Multi-user isolation - Student A (boy) and Student B (girl) notifications never cross over", async () => {
-    vi.useFakeTimers();
-    process.env.EXPO_PUSH_LIVE = "stubbed-fetch";
-    const sent: any[] = [];
-    vi.stubGlobal("fetch", async (url: string, init?: any) => {
-      if (url.includes("/api/v2/push/send")) {
-        const body = JSON.parse(init.body);
-        sent.push(...body);
-        return new Response(JSON.stringify({ data: body.map(() => ({ status: "ok", id: `ticket-${sent.length}` })) }), { status: 200 });
-      }
-      return new Response("{}", { status: 200 });
-    });
-
-    const t = convexTest(schema, modules);
-    const [studentA, studentB] = await t.run(async (ctx) => {
-      const a = await ctx.db.insert("users", {
-        full_name: "Student A",
-        role: "patient",
-        status: "active",
-        created_at: Date.now(),
-        mitraPreferences: { name: "Emoty", avatarGender: "male" },
-      });
-      await ctx.db.insert("pushTokens", {
-        userId: a,
-        token: "ExponentPushToken[student_a_token]",
-        platform: "android",
-        updatedAt: Date.now(),
-      });
-
-      const b = await ctx.db.insert("users", {
-        full_name: "Student B",
-        role: "patient",
-        status: "active",
-        created_at: Date.now(),
-        mitraPreferences: { name: "Emoty", avatarGender: "female" },
-      });
-      await ctx.db.insert("pushTokens", {
-        userId: b,
-        token: "ExponentPushToken[student_b_token]",
-        platform: "android",
-        updatedAt: Date.now(),
-      });
-
-      return [a, b];
-    });
-
-    // Notify Student A
-    await t.run(async (ctx) => {
-      await createNotification(ctx, {
-        recipientId: studentA,
-        type: "appointment_confirmed",
-        title: "For A",
-        message: "Notice for A",
-      });
-    });
-
-    // Notify Student B
-    await t.run(async (ctx) => {
-      await createNotification(ctx, {
-        recipientId: studentB,
-        type: "counsellor_assigned",
-        title: "For B",
-        message: "Notice for B",
-      });
-    });
-
-    await t.finishAllScheduledFunctions(vi.runAllTimers);
-
-    expect(sent.length).toBe(2);
-    // Student A receives Boy avatar
-    expect(sent[0].to).toBe("ExponentPushToken[student_a_token]");
-    expect(sent[0].richContent?.image).toBe("https://emotify-test.convex.site/api/avatar/boy.jpg");
-    // Student B receives Girl avatar
-    expect(sent[1].to).toBe("ExponentPushToken[student_b_token]");
-    expect(sent[1].richContent?.image).toBe("https://emotify-test.convex.site/api/avatar/girl.jpg");
+    expect(sent[0].richContent).toBeUndefined();
+    expect(sent[0].channelId).toBe("reminders");
+    expect(sent[0].body).toBe("Time for your morning affirmation. Set an intention for today.");
   });
 });

@@ -41,7 +41,6 @@ export async function ensureNotificationChannels(): Promise<void> {
       name: channel.name,
       importance: channel.importance,
       vibrationPattern: [0, 250, 250, 250],
-      lightColor: "#6366F1",
       // Content stays hidden on a locked screen unless the user's system settings allow it.
       lockscreenVisibility: Notifications.AndroidNotificationVisibility.PRIVATE,
     });

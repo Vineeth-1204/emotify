@@ -291,11 +291,6 @@ export const deliverNotification = internalAction({
     // Only ids and a destination key travel in the payload; `route` is for older app builds.
     const data = { notificationId: String(args.notificationId), destination, route: MOBILE_DESTINATION_ROUTES[destination] };
 
-    // Resolve student's selected avatar (boy or girl). Non-student roles or missing preferences fall back to standard app icon.
-    const isStudent = isStudentUserRole(delivery.recipientRole);
-    const avatarCharacter = isStudent ? resolveAvatarCharacterId(delivery.avatarGender) : null;
-    const avatarUrl = getNotificationAvatarUrl(avatarCharacter, process.env.CONVEX_SITE_URL);
-
     const messages: ExpoPushMessage[] = delivery.tokens.map((to: string) => ({
       to,
       title: copy.title,
@@ -304,7 +299,6 @@ export const deliverNotification = internalAction({
       channelId: copy.channelId,
       data,
       priority: copy.channelId === "default" ? "default" : "high",
-      ...(avatarUrl ? { richContent: { image: avatarUrl } } : {}),
     }));
 
     const outcome = await sendToExpo(messages);
@@ -415,14 +409,6 @@ export const sendPushNotification = internalAction({
       return { status: "no_tokens", sentCount: 0 };
     }
 
-    // 3. Resolve student's selected avatar (boy or girl)
-    const rawGender =
-      args.avatarGender !== undefined
-        ? args.avatarGender
-        : await ctx.runQuery(internal.pushNotifications.getUserAvatarGender, { userId: args.userId });
-    const avatarCharacter = resolveAvatarCharacterId(rawGender);
-    const avatarUrl = getNotificationAvatarUrl(avatarCharacter, process.env.CONVEX_SITE_URL);
-
     const messages: ExpoPushMessage[] = tokens.map((token) => ({
       to: token,
       title: args.title,
@@ -431,7 +417,6 @@ export const sendPushNotification = internalAction({
       channelId: args.channelId || "default",
       data: args.data || {},
       priority: "high",
-      ...(avatarUrl ? { richContent: { image: avatarUrl } } : {}),
     }));
 
     const outcome = await sendToExpo(messages);

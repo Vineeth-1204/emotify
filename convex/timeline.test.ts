@@ -286,7 +286,7 @@ describe("Priority 4 Step 5A: Clinical Timeline Backend Suite (TIMELINE-01 to TI
     // Clinical timeline is a staff-only read; inspect it as an admin.
     const staff = await staffViewer(t);
 
-    const alertId = await authedA.mutation(internal.alerts.createAlert, {
+    const alertId = await authedA.mutation(internal.alerts.createIndependentAlert, {
       type: "manual_sos",
     });
 

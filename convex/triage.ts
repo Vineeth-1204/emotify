@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./functions";
-import { assertCanAccessStudent, requireCounselorOrAdmin, getSelfStudent } from "./authz";
+import { assertCanAccessStudent, requireCounselorOrAdmin, getSelfStudent, legacySelfStudent } from "./authz";
+import { legacyTriageLevel } from "../common/legacyClientCompat";
 
 /** Get latest triage for a specific user (used by admin or given userId) */
 export const getLatestByUserId = query({
@@ -115,6 +116,16 @@ export const unblockPatient = mutation({
 export const getLatest = query({
   args: { userId: v.optional(v.string()) },
   handler: async (ctx, args) => {
+    // Legacy-client compatibility: older app builds read their own triage here for the crisis
+    // gate, forced-retest redirect and Home. They get only the reduced level (no id, flags or
+    // timestamps); see common/legacyClientCompat.ts. New builds use getMySafetyStatus.
+    const legacy = await legacySelfStudent(ctx, args.userId);
+    if (legacy) {
+      console.log("[legacy-client] triage.getLatest");
+      const level = legacyTriageLevel((await latestTriageFor(ctx, legacy.keys))?.level);
+      return level ? { level } : null;
+    }
+
     // Staff-only clinical read: students use the minimal self-service endpoints instead.
     await requireCounselorOrAdmin(ctx);
     const identity = await ctx.auth.getUserIdentity();
@@ -193,12 +204,7 @@ export const getMySafetyStatus = query({
   handler: async (ctx) => {
     const self = await getSelfStudent(ctx);
     if (!self) return null;
-    let latest: any = null;
-    for (const key of self.keys) {
-      const row = await ctx.db.query("triages").withIndex("by_userId", (q) => q.eq("userId", key)).order("desc").first();
-      if (row && (!latest || row._creationTime > latest._creationTime)) latest = row;
-    }
-    const level: string | undefined = latest?.level;
+    const level: string | undefined = (await latestTriageFor(ctx, self.keys))?.level;
     return {
       crisis: level === "suicide_flag",
       forceRetest: level === "force_retest",
@@ -207,12 +213,17 @@ export const getMySafetyStatus = query({
   },
 });
 
-/** Server-side: the student's latest triage id, for provenance links the client no longer sees. */
-export async function latestTriageIdFor(ctx: { db: any }, keys: string[]) {
+/** The student's latest triage across all keys their records may be stored under. */
+async function latestTriageFor(ctx: { db: any }, keys: string[]) {
   let latest: any = null;
   for (const key of keys) {
     const row = await ctx.db.query("triages").withIndex("by_userId", (q: any) => q.eq("userId", key)).order("desc").first();
     if (row && (!latest || row._creationTime > latest._creationTime)) latest = row;
   }
-  return latest?._id ?? undefined;
+  return latest;
+}
+
+/** Server-side: the student's latest triage id, for provenance links the client no longer sees. */
+export async function latestTriageIdFor(ctx: { db: any }, keys: string[]) {
+  return (await latestTriageFor(ctx, keys))?._id ?? undefined;
 }

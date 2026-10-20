@@ -2,10 +2,11 @@ import { v } from "convex/values";
 import { internalMutation } from "./_generated/server";
 import { mutation, query } from "./functions";
 import { internal } from "./_generated/api";
-import { assertCanAccessStudent, requireCounselorOrAdmin, getStaffRecipientsForStudent } from "./authz";
+import { assertCanAccessStudent, requireCounselorOrAdmin, getStaffRecipientsForStudent, legacySelfStudent } from "./authz";
 import type { Id } from "./_generated/dataModel";
 import { checkRateLimit } from "./rateLimiter";
 import { logAuditEvent } from "./audit";
+import { createNotification } from "./notify";
 
 const CRITICAL_ALERT_TYPES = new Set(["suicide", "suicideRisk", "psychosis", "psychosisRisk"]);
 
@@ -66,16 +67,18 @@ export async function insertSafetyAlert(
   const origin =
     params.source === "screening" ? "a screening" : params.source === "companion" ? "the Emoty companion" : params.source === "cbt" ? "a Think Differently (CBT) session" : "the system";
 
+  // In-app record for every recipient first; OS push follows with neutral lock-screen copy
+  // ("Please open Emotify to view an important update."), never the alert details.
   for (const member of staff) {
-    await ctx.db.insert("notifications", {
-      recipientId: String(member._id),
+    await createNotification(ctx, {
+      recipientId: member._id,
       type: isCritical ? "critical_risk" : "safety_alert",
       title,
       message: `${studentLabel}: ${title.toLowerCase()} via ${origin}. Review immediately.`,
       priority: isCritical ? "critical" : "high",
-      read: false,
-      archived: false,
-      createdAt: now,
+      destination: "alerts",
+      relatedId: String(alertId),
+      dedupeKey: `alert:${alertId}`,
     });
   }
 
@@ -108,7 +111,7 @@ export async function insertSafetyAlert(
 }
 
 /** Internal: create a new alert for the authenticated student (server-side callers only) */
-export const createAlert = internalMutation({
+export const createIndependentAlert = internalMutation({
   args: {
     userId: v.optional(v.string()),
     type: v.string(),
@@ -183,6 +186,25 @@ export const createSafetyAlertWithDeduplication = internalMutation({
     });
 
     return { created: true, alertId, suppressed: false };
+  },
+});
+
+/**
+ * Legacy-client compatibility. App builds up to the `main` release call this right after
+ * creating an emergency counsellor request, and show "Request Error" when it fails, although
+ * the request itself succeeded. The client-created alert was removed on purpose: the
+ * emergency_modal counsellor request now always notifies staff at critical priority
+ * (counsellorRequests.create). This accepts only that legacy call, for the caller's own
+ * account, and writes nothing. Any other use is refused.
+ */
+export const createAlert = mutation({
+  args: { userId: v.optional(v.string()), type: v.string() },
+  handler: async (ctx, args) => {
+    const self = await legacySelfStudent(ctx, args.userId);
+    if (!self) throw new Error("Unauthorized: Alerts are created by the server.");
+    if (args.type !== "counselor_request") throw new Error("Unsupported alert type.");
+    console.log("[legacy-client] alerts.createAlert");
+    return null;
   },
 });
 

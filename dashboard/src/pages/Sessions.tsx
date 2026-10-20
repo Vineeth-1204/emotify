@@ -10,15 +10,30 @@ import {
 import { createPortal } from "react-dom";
 import { useDashboardAuth } from "../components/AuthContext";
 
-type TabStatus = "pending" | "waiting" | "accepted" | "rejected" | "completed";
+type TabStatus = "pending" | "waiting" | "accepted" | "rejected" | "completed" | "cancelled";
 
 export default function Sessions() {
   const { isAdmin } = useDashboardAuth();
   // Queries & Mutations
-  const { results: appointments, status: queryStatus, loadMore } = usePaginatedQuery(
-    api.appointments.listAllTwoWayAppointmentsPaginated,
-    {},
-    { initialNumItems: 20 }
+  // Filters are applied on the server: admins see the whole organisation, a counsellor only
+  // appointments with them for students in their current caseload.
+  const [counsellorFilter, setCounsellorFilter] = useState("");
+  const [dateFilter, setDateFilter] = useState("");
+  const [needsCounsellorOnly, setNeedsCounsellorOnly] = useState(false);
+  const counsellorOptions = useQuery(api.counsellorAssignments.listCounsellorUsers, isAdmin ? { includeInactive: true } : "skip");
+  const { results: rawAppointments, status: queryStatus, loadMore } = usePaginatedQuery(
+    api.appointments.listAppointments,
+    {
+      counsellorId: isAdmin && counsellorFilter ? (counsellorFilter as Id<"users">) : undefined,
+      date: dateFilter || undefined,
+      needsCounsellor: isAdmin && needsCounsellorOnly ? true : undefined,
+    },
+    { initialNumItems: 25 }
+  );
+  // The page's existing fields: patientName / userId.
+  const appointments = useMemo(
+    () => rawAppointments.map((a) => ({ ...a, patientName: a.patientId ? `${a.studentName} (${a.patientId})` : a.studentName, userId: a.studentId })),
+    [rawAppointments]
   );
 
   const convex = useConvex();
@@ -137,7 +152,7 @@ export default function Sessions() {
   const filteredAppointments = useMemo(() => {
     if (!appointments) return [];
     return appointments.filter(appt => {
-      const matchesTab = appt.status === activeTab;
+      const matchesTab = (appt.status === "scheduled" ? "accepted" : appt.status) === activeTab;
       const matchesSearch = 
         appt.patientName?.toLowerCase().includes(searchQuery.toLowerCase()) || 
         appt.title?.toLowerCase().includes(searchQuery.toLowerCase());
@@ -210,6 +225,14 @@ export default function Sessions() {
   const handleAccept = async (appointmentId: Id<"appointments">) => {
     try {
       await updateStatus({ appointmentId, status: "accepted" });
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
+  const handleStaffStatus = async (appointmentId: Id<"appointments">, status: "completed" | "cancelled") => {
+    try {
+      await updateStatus({ appointmentId, status });
     } catch (err: any) {
       alert(err.message);
     }
@@ -312,20 +335,23 @@ export default function Sessions() {
   };
 
   const tabs = [
-    { id: "pending", label: "Pending" },
-    { id: "waiting", label: "Waiting" },
-    { id: "accepted", label: "Accepted" },
-    { id: "rejected", label: "Rejected" },
+    { id: "pending", label: "Requested" },
+    { id: "waiting", label: "New time proposed" },
+    { id: "accepted", label: "Confirmed" },
+    { id: "rejected", label: "Declined" },
     { id: "completed", label: "Completed" },
+    { id: "cancelled", label: "Cancelled" },
   ];
 
   const getStatusBadge = (status: string) => {
     switch (status) {
-      case 'accepted': return <span className="badge badge-green">Accepted</span>;
-      case 'pending': return <span className="badge" style={{ background: 'rgba(234, 179, 8, 0.15)', color: '#ca8a04', border: '1px solid rgba(234, 179, 8, 0.3)' }}>Pending</span>;
-      case 'waiting': return <span className="badge" style={{ background: 'rgba(56, 189, 248, 0.15)', color: '#0284c7', border: '1px solid rgba(56, 189, 248, 0.3)' }}>Waiting</span>;
-      case 'rejected': return <span className="badge badge-red">Rejected</span>;
+      case 'accepted': return <span className="badge badge-green">Confirmed</span>;
+      case 'pending': return <span className="badge" style={{ background: 'rgba(234, 179, 8, 0.15)', color: '#ca8a04', border: '1px solid rgba(234, 179, 8, 0.3)' }}>Requested</span>;
+      case 'waiting': return <span className="badge" style={{ background: 'rgba(56, 189, 248, 0.15)', color: '#0284c7', border: '1px solid rgba(56, 189, 248, 0.3)' }}>New time proposed</span>;
+      case 'rejected': return <span className="badge badge-red">Declined</span>;
       case 'completed': return <span className="badge" style={{ background: 'rgba(168, 85, 247, 0.15)', color: '#9333ea', border: '1px solid rgba(168, 85, 247, 0.3)' }}>Completed</span>;
+      case 'scheduled': return <span className="badge badge-green">Confirmed</span>;
+      case 'cancelled': return <span className="badge">Cancelled</span>;
       default: return <span className="badge">{status}</span>;
     }
   };
@@ -446,6 +472,32 @@ export default function Sessions() {
               </div>
             </div>
 
+            {/* Filters */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center', padding: '12px 24px', borderBottom: '1px solid var(--border-color)', background: '#ffffff' }}>
+              {isAdmin && (
+                <select value={counsellorFilter} onChange={(e) => setCounsellorFilter(e.target.value)} className="hud-input" aria-label="Filter by counsellor" style={{ minWidth: 200 }}>
+                  <option value="">All counsellors</option>
+                  {(counsellorOptions ?? []).map((c) => (
+                    <option key={c._id} value={c._id}>
+                      {c.full_name}{c.status === "inactive" ? " (inactive)" : ""}
+                    </option>
+                  ))}
+                </select>
+              )}
+              <input type="date" value={dateFilter} onChange={(e) => setDateFilter(e.target.value)} className="hud-input" aria-label="Filter by date" />
+              {isAdmin && (
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                  <input type="checkbox" checked={needsCounsellorOnly} onChange={(e) => setNeedsCounsellorOnly(e.target.checked)} />
+                  Needs a counsellor
+                </label>
+              )}
+              {(counsellorFilter || dateFilter || needsCounsellorOnly) && (
+                <button onClick={() => { setCounsellorFilter(""); setDateFilter(""); setNeedsCounsellorOnly(false); }} style={{ border: 'none', background: 'none', color: 'var(--accent-primary)', cursor: 'pointer', fontSize: '0.85rem' }}>
+                  Clear filters
+                </button>
+              )}
+            </div>
+
             {/* Table */}
             <div style={{ overflowX: 'auto', minHeight: '400px' }}>
               {queryStatus === "LoadingFirstPage" ? (
@@ -455,13 +507,14 @@ export default function Sessions() {
                   <div style={{ padding: '20px', background: 'rgba(99, 102, 241, 0.1)', borderRadius: '50%', color: 'var(--accent-primary)' }}>
                     <Calendar size={36} />
                   </div>
-                  <h2 style={{ fontSize: '1.3rem', color: 'var(--text-primary)' }}>No {activeTab} Appointments</h2>
+                  <h2 style={{ fontSize: '1.3rem', color: 'var(--text-primary)' }}>No {tabs.find((tb) => tb.id === activeTab)?.label.toLowerCase()} appointments</h2>
                 </div>
               ) : (
                 <table className="data-table">
                   <thead>
                     <tr>
                       <th>Student</th>
+                      <th>Counsellor</th>
                       <th>Title & Reason</th>
                       <th>Date & Time</th>
                       <th>Status</th>
@@ -472,6 +525,10 @@ export default function Sessions() {
                     {filteredAppointments.map((appt) => (
                       <tr key={appt._id}>
                         <td style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{appt.patientName}</td>
+                        <td style={{ fontSize: '0.85rem', color: appt.counsellorName ? 'var(--text-primary)' : '#b45309' }}>
+                          {appt.counsellorName ?? "Needs a counsellor"}
+                          {appt.counsellorName && appt.counsellorActive === false && <span style={{ color: '#b45309' }}> (inactive)</span>}
+                        </td>
                         <td>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                             <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{appt.title}</span>
@@ -532,6 +589,26 @@ export default function Sessions() {
                                <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Awaiting User</span>
                             )}
                             
+                            {(appt.status === 'accepted' || appt.status === 'scheduled') && (
+                              <>
+                                {appt.actions?.includes("complete") && (
+                                  <button className="btn btn-secondary" onClick={() => handleStaffStatus(appt._id, "completed")} style={{ color: 'var(--success)' }}>
+                                    Mark completed
+                                  </button>
+                                )}
+                                {appt.actions?.includes("propose_time") && (
+                                  <button className="btn btn-secondary" onClick={() => { setSelectedAppointment(appt); setRescheduleDate(appt.date ?? ""); setShowRescheduleModal(true); }}>
+                                    Propose new time
+                                  </button>
+                                )}
+                                {appt.actions?.includes("cancel") && (
+                                  <button className="btn btn-secondary" onClick={() => { if (confirm("Cancel this appointment? The student will be told.")) handleStaffStatus(appt._id, "cancelled"); }} style={{ color: 'var(--danger)' }}>
+                                    Cancel
+                                  </button>
+                                )}
+                              </>
+                            )}
+
                             {isAdmin && (
                               <button className="btn btn-secondary" onClick={() => handleDelete(appt._id)} style={{ color: 'var(--danger)', padding: '4px 8px' }} title="Delete Appointment">
                                  <Trash2 size={14} />

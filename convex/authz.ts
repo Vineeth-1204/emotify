@@ -219,6 +219,36 @@ export async function getSelfStudent(
   ctx: { auth: { getUserIdentity: () => Promise<any> }; db: any }
 ): Promise<{ user: AuthenticatedUser; keys: string[] } | null> {
   const user = await getAuthenticatedUser(ctx);
-  if (!user || user.role !== "patient") return null;
+  if (!user || !isStudentRole(user.role)) return null;
   return { user, keys: [String(user._id), ...(user.clerkId ? [user.clerkId] : [])] };
+}
+
+/**
+ * Students have role "patient". Accounts created before roles were stored have no role and are
+ * students too: login already issues them a "patient" token, and they must keep the crisis gate.
+ * An explicit staff role, or any other explicit role, is never treated as a student.
+ */
+export function isStudentRole(role: string | undefined | null): boolean {
+  return role === "patient" || role === undefined || role === null || role === "";
+}
+
+/**
+ * Legacy-client compatibility. App builds released before the data-minimization change call
+ * some staff clinical reads (triage.getLatest, screening.getLatest, screening.getAll) for the
+ * signed-in student's own record, and crash if those throw. For a student caller asking about
+ * their own record this returns the student, so the read can answer with a minimal legacy view;
+ * a student naming anyone else is refused; staff and anonymous callers get null and continue
+ * to the unchanged staff-only path. Remove with the compatibility layer (see
+ * docs/RELEASE_READINESS_REMEDIATION_REPORT.md).
+ */
+export async function legacySelfStudent(
+  ctx: { auth: { getUserIdentity: () => Promise<any> }; db: any },
+  targetUserId: string | undefined
+): Promise<{ user: AuthenticatedUser; keys: string[] } | null> {
+  const self = await getSelfStudent(ctx);
+  if (!self) return null;
+  if (targetUserId && !self.keys.includes(targetUserId)) {
+    throw new Error("Unauthorized: Students can access ONLY their own clinical data.");
+  }
+  return self;
 }

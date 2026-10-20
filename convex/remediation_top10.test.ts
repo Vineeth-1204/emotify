@@ -140,7 +140,9 @@ describe("Top-10 #8: companion helpers are server-only, TTS requires login", () 
       ["emotyRateLimiter", "checkAndAcquireRateLimit"],
       ["emotyRateLimiter", "releaseRateLimit"],
       ["emotyTelemetry", "recordTelemetry"],
-      ["alerts", "createAlert"],
+      // The alert creator. The public `alerts.createAlert` name is a write-nothing legacy-client
+      // shim; legacy_client_compat.test.ts proves it cannot create alerts or notifications.
+      ["alerts", "createIndependentAlert"],
       ["alerts", "createSafetyAlertWithDeduplication"],
       ["emotyContext", "getAuthoritativeEmotyContext"],
     ];

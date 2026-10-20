@@ -421,6 +421,8 @@ export const updateAlertStatus = mutation({
 export const getPatientCbtAnalytics = query({
   args: { userId: v.string() },
   handler: async (ctx, args) => {
+    // Staff-only clinical analytics (AI risk flags, high-risk sessions, intervention provenance).
+    await requireCounselorOrAdmin(ctx);
     await assertCanAccessStudent(ctx, args.userId);
 
     // Resolve stable userId

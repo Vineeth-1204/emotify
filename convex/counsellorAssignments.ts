@@ -2,9 +2,11 @@ import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { mutation, query } from "./functions";
-import { requireAdmin, requireCounselorOrAdmin, assertCanAccessStudent, getAuthenticatedUser } from "./authz";
+import { requireAdmin, requireCounselorOrAdmin, assertCanAccessStudent, getAuthenticatedUser, isStudentRole } from "./authz";
 import { approvedContacts, directoryEntryForCounsellor } from "./counsellorDirectory";
 import { logAuditEvent } from "./audit";
+import { createNotification, activeAdminIds } from "./notify";
+import { moveOpenAppointmentsOnAssignmentChange } from "./appointments";
 
 /**
  * Counsellor caseload assignments.
@@ -26,6 +28,33 @@ import { logAuditEvent } from "./audit";
 
 /** Largest number of students accepted by one bulk request. */
 export const MAX_BULK_ASSIGNMENTS = 100;
+
+/**
+ * Caseload capacity: active students per counsellor. Enforced here on the server for every
+ * assignment path (single, bulk, reassignment). The check reads the counsellor's active-caseload
+ * index range in the same transaction as the insert, so concurrent assignments by two admins are
+ * serialized by Convex and cannot exceed it. There is no override: to add a student to a full
+ * caseload, reassign or unassign one first. (The staff directory's `maxWorkload` field is a
+ * separate, unenforced planning field.)
+ */
+export const DEFAULT_CASELOAD_CAPACITY = 20;
+/** Caseload size at which the admin views flag a counsellor as approaching capacity. */
+export const NEAR_CAPACITY_THRESHOLD = 18;
+
+export function capacityState(size: number, capacity = DEFAULT_CASELOAD_CAPACITY): "available" | "near" | "full" {
+  if (size >= capacity) return "full";
+  if (size >= NEAR_CAPACITY_THRESHOLD) return "near";
+  return "available";
+}
+
+/** Active caseload size, read through the index range that concurrent assignments also write. */
+async function activeCaseloadSize(ctx: QueryCtx | MutationCtx, counsellorId: Id<"users">) {
+  const rows = await ctx.db
+    .query("counsellorAssignments")
+    .withIndex("by_counsellor_and_active", (q) => q.eq("counsellorId", counsellorId).eq("active", true))
+    .take(DEFAULT_CASELOAD_CAPACITY + 1);
+  return rows.length;
+}
 
 const OPEN_ALERT_STATUSES = new Set(["pending", "escalated", "active", "acknowledged"]);
 
@@ -56,7 +85,7 @@ async function requireAssignableCounsellor(ctx: MutationCtx, counsellorId: Id<"u
 /** Validates a student account as eligible for assignment; throws a readable error otherwise. */
 async function requireAssignableStudent(ctx: MutationCtx, studentId: Id<"users">) {
   const student = await ctx.db.get(studentId);
-  if (!student || student.role !== "patient") throw new Error("Student not found.");
+  if (!student || !isStudentRole(student.role)) throw new Error("Student not found.");
   if (student.status === "inactive") throw new Error("Student account is inactive.");
   return student;
 }
@@ -83,18 +112,23 @@ async function assignOne(
   studentId: Id<"users">,
   counsellorId: Id<"users">,
   now: number
-): Promise<{ outcome: AssignOutcome; student: any; previousCounsellorIds: Id<"users">[] }> {
+): Promise<{ outcome: AssignOutcome; student: any; previousCounsellorIds: Id<"users">[]; caseloadSize: number }> {
   const student = await requireAssignableStudent(ctx, studentId);
   const current = await activeRowsForStudent(ctx, studentId);
 
   if (current.length === 1 && current[0].counsellorId === counsellorId) {
-    return { outcome: "unchanged", student, previousCounsellorIds: [] };
+    return { outcome: "unchanged", student, previousCounsellorIds: [], caseloadSize: await activeCaseloadSize(ctx, counsellorId) };
+  }
+
+  const size = await activeCaseloadSize(ctx, counsellorId);
+  if (size >= DEFAULT_CASELOAD_CAPACITY) {
+    throw new Error(`This counsellor has reached the caseload capacity of ${DEFAULT_CASELOAD_CAPACITY} students. Reassign or unassign a student first.`);
   }
 
   // Defensive: also repairs any legacy duplicate active rows.
   const previousCounsellorIds = current.map((r) => r.counsellorId).filter((id) => id !== counsellorId);
   await endRows(ctx, current, adminId, "reassigned", now);
-  await ctx.db.insert("counsellorAssignments", {
+  const assignmentId = await ctx.db.insert("counsellorAssignments", {
     counsellorId,
     studentId,
     assignedBy: adminId,
@@ -107,20 +141,53 @@ async function assignOne(
     previousCounsellorIds.length > 0 ? "caseload_reassigned" : "caseload_assigned",
     JSON.stringify({ studentId, counsellorId, previousCounsellorIds })
   );
-  return { outcome: previousCounsellorIds.length > 0 ? "reassigned" : "assigned", student, previousCounsellorIds };
+  const outcome: AssignOutcome = previousCounsellorIds.length > 0 ? "reassigned" : "assigned";
+
+  // Open appointments follow the student to the new counsellor (the previous counsellor loses
+  // access with the assignment, so they must not keep the student's pending requests).
+  await moveOpenAppointmentsOnAssignmentChange(ctx, studentId, counsellorId);
+
+  // Tell the student (no names or reasons; the details are in My Counsellor).
+  await createNotification(ctx, {
+    recipientId: studentId,
+    type: "counsellor_assigned",
+    title: outcome === "reassigned" ? "Your counsellor has changed" : "You have been connected with a counsellor",
+    message: "Open My Counsellor in your profile to see who will support you.",
+    priority: "medium",
+    destination: "my_counsellor",
+    dedupeKey: `assignment:${assignmentId}`,
+  });
+  return { outcome, student, previousCounsellorIds, caseloadSize: size + 1 };
 }
 
-async function notify(ctx: MutationCtx, recipientId: Id<"users">, title: string, message: string, priority: string, now: number) {
-  await ctx.db.insert("notifications", {
-    recipientId: String(recipientId),
-    type: "caseload_assignment",
+async function notify(ctx: MutationCtx, recipientId: Id<"users">, title: string, message: string, priority: string, now: number, removed = false) {
+  await createNotification(ctx, {
+    recipientId,
+    type: removed ? "caseload_removed" : "caseload_assignment",
     title,
     message,
-    priority,
-    read: false,
-    archived: false,
-    createdAt: now,
+    priority: priority as "low" | "medium" | "high",
+    destination: "home",
+    dedupeKey: `caseload:${removed ? "removed" : "added"}:${now}`,
   });
+}
+
+/** Admins are told once a day per counsellor when a caseload becomes full (in-app only). */
+async function notifyIfAtCapacity(ctx: MutationCtx, counsellorId: Id<"users">, size: number, now: number) {
+  if (size < DEFAULT_CASELOAD_CAPACITY) return;
+  const counsellor = await ctx.db.get(counsellorId);
+  const day = new Date(now).toISOString().slice(0, 10);
+  for (const adminId of await activeAdminIds(ctx)) {
+    await createNotification(ctx, {
+      recipientId: adminId,
+      type: "caseload_capacity",
+      title: "Caseload full",
+      message: `${counsellor?.full_name || "A counsellor"} has reached the caseload capacity of ${DEFAULT_CASELOAD_CAPACITY} students.`,
+      priority: "low",
+      destination: "assignments",
+      dedupeKey: `capacity_full:${counsellorId}:${day}`,
+    });
+  }
 }
 
 /**
@@ -144,7 +211,7 @@ async function notifyCaseloadChanges(
   const removedBy = new Map<string, number>();
   for (const c of changed) for (const id of c.previousCounsellorIds) removedBy.set(String(id), (removedBy.get(String(id)) ?? 0) + 1);
   for (const [id, n] of removedBy) {
-    await notify(ctx, id as Id<"users">, "Caseload updated", n === 1 ? "A student has been reassigned to another counsellor." : `${n} students have been reassigned to another counsellor.`, "low", now);
+    await notify(ctx, id as Id<"users">, "Caseload updated", n === 1 ? "A student has been reassigned to another counsellor." : `${n} students have been reassigned to another counsellor.`, "low", now, true);
   }
 }
 
@@ -159,8 +226,11 @@ export const assign = mutation({
     await requireAssignableCounsellor(ctx, args.counsellorId);
     const now = Date.now();
     const result = await assignOne(ctx, admin._id, args.studentId, args.counsellorId, now);
-    if (result.outcome !== "unchanged") await notifyCaseloadChanges(ctx, args.counsellorId, [result], now);
-    return { success: true, outcome: result.outcome, unchanged: result.outcome === "unchanged" };
+    if (result.outcome !== "unchanged") {
+      await notifyCaseloadChanges(ctx, args.counsellorId, [result], now);
+      await notifyIfAtCapacity(ctx, args.counsellorId, result.caseloadSize, now);
+    }
+    return { success: true, outcome: result.outcome, unchanged: result.outcome === "unchanged", caseloadSize: result.caseloadSize, capacity: DEFAULT_CASELOAD_CAPACITY };
   },
 });
 
@@ -189,16 +259,34 @@ export const assignMany = mutation({
         results.push({ studentId, outcome: r.outcome });
         if (r.outcome !== "unchanged") changed.push(r);
       } catch (e) {
-        results.push({ studentId, outcome: "failed", error: e instanceof Error ? e.message : "Could not assign this student." });
+        const error = e instanceof Error ? e.message : "Could not assign this student.";
+        results.push({ studentId, outcome: "failed", error });
+        // Recorded for the admin exceptions view (the bulk request itself still succeeds).
+        await logAuditEvent(ctx, String(admin._id), "caseload_assign_failed", JSON.stringify({ studentId, counsellorId: args.counsellorId, error }));
       }
     }
     await notifyCaseloadChanges(ctx, args.counsellorId, changed, now);
+    await notifyIfAtCapacity(ctx, args.counsellorId, await activeCaseloadSize(ctx, args.counsellorId), now);
 
     const count = (o: string) => results.filter((r) => r.outcome === o).length;
     const summary = { assigned: count("assigned"), reassigned: count("reassigned"), unchanged: count("unchanged"), failed: count("failed") };
     return { success: summary.failed === 0, summary, results };
   },
 });
+
+/** After a student is unassigned: open appointments go to the admin queue; tell the student. */
+async function afterUnassign(ctx: MutationCtx, studentId: Id<"users">, endedAssignmentId: Id<"counsellorAssignments">) {
+  await moveOpenAppointmentsOnAssignmentChange(ctx, studentId, null);
+  await createNotification(ctx, {
+    recipientId: studentId,
+    type: "counsellor_unassigned",
+    title: "Your counsellor details have changed",
+    message: "You can still ask the care team for support from the Appointments screen.",
+    priority: "low",
+    destination: "my_counsellor",
+    dedupeKey: `unassigned:${endedAssignmentId}`,
+  });
+}
 
 /** Admin: end a student's active assignment. The student becomes unassigned. */
 export const unassign = mutation({
@@ -210,6 +298,7 @@ export const unassign = mutation({
     await endRows(ctx, current, admin._id, "unassigned", now);
     if (current.length > 0) {
       await logAuditEvent(ctx, String(admin._id), "caseload_unassigned", JSON.stringify({ studentId: args.studentId, previousCounsellorIds: current.map((r) => r.counsellorId) }));
+      await afterUnassign(ctx, args.studentId, current[0]._id);
     }
     return { success: true, ended: current.length };
   },
@@ -230,6 +319,7 @@ export const unassignMany = mutation({
       await endRows(ctx, current, admin._id, "unassigned", now);
       if (current.length > 0) {
         await logAuditEvent(ctx, String(admin._id), "caseload_unassigned", JSON.stringify({ studentId, previousCounsellorIds: current.map((r) => r.counsellorId) }));
+        await afterUnassign(ctx, studentId, current[0]._id);
       }
       results.push({ studentId, outcome: current.length > 0 ? "unassigned" : "unchanged" });
     }
@@ -326,6 +416,8 @@ export const listCounsellorUsers = query({
         mobile_number: c.mobile_number,
         status: c.status === "inactive" ? "inactive" : "active",
         caseloadSize: sizes.get(String(c._id)) ?? 0,
+        capacity: DEFAULT_CASELOAD_CAPACITY,
+        capacityState: capacityState(sizes.get(String(c._id)) ?? 0),
       }))
       .sort((a, b) => a.full_name.localeCompare(b.full_name));
   },
@@ -486,7 +578,7 @@ export const getMyCounsellor = query({
   handler: async (ctx) => {
     const caller = await getAuthenticatedUser(ctx);
     if (!caller) return { status: "unauthenticated" as const };
-    if (caller.role !== "patient") return { status: "not_student" as const };
+    if (!isStudentRole(caller.role)) return { status: "not_student" as const };
 
     const active = await ctx.db
       .query("counsellorAssignments")
@@ -508,6 +600,68 @@ export const getMyCounsellor = query({
         phone: contacts.phone,
       },
       assignedAt: active.assignedAt,
+    };
+  },
+});
+
+const OPEN_APPOINTMENT_STATUSES = ["pending", "waiting", "accepted", "scheduled"] as const;
+
+/**
+ * Admin: everything that needs administrative attention in one place: unassigned students,
+ * students whose counsellor is inactive, full / nearly full caseloads, open appointments with no
+ * counsellor, recent failed bulk assignments and safety alerts that reached no staff.
+ */
+export const getAdminExceptions = query({
+  args: {},
+  handler: async (ctx) => {
+    await requireAdmin(ctx);
+    const students = await ctx.db.query("users").withIndex("by_role_and_created_at", (q) => q.eq("role", "patient")).take(ROSTER_LIMIT);
+    const { active, sizes } = await caseloadSizes(ctx);
+    const assignedStudents = new Set(active.map((a) => String(a.studentId)));
+    const counsellors = await ctx.db.query("users").withIndex("by_role", (q) => q.eq("role", "counsellor")).collect();
+    const inactiveCounsellorIds = new Set(counsellors.filter((c) => c.status === "inactive").map((c) => String(c._id)));
+
+    const unassignedStudents = students
+      .filter((s) => s.status !== "inactive" && !assignedStudents.has(String(s._id)))
+      .map((s) => ({ studentId: s._id, name: s.full_name || s.alias || "Unnamed student", patientId: s.patientId ?? null }));
+    const withInactiveCounsellor = active
+      .filter((a) => inactiveCounsellorIds.has(String(a.counsellorId)))
+      .map((a) => ({ studentId: a.studentId, counsellorId: a.counsellorId }));
+    const capacity = counsellors
+      .filter((c) => c.status !== "inactive")
+      .map((c) => ({ counsellorId: c._id, name: c.full_name || "Counsellor", caseloadSize: sizes.get(String(c._id)) ?? 0 }))
+      .map((c) => ({ ...c, state: capacityState(c.caseloadSize) }))
+      .filter((c) => c.state !== "available");
+
+    const openWithoutCounsellor = [];
+    for (const status of OPEN_APPOINTMENT_STATUSES) {
+      const rows = await ctx.db.query("appointments").withIndex("by_status", (q) => q.eq("status", status)).take(500);
+      for (const a of rows) {
+        if (a.counsellorId || !a.date) continue;
+        openWithoutCounsellor.push({ appointmentId: a._id, studentId: a.userId, date: a.date, time: a.time ?? null, status: a.status });
+      }
+    }
+
+    const failures = await ctx.db.query("auditLogs").withIndex("by_action", (q) => q.eq("action", "caseload_assign_failed")).order("desc").take(20);
+    const undelivered = (await ctx.db.query("alerts").withIndex("by_deliveryStatus", (q) => q.eq("deliveryStatus", "no_active_staff")).take(100)).filter(
+      (a) => a.status !== "resolved"
+    );
+
+    return {
+      capacity: DEFAULT_CASELOAD_CAPACITY,
+      nearCapacityThreshold: NEAR_CAPACITY_THRESHOLD,
+      unassignedStudents: { count: unassignedStudents.length, sample: unassignedStudents.slice(0, 20) },
+      studentsWithInactiveCounsellor: { count: withInactiveCounsellor.length, sample: withInactiveCounsellor.slice(0, 20) },
+      counsellorsAtOrNearCapacity: capacity,
+      openAppointmentsWithoutCounsellor: { count: openWithoutCounsellor.length, sample: openWithoutCounsellor.slice(0, 20) },
+      recentAssignmentFailures: failures.map((f) => {
+        let detail: any = {};
+        try {
+          detail = JSON.parse(f.details ?? "{}");
+        } catch {}
+        return { at: f.timestamp, studentId: detail.studentId ?? null, counsellorId: detail.counsellorId ?? null, error: detail.error ?? "Assignment failed" };
+      }),
+      undeliveredSafetyAlerts: undelivered.length,
     };
   },
 });

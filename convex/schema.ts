@@ -92,10 +92,34 @@ export default defineSchema({
     attended: v.optional(v.string()), // "yes" | "no"
     isFeedbackCompleted: v.optional(v.boolean()),
     counsellorRequestId: v.optional(v.id("counsellorRequests")),
+
+    // Counsellor workflow (all optional: older rows predate them).
+    // The counsellor the appointment is with. Set from the student's active assignment; moved to
+    // the new counsellor on reassignment; cleared when the student is unassigned (admin queue).
+    counsellorId: v.optional(v.id("users")),
+    // Client idempotency key for a student's request (retries return the same appointment).
+    requestKey: v.optional(v.string()),
+    // Normalised "YYYY-MM-DD HH:mm" (24h) of date+time, for conflict and duplicate checks.
+    slotKey: v.optional(v.string()),
+    statusHistory: v.optional(
+      v.array(
+        v.object({
+          status: v.string(),
+          at: v.number(),
+          actorRole: v.string(), // "student" | "counsellor" | "admin" | "system"
+          event: v.optional(v.string()), // "requested" | "confirmed" | "reschedule_proposed" | "reassigned" | ...
+        })
+      )
+    ),
+    updatedAt: v.optional(v.number()),
   })
     .index("by_userId", ["userId"])
     .index("by_startTime", ["startTime"])
-    .index("by_counsellorRequestId", ["counsellorRequestId"]),
+    .index("by_counsellorRequestId", ["counsellorRequestId"])
+    .index("by_counsellorId", ["counsellorId"])
+    .index("by_counsellor_and_slot", ["counsellorId", "slotKey"])
+    .index("by_userId_and_requestKey", ["userId", "requestKey"])
+    .index("by_status", ["status"]),
 
 
   screenings: defineTable({
@@ -685,9 +709,24 @@ export default defineSchema({
     read: v.boolean(),
     archived: v.boolean(),
     createdAt: v.number(),
+    // Notification centre (all optional: older rows predate them).
+    readAt: v.optional(v.number()),
+    // Where tapping it leads: a destination key each client maps to its own allowlisted route
+    // ("appointments" | "notifications" | "alerts" | "assignments" | "requests" | "my_counsellor").
+    destination: v.optional(v.string()),
+    relatedId: v.optional(v.string()), // e.g. the appointment id, re-authorised on open
+    dedupeKey: v.optional(v.string()), // one notification per recipient per business event
+    // OS push delivery record (the in-app row is the record of truth; push is best effort).
+    pushStatus: v.optional(v.string()), // "queued" | "sent" | "mock" | "no_tokens" | "skipped" | "failed"
+    pushTicketIds: v.optional(v.array(v.string())),
+    pushError: v.optional(v.string()),
+    pushUpdatedAt: v.optional(v.number()),
   })
     .index("by_recipientId", ["recipientId"])
-    .index("by_read", ["read"]),
+    .index("by_read", ["read"])
+    .index("by_recipient_and_created", ["recipientId", "createdAt"])
+    .index("by_recipient_and_read", ["recipientId", "read"])
+    .index("by_recipient_and_dedupe", ["recipientId", "dedupeKey"]),
 
   loginHistory: defineTable({
     userId: v.string(),

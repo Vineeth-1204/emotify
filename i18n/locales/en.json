@@ -400,5 +400,29 @@
     "empatheticDesc": "A soft, compassionate voice dedicated to thoughtful listening",
     "uplifting": "Bright & Uplifting",
     "upliftingDesc": "A bright, cheerful tone that provides positive encouragement"
+  },
+  "notifications": {
+    "permission": {
+      "title": "Stay in the loop",
+      "body": "Emotify can let you know when your counsellor replies about an appointment or there is an update for you. Notifications never show personal details on your lock screen.",
+      "notNow": "Not now",
+      "allow": "Allow notifications"
+    },
+    "centre": {
+      "title": "Notifications",
+      "markAllRead": "Mark all as read",
+      "empty": "You're all caught up. Updates about your appointments and your counsellor will appear here.",
+      "error": "We couldn't load your notifications.",
+      "retry": "Try again",
+      "loading": "Loading notifications",
+      "loadMore": "Show older",
+      "unread": "Unread",
+      "openLabel": "Open notification",
+      "bellLabel": "Notifications, {{count}} unread",
+      "justNow": "Just now",
+      "minutesAgo": "{{count}} min ago",
+      "hoursAgo": "{{count}} h ago",
+      "daysAgo": "{{count}} d ago"
+    }
   }
 }

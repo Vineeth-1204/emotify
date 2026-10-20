@@ -30,9 +30,20 @@ export const registerPushToken = mutation({
       throw new Error("Invalid push token format. Expected ExponentPushToken[...] or ExpoPushToken[...]");
     }
 
-    await checkRateLimit(ctx, userId, "journal_write", 10, 60000);
+    await checkRateLimit(ctx, userId, "push_token_register", 10, 60000);
 
     const now = Date.now();
+
+    // A device token belongs to whoever is signed in on that device now. If another account
+    // registered it before (shared phone, account switch), remove that link so the previous
+    // account's notifications can never appear on this device.
+    const others = await ctx.db
+      .query("pushTokens")
+      .withIndex("by_token", (q) => q.eq("token", trimmedToken))
+      .take(20);
+    for (const row of others) {
+      if (row.userId !== userId) await ctx.db.delete(row._id);
+    }
 
     // Check if token already exists for this user
     const existing = await ctx.db

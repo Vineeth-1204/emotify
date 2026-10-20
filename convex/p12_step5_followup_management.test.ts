@@ -212,7 +212,7 @@ describe("P12 Step 5: Follow-Up Management System", () => {
     expect(studentAFollowUps[0]._id).toBe(fuAId);
     expect(studentAFollowUps.some((f: any) => f._id === fuBId)).toBe(false);
     // Student-visible sanitization: only the minimal fields; internal notes and clinical links stripped
-    const allowedStudentFields = ["_id", "type", "dueDate", "completed", "status", "completedAt", "selfInitiated"];
+    const allowedStudentFields = ["_id", "type", "dueDate", "completed", "status", "completedAt", "selfInitiated", "sourceType"];
     for (const key of Object.keys(studentAFollowUps[0])) {
       expect(allowedStudentFields).toContain(key);
     }
@@ -220,7 +220,8 @@ describe("P12 Step 5: Follow-Up Management System", () => {
     expect((studentAFollowUps[0] as any).userId).toBeUndefined();
     expect((studentAFollowUps[0] as any).attemptId).toBeUndefined();
     expect((studentAFollowUps[0] as any).triageId).toBeUndefined();
-    expect((studentAFollowUps[0] as any).sourceType).toBeUndefined();
+    // Legacy-client field reduced to two values; the real source category stays staff-only
+    expect(["self_initiated", "care_team"]).toContain((studentAFollowUps[0] as any).sourceType);
 
     // Staff still see the full record, owned by Student A
     const staffView: any[] = await counselorClient.query(api.followUps.getStudentFollowUps, { userId: studentAId });

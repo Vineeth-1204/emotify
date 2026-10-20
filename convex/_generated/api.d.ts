@@ -44,6 +44,8 @@ import type * as insights from "../insights.js";
 import type * as jpmrLogs from "../jpmrLogs.js";
 import type * as jpmrVideos from "../jpmrVideos.js";
 import type * as microGoals from "../microGoals.js";
+import type * as notificationCenter from "../notificationCenter.js";
+import type * as notify from "../notify.js";
 import type * as patients from "../patients.js";
 import type * as pushNotifications from "../pushNotifications.js";
 import type * as pushTokens from "../pushTokens.js";
@@ -102,6 +104,8 @@ declare const fullApi: ApiFromModules<{
   jpmrLogs: typeof jpmrLogs;
   jpmrVideos: typeof jpmrVideos;
   microGoals: typeof microGoals;
+  notificationCenter: typeof notificationCenter;
+  notify: typeof notify;
   patients: typeof patients;
   pushNotifications: typeof pushNotifications;
   pushTokens: typeof pushTokens;

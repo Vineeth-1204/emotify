@@ -350,7 +350,7 @@ describe("Priority 4 Step 4: Clinical Event Provenance (PROV-01 to PROV-07)", ()
     });
 
     // 1. Historical triage is readable via getLatest
-    const latestTriage = await admin.query(api.triage.getLatest, { userId: studentAId });
+    const latestTriage: any = await admin.query(api.triage.getLatest, { userId: studentAId });
     expect(latestTriage).not.toBeNull();
     expect(latestTriage!._id).toBe(histTriageId);
     expect(latestTriage!.attemptId).toBeUndefined();
@@ -453,7 +453,7 @@ describe("Priority 4 Step 4: Clinical Event Provenance (PROV-01 to PROV-07)", ()
     const admin = await staffViewer(t);
 
     // Independent alert created via alerts.createAlert
-    const alertId = await authedA.mutation(internal.alerts.createAlert, {
+    const alertId = await authedA.mutation(internal.alerts.createIndependentAlert, {
       type: "manual_sos",
     });
 

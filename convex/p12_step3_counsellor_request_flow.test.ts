@@ -201,7 +201,9 @@ describe("P12 Step 3: Counselor Request Flow Alignment", () => {
         .collect();
       expect(counselorNotifs.length).toBeGreaterThan(0);
       expect(counselorNotifs[0].type).toBe("counsellor_request");
-      expect(counselorNotifs[0].message).toContain("Student Alpha requested counselor support.");
+      // De-identified (as safety alerts): the student ID label, never the student's name.
+      expect(counselorNotifs[0].message).toContain("Student STU-P12-S3-A requested counselor support.");
+      expect(counselorNotifs[0].message).not.toContain("Alpha");
 
       const adminNotifs = await ctx.db
         .query("notifications")
@@ -236,7 +238,8 @@ describe("P12 Step 3: Counselor Request Flow Alignment", () => {
       expect(studentNotifs.length).toBeGreaterThan(0);
       const updateNotif = studentNotifs.find((n) => n.title.includes("Scheduled"));
       expect(updateNotif).toBeDefined();
-      expect(updateNotif?.type).toBe("counsellor_request");
+      // Student-side updates have their own type so they never use the staff push copy.
+      expect(updateNotif?.type).toBe("counsellor_request_update");
     });
   });
 
@@ -320,7 +323,7 @@ describe("P12 Step 3: Counselor Request Flow Alignment", () => {
       situation_text: "Crisis intervention requested",
     });
 
-    const alertId = await authedStudent.mutation(internal.alerts.createAlert, {
+    const alertId = await authedStudent.mutation(internal.alerts.createIndependentAlert, {
       userId: String(studentAId),
       type: "counselor_request",
     });

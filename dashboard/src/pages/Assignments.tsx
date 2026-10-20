@@ -58,6 +58,7 @@ export default function Assignments() {
     counsellorId: counsellorFilter ? (counsellorFilter as Id<"users">) : undefined,
   });
   const counsellors = useQuery(api.counsellorAssignments.listCounsellorUsers, { includeInactive: true });
+  const exceptions = useQuery(api.counsellorAssignments.getAdminExceptions, {});
   const assignMany = useMutation(api.counsellorAssignments.assignMany);
   const unassignMany = useMutation(api.counsellorAssignments.unassignMany);
 
@@ -134,6 +135,8 @@ export default function Assignments() {
         <Metric label="Needs reassignment" value={summary.assignedToInactiveCounsellor} note="Counsellor account deactivated" tone={summary.assignedToInactiveCounsellor > 0 ? "warn" : undefined} />
       </section>
 
+      {exceptions && <ExceptionsPanel exceptions={exceptions} />}
+
       <section className="glass-panel" style={{ padding: 0, overflow: "hidden" }} aria-labelledby="counsellors-title">
         <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border-color)" }}>
           <h2 id="counsellors-title" style={{ fontSize: "1.05rem", color: "var(--text-primary)" }}>Counsellors</h2>
@@ -160,7 +163,9 @@ export default function Assignments() {
                   </td>
                   <td style={{ ...cell, color: "var(--text-secondary)" }}>{[c.email, c.mobile_number].filter(Boolean).join(" · ") || "—"}</td>
                   <td style={cell}>
-                    {c.caseloadSize === 0 ? <span className="badge badge-yellow">No students</span> : c.caseloadSize}
+                    {c.caseloadSize === 0 ? <span className="badge badge-yellow">No students</span> : `${c.caseloadSize} / ${c.capacity}`}
+                    {c.capacityState === "full" && <span className="badge badge-red" style={{ marginLeft: 8 }}>Full</span>}
+                    {c.capacityState === "near" && <span className="badge badge-yellow" style={{ marginLeft: 8 }}>Near capacity</span>}
                   </td>
                   <td style={{ ...cell, textAlign: "right" }}>
                     <button className="btn btn-secondary" style={{ padding: "6px 12px", fontSize: "0.8rem" }} onClick={() => { onCounsellorFilter(String(c._id)); setStatus("all"); }}>
@@ -199,7 +204,9 @@ export default function Assignments() {
           <select aria-label="Counsellor to assign" value={target} onChange={(e) => setTarget(e.target.value)} style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--input-border)" }}>
             <option value="">Choose a counsellor…</option>
             {activeCounsellors.map((c) => (
-              <option key={c._id} value={String(c._id)}>{c.full_name} · {c.caseloadSize} student{c.caseloadSize === 1 ? "" : "s"}</option>
+              <option key={c._id} value={String(c._id)} disabled={c.capacityState === "full"}>
+                {c.full_name} · {c.caseloadSize}/{c.capacity}{c.capacityState === "full" ? " (full)" : c.capacityState === "near" ? " (near capacity)" : ""}
+              </option>
             ))}
           </select>
           <button className="btn btn-primary" disabled={saving || !target || selected.size === 0 || overLimit} onClick={requestAssign} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px" }}>
@@ -299,5 +306,34 @@ export default function Assignments() {
         </div>
       )}
     </div>
+  );
+}
+
+/** Items that need an administrator: one line each, only when non-zero. */
+function ExceptionsPanel({ exceptions }: { exceptions: any }) {
+  const items: Array<{ label: string; detail?: string; to?: string }> = [];
+  if (exceptions.unassignedStudents.count > 0) items.push({ label: `${exceptions.unassignedStudents.count} student${exceptions.unassignedStudents.count === 1 ? "" : "s"} without a counsellor` });
+  if (exceptions.studentsWithInactiveCounsellor.count > 0) items.push({ label: `${exceptions.studentsWithInactiveCounsellor.count} student${exceptions.studentsWithInactiveCounsellor.count === 1 ? "" : "s"} assigned to a deactivated counsellor`, detail: "Reassign them so a counsellor can open their records." });
+  for (const c of exceptions.counsellorsAtOrNearCapacity) {
+    items.push({ label: `${c.name}: ${c.caseloadSize}/${exceptions.capacity} students`, detail: c.state === "full" ? "Caseload full: new assignments are refused." : "Approaching the caseload limit." });
+  }
+  if (exceptions.openAppointmentsWithoutCounsellor.count > 0) items.push({ label: `${exceptions.openAppointmentsWithoutCounsellor.count} open appointment${exceptions.openAppointmentsWithoutCounsellor.count === 1 ? "" : "s"} without a counsellor`, detail: "Assign the student to a counsellor, or answer from Sessions.", to: "/sessions" });
+  if (exceptions.undeliveredSafetyAlerts > 0) items.push({ label: `${exceptions.undeliveredSafetyAlerts} safety alert${exceptions.undeliveredSafetyAlerts === 1 ? "" : "s"} reached no staff member`, detail: "Review them in the Alerts centre.", to: "/alerts" });
+  for (const f of exceptions.recentAssignmentFailures.slice(0, 5)) {
+    items.push({ label: `Assignment failed (${new Date(f.at).toLocaleString()})`, detail: f.error });
+  }
+  if (items.length === 0) return null;
+  return (
+    <section className="glass-panel" style={{ padding: "16px 20px", borderLeft: "4px solid #d97706" }} aria-labelledby="exceptions-title">
+      <h2 id="exceptions-title" style={{ fontSize: "1.05rem", color: "var(--text-primary)", marginBottom: 8 }}>Needs attention</h2>
+      <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 6 }}>
+        {items.map((item, i) => (
+          <li key={i} style={{ fontSize: "0.88rem", color: "var(--text-primary)" }}>
+            {item.to ? <a href={item.to}>{item.label}</a> : item.label}
+            {item.detail && <span style={{ color: "var(--text-secondary)" }}> — {item.detail}</span>}
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }

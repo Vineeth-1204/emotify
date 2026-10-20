@@ -59,7 +59,12 @@ export default function TabLayout() {
 
       const outcome = res as unknown as { deduplicated?: boolean; deliveryStatus?: string };
 
-      if (outcome && typeof outcome === "object" && outcome.deduplicated) {
+      if (outcome && typeof outcome === "object" && outcome.deduplicated && outcome.deliveryStatus === "notified") {
+        Alert.alert(
+          "Care Team Told Again",
+          "You already have an open request, and we've let your care team know again that you'd like to talk now. They will reach out to you as soon as they can."
+        );
+      } else if (outcome && typeof outcome === "object" && outcome.deduplicated && outcome.deliveryStatus !== "no_active_staff") {
         Alert.alert(
           "Request Already Active",
           "You already have an active request for counselor support. Our care team has your details and will reach out to you shortly."

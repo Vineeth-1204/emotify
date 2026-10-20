@@ -186,20 +186,23 @@ describe("Priority 5 Step 3: Longitudinal Readiness & Screening Migration Suite"
       expect(legacyRows.length).toBe(0);
     });
 
-    // Staff-only clinical reads: the student is refused, an admin sees the authoritative data
-    await expect(studentSession.query(api.screening.getLatest, {})).rejects.toThrow(/Counselor or Admin access required/);
-    await expect(studentSession.query(api.screening.getAll, {})).rejects.toThrow(/Counselor or Admin access required/);
+    // A student's own call gets only the minimal legacy-client view (no ids, flags or item answers);
+    // an admin sees the authoritative data
+    expect(await studentSession.query(api.screening.getLatest, {})).toEqual({ phq9_total: 7, gad7_total: 6 });
+    const ownRows: any[] = await studentSession.query(api.screening.getAll, {});
+    expect(ownRows).toHaveLength(1);
+    expect(Object.keys(ownRows[0]).sort()).toEqual(["createdAt", "gad7_total", "phq9_item9_score", "phq9_total", "pq16_total"]);
     const admin = await staffViewer(t);
 
     // Verify getLatest returns authoritative data mapped correctly
-    const latest = await admin.query(api.screening.getLatest, { userId: studentAId });
+    const latest: any = await admin.query(api.screening.getLatest, { userId: studentAId });
     expect(latest).not.toBeNull();
     expect(latest?.phq9_total).toBe(7);
     expect(latest?.gad7_total).toBe(6);
     expect(latest?.attemptId).toEqual(res.attemptId);
 
     // Verify getAll returns authoritative data
-    const all = await admin.query(api.screening.getAll, { userId: studentAId });
+    const all: any = await admin.query(api.screening.getAll, { userId: studentAId });
     expect(all.length).toBe(1);
     expect(all[0].phq9_total).toBe(7);
     expect(all[0].attemptId).toEqual(res.attemptId);
@@ -222,17 +225,17 @@ describe("Priority 5 Step 3: Longitudinal Readiness & Screening Migration Suite"
       });
     });
 
-    // Staff-only clinical reads: the student is refused, an admin sees the legacy fallback
-    await expect(studentSession.query(api.screening.getLatest, {})).rejects.toThrow(/Counselor or Admin access required/);
+    // The student's own call gets only the two totals from the legacy fallback; an admin sees the record
+    expect(await studentSession.query(api.screening.getLatest, {})).toEqual({ phq9_total: 11, gad7_total: 9 });
     const admin = await staffViewer(t);
 
     // Query getLatest & getAll
-    const latest = await admin.query(api.screening.getLatest, { userId: studentAId });
+    const latest: any = await admin.query(api.screening.getLatest, { userId: studentAId });
     expect(latest).not.toBeNull();
     expect(latest?.phq9_total).toBe(11);
     expect(latest?.gad7_total).toBe(9);
 
-    const all = await admin.query(api.screening.getAll, { userId: studentAId });
+    const all: any = await admin.query(api.screening.getAll, { userId: studentAId });
     expect(all.length).toBe(1);
     expect(all[0].phq9_total).toBe(11);
   });
@@ -290,11 +293,11 @@ describe("Priority 5 Step 3: Longitudinal Readiness & Screening Migration Suite"
       startedAt: Date.now() - 10000,
     });
 
-    // Student B can no longer use the staff screening read at all (own or other)
-    await expect(sessionB.query(api.screening.getAll, {})).rejects.toThrow(/Counselor or Admin access required/);
+    // Student B's own legacy-client view is empty; naming Student A is refused
+    expect(await sessionB.query(api.screening.getAll, {})).toEqual([]);
     await expect(
       sessionB.query(api.screening.getAll, { userId: studentAId })
-    ).rejects.toThrow(/Counselor or Admin access required|Students can access ONLY/);
+    ).rejects.toThrow(/Students can access ONLY/);
 
     // Student B's own self-service export is empty (does not leak Student A's records)
     const bScreenings = await sessionB.query(api.screening.exportMyScreenings, {});

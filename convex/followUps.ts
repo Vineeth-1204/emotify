@@ -3,6 +3,7 @@ import { mutation, query } from "./functions";
 import { checkRateLimit } from "./rateLimiter";
 import { assertCanAccessStudent, getAuthenticatedUser, getStaffScope, getStaffRecipientsForStudent, requireCounselorOrAdmin } from "./authz";
 import type { Doc } from "./_generated/dataModel";
+import { legacyFollowUpSourceType } from "../common/legacyClientCompat";
 import { sanitizePlainText } from "./sanitizer";
 
 export const create = mutation({
@@ -132,6 +133,9 @@ export const create = mutation({
 export const getPending = query({
   args: { userId: v.optional(v.string()) },
   handler: async (ctx, args) => {
+    // Staff-only: returns full follow-up rows (staff notes, completedBy, clinical links). No app
+    // build calls it; students use getStudentFollowUps, which returns a minimal projection.
+    await requireCounselorOrAdmin(ctx);
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return [];
     const targetUserId = args.userId || identity.subject;
@@ -232,6 +236,9 @@ export const getStudentFollowUps = query({
         status: f.status,
         completedAt: f.completedAt,
         selfInitiated: f.sourceType === "self_initiated",
+        // Legacy-client compatibility: older builds decide "Complete" vs "Awaiting counsellor"
+        // from sourceType. Reduced to two values; the real source category stays staff-only.
+        sourceType: legacyFollowUpSourceType(f.sourceType),
       }));
     }
 

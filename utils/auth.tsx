@@ -4,6 +4,7 @@ import * as LocalAuthentication from "expo-local-authentication";
 import { ConvexReactClient } from "convex/react";
 import { AppState, AppStateStatus } from "react-native";
 import { api } from "../convex/_generated/api";
+import { getRegisteredToken, rememberRegisteredToken } from "@/utils/notifications";
 
 interface User {
   id: string;
@@ -231,7 +232,15 @@ export function AuthProvider({ children, convex }: { children: React.ReactNode; 
     setIsLoggingOut(true);
     
     const currentToken = tokenRef.current;
-    
+
+    // Unregister this device's push token while the session is still valid, so the next person
+    // to use this phone never receives this account's notifications.
+    const pushToken = await getRegisteredToken();
+    if (pushToken && currentToken) {
+      await convex.mutation(api.pushTokens.removePushToken, { token: pushToken }).catch(() => {});
+    }
+    await rememberRegisteredToken(null);
+
     tokenRef.current = null;
     setToken(null);
     setUser(null);

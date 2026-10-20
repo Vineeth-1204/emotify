@@ -1,12 +1,22 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { expect, test, describe } from "vitest";
+import { expect, test, describe, vi, beforeAll, afterAll } from "vitest";
 import { api } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import schema from "./schema";
 import { assignAllPatientsToCounsellors } from "../test-utils/identity";
 
 const modules = import.meta.glob("./**/*.ts");
+
+// Appointment fixtures use fixed October 2026 dates. Requests must not be in the past, so the
+// clock is pinned to the date these fixtures were written for (only Date is faked).
+beforeAll(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-10-05T09:00:00Z"));
+});
+afterAll(() => {
+  vi.useRealTimers();
+});
 
 describe("P12 Step 4: Appointment Lifecycle & Provenance Integration", () => {
   async function setupEnvironment() {
@@ -548,9 +558,10 @@ describe("P12 Step 4: Appointment Lifecycle & Provenance Integration", () => {
     });
 
     expect(notifications.length).toBeGreaterThan(0);
-    const acceptedNotif = notifications.find((n) => n.type === "appointment_accepted");
+    // Type/title follow the notification event matrix ("confirmed"); recipient rule unchanged.
+    const acceptedNotif = notifications.find((n) => n.type === "appointment_confirmed");
     expect(acceptedNotif).toBeDefined();
-    expect(acceptedNotif?.title).toBe("Appointment Accepted");
+    expect(acceptedNotif?.title).toBe("Appointment confirmed");
     expect(acceptedNotif?.recipientId).toBe(String(studentAId));
   });
 

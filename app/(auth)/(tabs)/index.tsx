@@ -29,6 +29,7 @@ import { HappyEmotionIcon, CalmEmotionIcon, SadEmotionIcon, WorriedEmotionIcon }
 import { MindfulnessActivityIcon, MuscleRelaxActivityIcon, JournalActivityIcon, HabitMicrogoalIcon, BreathingIcon, GroundingIcon } from "@/components/svg/activities";
 import { ACTIVE_SCREENING_QUESTIONS_COUNT } from "@/constants/Screening";
 import { getLocalDateString } from "@/utils/date";
+import { badgeLabel } from "@/common/notificationCentre";
 
 const { width } = Dimensions.get('window');
 
@@ -650,6 +651,7 @@ export default function DashboardScreen() {
                   {gamification?.coins ?? (appUser?.coins ?? 0)}
                 </Text>
               </View>
+              <NotificationBell />
               <View style={[styles.avatarCircle, { backgroundColor: colors.primary }]}>
                 <Text style={styles.avatarText}>
                   {alias.substring(0, 2).toUpperCase()}
@@ -2398,5 +2400,26 @@ function stylesFactory(colors: any) {
   };
 }
 
-
-
+/** Header bell: opens the notification centre; the badge is the server's unread count. */
+function NotificationBell() {
+  const router = useRouter();
+  const colors = useThemeColors();
+  const { t } = useLanguage();
+  const unread = useQuery(api.notificationCenter.unreadCount, {});
+  const label = badgeLabel(unread);
+  return (
+    <TouchableOpacity
+      onPress={() => router.push("/(auth)/notifications" as any)}
+      accessibilityRole="button"
+      accessibilityLabel={t("notifications.centre.bellLabel", { count: unread?.count ?? 0 })}
+      style={{ width: 42, height: 42, borderRadius: 21, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface, borderColor: "#E2E8F0", borderWidth: 1 }}
+    >
+      <Ionicons name="notifications-outline" size={20} color={colors.text} />
+      {label && (
+        <View style={{ position: "absolute", top: -2, right: -2, minWidth: 18, height: 18, borderRadius: 9, paddingHorizontal: 4, backgroundColor: colors.primary, alignItems: "center", justifyContent: "center" }}>
+          <Text style={{ color: "#FFFFFF", fontSize: 10, fontFamily: Theme.fontFamily.bold }}>{label}</Text>
+        </View>
+      )}
+    </TouchableOpacity>
+  );
+}

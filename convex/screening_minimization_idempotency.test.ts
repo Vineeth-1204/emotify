@@ -99,19 +99,51 @@ describe("Task A: students cannot read clinical internals", () => {
     ["counsellorRequests.getRequestById", api.counsellorRequests.getRequestById, { requestId: r.requestId }],
     ["followUps.getFollowUpById", api.followUps.getFollowUpById, { id: r.followUpId }],
     ["followUps.getFollowUpsByAppointmentId", api.followUps.getFollowUpsByAppointmentId, { appointmentId: r.appointmentId }],
+    ["followUps.getPending", api.followUps.getPending, { userId: self }],
+    ["dashboard.getPatientCbtAnalytics", api.dashboard.getPatientCbtAnalytics, { userId: self }],
   ];
 
-  test("every staff clinical read refuses a student, even for their own records", async () => {
+  /**
+   * Reads that older app builds call for the student's own record. They answer a student's own
+   * call with a minimal legacy view (legacy_client_compat.test.ts) and stay staff-only otherwise.
+   * Exact keys each legacy view may contain:
+   */
+  const LEGACY_VIEW_KEYS: Record<string, string[]> = {
+    "screening.getLatest": ["gad7_total", "phq9_total"],
+    "screening.getAll": ["createdAt", "gad7_total", "phq9_item9_score", "phq9_total", "pq16_total"],
+    "triage.getLatest": ["level"],
+  };
+  const legacyName = (name: string) => name.split(" ")[0];
+
+  test("every staff clinical read refuses a student, even for their own records (legacy reads: minimal view only)", async () => {
     const { as, studentA, ref } = await withClinicalData();
     for (const [name, fn, args] of STAFF_ONLY(ref, studentA)) {
-      await expect(as(studentA).query(fn, args), name).rejects.toThrow(/Counselor or Admin access required/);
+      const legacyKeys = LEGACY_VIEW_KEYS[legacyName(name)];
+      if (!legacyKeys) {
+        await expect(as(studentA).query(fn, args), name).rejects.toThrow(/Counselor or Admin access required/);
+        continue;
+      }
+      const result: any = await as(studentA).query(fn, args);
+      for (const row of Array.isArray(result) ? result : [result]) {
+        expect(Object.keys(row).sort(), name).toEqual(legacyKeys);
+      }
+      const text = JSON.stringify(result);
+      for (const internal of [String(ref.attemptId), String(ref.triageId), String(ref.alertId), "Flag\"", "attemptId", "triageId", "results", "responses"]) {
+        expect(text, `${name} leaks ${internal}`).not.toContain(internal);
+      }
     }
   });
 
   test("every staff clinical read refuses another student and unauthenticated callers", async () => {
     const { t, as, studentA, studentB, ref } = await withClinicalData();
     for (const [name, fn, args] of STAFF_ONLY(ref, studentA)) {
-      await expect(as(studentB).query(fn, args), name).rejects.toThrow(/Counselor or Admin access required/);
+      if (LEGACY_VIEW_KEYS[legacyName(name)] && !("userId" in args)) {
+        // No target: Student B's call answers about Student B (no check-in yet), never Student A.
+        const own: any = await as(studentB).query(fn, args);
+        expect(own === null || (Array.isArray(own) && own.length === 0), name).toBe(true);
+      } else {
+        await expect(as(studentB).query(fn, args), name).rejects.toThrow(/Counselor or Admin access required|Students can access ONLY/);
+      }
       await expect(t.query(fn, args), name).rejects.toThrow(/Unauthenticated|Login required/);
     }
   });
@@ -221,10 +253,12 @@ describe("Task A: students cannot read clinical internals", () => {
     await submit(as(studentA), SUICIDE, KEY_A);
     const mine: any[] = await as(studentA).query(api.followUps.getStudentFollowUps, {});
     expect(mine).toHaveLength(1);
-    const allowed = new Set(["_id", "completed", "completedAt", "dueDate", "selfInitiated", "status", "type"]);
+    const allowed = new Set(["_id", "completed", "completedAt", "dueDate", "selfInitiated", "status", "type", "sourceType"]);
     for (const key of Object.keys(mine[0])) expect(allowed.has(key), key).toBe(true);
     for (const key of ["_id", "completed", "dueDate", "selfInitiated", "status", "type"]) expect(mine[0], key).toHaveProperty(key);
-    for (const hidden of ["userId", "attemptId", "triageId", "sourceType", "appointmentId", "counselorId", "notes"]) expect(mine[0]).not.toHaveProperty(hidden);
+    for (const hidden of ["userId", "attemptId", "triageId", "appointmentId", "completedBy", "notes"]) expect(mine[0]).not.toHaveProperty(hidden);
+    // Legacy-client field, reduced: screening-review follow-ups read as "care_team", never "screening"
+    expect(mine[0].sourceType).toBe("care_team");
     expect(mine[0]).toMatchObject({ type: "screening_review", completed: false, selfInitiated: false });
     await expect(as(studentB).query(api.followUps.getStudentFollowUps, { userId: studentA })).rejects.toThrow(/Unauthorized/);
     const staff: any[] = await as(admin).query(api.followUps.getStudentFollowUps, { userId: studentA });

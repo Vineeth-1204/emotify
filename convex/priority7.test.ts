@@ -559,7 +559,7 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
     expect(latestAttempt?._id).toBe(completedAttempt.attemptId);
 
     // getLatest query also returns latest completed screening
-    const latestScreening = await admin.query(api.screening.getLatest, {
+    const latestScreening: any = await admin.query(api.screening.getLatest, {
       userId: studentAId,
     });
     expect(latestScreening).not.toBeNull();
@@ -1122,7 +1122,7 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
     expect((stats as any).screenings).toBeUndefined();
     expect((stats as any).triages).toBeUndefined();
 
-    const screenings = await admin.query(api.screening.getAll, { userId: studentAId });
+    const screenings: any = await admin.query(api.screening.getAll, { userId: studentAId });
     expect(screenings.length).toBe(1);
     expect((screenings[0] as any).status).toBe("completed");
     expect(screenings[0].phq9_total).toBeDefined();
@@ -1196,7 +1196,7 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
     const stats = await studentASession.query(api.insights.getDailyStats, { userId: studentAId });
     expect((stats as any).screenings).toBeUndefined();
 
-    const screenings = await admin.query(api.screening.getAll, { userId: studentAId });
+    const screenings: any = await admin.query(api.screening.getAll, { userId: studentAId });
     expect(screenings.length).toBe(1);
     expect((screenings[0] as any).status).toBe("completed");
   });
@@ -1232,7 +1232,7 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
     const stats = await studentASession.query(api.insights.getDailyStats, { userId: studentAId });
     expect((stats as any).screenings).toBeUndefined();
 
-    const screenings = await admin.query(api.screening.getAll, { userId: studentAId });
+    const screenings: any = await admin.query(api.screening.getAll, { userId: studentAId });
     expect(screenings.length).toBe(1);
     const s = screenings[0];
     expect(s.phq9_total).toBe(14);
@@ -1336,7 +1336,7 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
     expect(stats.totalCheckins).toBe(1);
     expect(stats.totalCalmPoints).toBe(10);
 
-    const screenings = await admin.query(api.screening.getAll, { userId: studentAId });
+    const screenings: any = await admin.query(api.screening.getAll, { userId: studentAId });
     expect(screenings.length).toBe(1);
     expect(screenings[0]._id).toBe(legacyScreeningId);
 
@@ -1465,7 +1465,7 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
     expect((stats as any).screenings).toBeUndefined();
     expect((stats as any).triages).toBeUndefined();
 
-    const allScreenings = await admin.query(api.screening.getAll, { userId: studentAId });
+    const allScreenings: any = await admin.query(api.screening.getAll, { userId: studentAId });
     expect(allScreenings.length).toBe(55);
 
     // Lifetime total checkins must NOT be truncated
@@ -1730,7 +1730,7 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
     const stats = await studentASession.query(api.insights.getDailyStats, { userId: studentAId });
     expect((stats as any).screenings).toBeUndefined();
 
-    const screenings = await admin.query(api.screening.getAll, { userId: studentAId });
+    const screenings: any = await admin.query(api.screening.getAll, { userId: studentAId });
     expect(screenings.length).toBe(2);
     expect(screenings.every((s: any) => s.status === "completed")).toBe(true);
     expect(screenings[0].phq9_total).toBe(6);
@@ -2412,7 +2412,12 @@ describe("Priority 7 Implementation: Phases 1–4 Test Suite", () => {
       });
     });
 
-    const pending = await studentSession.query(api.followUps.getPending, { userId: studentAId });
+    // getPending returns full rows (staff notes, links): staff-only. The student reads the same
+    // historical follow-up through the minimal getStudentFollowUps view.
+    await expect(studentSession.query(api.followUps.getPending, { userId: studentAId })).rejects.toThrow(/Counselor or Admin access required/);
+    const own: any[] = await studentSession.query(api.followUps.getStudentFollowUps, {});
+    expect(own.map((f) => f._id)).toEqual([legacyFollowUpId!]);
+    const pending = await staffSession.query(api.followUps.getPending, { userId: studentAId });
     expect(pending.length).toBe(1);
     expect(pending[0]._id).toBe(legacyFollowUpId!);
     expect(pending[0].attemptId).toBeUndefined();

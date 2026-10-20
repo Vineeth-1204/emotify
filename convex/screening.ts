@@ -4,7 +4,7 @@ import { mutation, query } from "./functions";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { checkRateLimit } from "./rateLimiter";
-import { assertCanAccessStudent, requireCounselorOrAdmin, getSelfStudent, getAuthenticatedUser } from "./authz";
+import { assertCanAccessStudent, requireCounselorOrAdmin, getSelfStudent, getAuthenticatedUser, legacySelfStudent } from "./authz";
 import { insertSafetyAlert } from "./alerts";
 import { followUpIntervalMs } from "./followUps";
 import {
@@ -564,6 +564,16 @@ export const getAttemptById = query({
 export const getLatest = query({
   args: { userId: v.optional(v.string()) },
   handler: async (ctx, args) => {
+    // Legacy-client compatibility: older app builds read their own latest totals here for the
+    // Home wellbeing cards. They get only those two totals (already shown on Home and in the
+    // student's export); no ids, flags or item answers. New builds use getMyWellbeingIndicators.
+    const legacy = await legacySelfStudent(ctx, args.userId);
+    if (legacy) {
+      console.log("[legacy-client] screening.getLatest");
+      const totals = latestTotals(await ownScreeningHistory(ctx, legacy.keys));
+      return totals ? { phq9_total: totals.phq9, gad7_total: totals.gad7 } : null;
+    }
+
     // Staff-only clinical read: students use the minimal self-service endpoints instead.
     await requireCounselorOrAdmin(ctx);
     const identity = await ctx.auth.getUserIdentity();
@@ -629,6 +639,20 @@ export const getLatest = query({
 export const getAll = query({
   args: { userId: v.optional(v.string()) },
   handler: async (ctx, args) => {
+    // Legacy-client compatibility: older app builds export the student's own history from here
+    // (Profile > Export). They get exactly the exportMyScreenings rows under the old field names.
+    const legacy = await legacySelfStudent(ctx, args.userId);
+    if (legacy) {
+      console.log("[legacy-client] screening.getAll");
+      return ownExportRows(await ownScreeningHistory(ctx, legacy.keys)).map((r) => ({
+        phq9_total: r.phq9Total,
+        gad7_total: r.gad7Total,
+        pq16_total: r.pq16Total,
+        phq9_item9_score: r.phq9Item9,
+        createdAt: r.completedAt,
+      }));
+    }
+
     // Staff-only clinical read: students use the minimal self-service endpoints instead.
     await requireCounselorOrAdmin(ctx);
     const identity = await ctx.auth.getUserIdentity();
@@ -816,11 +840,9 @@ export const getMyWellbeingIndicators = query({
   handler: async (ctx) => {
     const self = await getSelfStudent(ctx);
     if (!self) return null;
-    const { attempts, legacy } = await ownScreeningHistory(ctx, self.keys);
-    const latest = attempts[0];
-    const phq9 = latest ? latest.results?.phq9?.score : legacy[0]?.phq9_total;
-    const gad7 = latest ? latest.results?.gad7?.score : legacy[0]?.gad7_total;
-    if (typeof phq9 !== "number" || typeof gad7 !== "number") return null;
+    const totals = latestTotals(await ownScreeningHistory(ctx, self.keys));
+    if (!totals) return null;
+    const { phq9, gad7 } = totals;
     // Same bands and colours the Home cards used when they read raw totals.
     return {
       emotionalBalance: {
@@ -849,22 +871,37 @@ export const exportMyScreenings = query({
   handler: async (ctx) => {
     const self = await getSelfStudent(ctx);
     if (!self) return [];
-    const { attempts, legacy } = await ownScreeningHistory(ctx, self.keys);
-    if (attempts.length > 0) {
-      return attempts.map((a) => ({
-        completedAt: a.completedAt || a.startedAt,
-        phq9Total: a.results?.phq9?.score ?? 0,
-        gad7Total: a.results?.gad7?.score ?? 0,
-        pq16Total: a.results?.pq16?.score ?? 0,
-        phq9Item9: a.results?.phq9?.item9Score ?? 0,
-      }));
-    }
-    return legacy.map((l) => ({
-      completedAt: l.createdAt,
-      phq9Total: l.phq9_total,
-      gad7Total: l.gad7_total,
-      pq16Total: l.pq16_total,
-      phq9Item9: l.phq9_item9_score ?? 0,
-    }));
+    return ownExportRows(await ownScreeningHistory(ctx, self.keys));
   },
 });
+
+type OwnScreeningHistory = Awaited<ReturnType<typeof ownScreeningHistory>>;
+
+/** Latest PHQ-9 and GAD-7 totals: newest completed attempt, else newest legacy screening. */
+function latestTotals({ attempts, legacy }: OwnScreeningHistory): { phq9: number; gad7: number } | null {
+  const latest = attempts[0];
+  const phq9 = latest ? latest.results?.phq9?.score : legacy[0]?.phq9_total;
+  const gad7 = latest ? latest.results?.gad7?.score : legacy[0]?.gad7_total;
+  if (typeof phq9 !== "number" || typeof gad7 !== "number") return null;
+  return { phq9, gad7 };
+}
+
+/** The student's own export rows: totals and their own item-9 answer, no triage, flags or ids. */
+function ownExportRows({ attempts, legacy }: OwnScreeningHistory) {
+  if (attempts.length > 0) {
+    return attempts.map((a) => ({
+      completedAt: a.completedAt || a.startedAt,
+      phq9Total: a.results?.phq9?.score ?? 0,
+      gad7Total: a.results?.gad7?.score ?? 0,
+      pq16Total: a.results?.pq16?.score ?? 0,
+      phq9Item9: a.results?.phq9?.item9Score ?? 0,
+    }));
+  }
+  return legacy.map((l) => ({
+    completedAt: l.createdAt,
+    phq9Total: l.phq9_total,
+    gad7Total: l.gad7_total,
+    pq16Total: l.pq16_total,
+    phq9Item9: l.phq9_item9_score ?? 0,
+  }));
+}

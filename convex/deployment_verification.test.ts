@@ -14,6 +14,9 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";
 import authConfig from "./auth.config";
+import { isRevokedSigningKey } from "./authHelpers";
+import fs from "node:fs";
+import path from "node:path";
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -264,5 +267,77 @@ describe("Deployment verification: JWT_PRIVATE_JWK", () => {
     const anon = t;
     await expect(anon.mutation(api.screening.submitScreeningAttempt, { responses: { phq9, gad7, pq16 } })).rejects.toThrow(/Unauthenticated/);
     await expect(anon.mutation(api.alerts.recordEmergencyScreenDismissal, {})).rejects.toThrow(/Unauthenticated/);
+  });
+});
+
+/**
+ * The static key committed to git history (kid "static-key-1") is public, so anyone could forge
+ * tokens with it. The active implementation must never sign with it, publish it, or accept tokens
+ * that name it, even if it is configured again by mistake.
+ */
+describe("Revoked historical signing key", () => {
+  const REVOKED_MODULUS_PREFIX = "0CmBQeFhFsxN4MTkynWRuJbTbBfOk-OJvUAAkPWx55l";
+
+  async function withConfiguredKey<T>(jwk: object, fn: () => Promise<T>): Promise<T> {
+    const previous = process.env.JWT_PRIVATE_JWK;
+    process.env.JWT_PRIVATE_JWK = JSON.stringify(jwk);
+    try {
+      return await fn();
+    } finally {
+      process.env.JWT_PRIVATE_JWK = previous;
+    }
+  }
+
+  test("a freshly generated key is accepted; its kid signs tokens and is the only published key", async () => {
+    const jwk = JSON.parse(process.env.JWT_PRIVATE_JWK!);
+    expect(isRevokedSigningKey(jwk)).toBe(false);
+    expect(jwk.kid).not.toBe("static-key-1");
+    expect(jwk.n.startsWith(REVOKED_MODULUS_PREFIX)).toBe(false);
+
+    const t = convexTest(schema, modules);
+    await seed(t);
+    const { token } = await login(t, "9000000001", "Verify-pass-1");
+    expect(decodePart(token.split(".")[0]).kid).toBe(jwk.kid);
+    const { keys } = await (await t.fetch("/.well-known/jwks.json", { method: "GET" })).json();
+    expect(keys.map((k: any) => k.kid)).toEqual([jwk.kid]);
+    await verifyLikeConvex(t, token);
+  });
+
+  test("tokens naming the historical kid are refused even with a valid-looking signature", async () => {
+    const t = convexTest(schema, modules);
+    await seed(t);
+    const { token } = await login(t, "9000000001", "Verify-pass-1");
+    const [, payload] = token.split(".");
+    const header = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT", kid: "static-key-1" })).toString("base64url");
+    const forged = await forgeWithForeignKey(`${header}.${payload}.x`);
+    await expect(verifyLikeConvex(t, forged)).rejects.toThrow(/no JWKS key for token kid/);
+  });
+
+  test("configuring the revoked key (by kid or by modulus) fails closed: no JWKS, no login", async () => {
+    const fresh = JSON.parse(process.env.JWT_PRIVATE_JWK!);
+    const variants = [
+      { ...fresh, kid: "static-key-1" },
+      { ...fresh, kid: "emotify-2026-10-19-deadbeef", n: REVOKED_MODULUS_PREFIX + fresh.n.slice(REVOKED_MODULUS_PREFIX.length) },
+    ];
+    for (const revoked of variants) {
+      expect(isRevokedSigningKey(revoked)).toBe(true);
+      await withConfiguredKey(revoked, async () => {
+        const t = convexTest(schema, modules);
+        const jwks = await t.fetch("/.well-known/jwks.json", { method: "GET" });
+        expect(jwks.status).toBe(500);
+        expect(JSON.stringify(await jwks.json())).not.toContain(revoked.n.slice(0, 20));
+        await expect(t.mutation(api.users.registerStudent, { full_name: "New", mobile_number: "9000000003", password: "Verify-pass-1" })).rejects.toThrow(/revoked key/);
+      });
+    }
+  });
+
+  test("no private key material is present in the Convex source", () => {
+    const dir = path.resolve(__dirname);
+    for (const file of fs.readdirSync(dir).filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"))) {
+      const src = fs.readFileSync(path.join(dir, file), "utf8");
+      expect(src, file).not.toMatch(/STATIC_JWK_PRIVATE/);
+      expect(src, file).not.toMatch(/"d"\s*:\s*"[A-Za-z0-9_-]{100,}"/);
+      expect(src, file).not.toMatch(/BEGIN (RSA )?PRIVATE KEY/);
+    }
   });
 });

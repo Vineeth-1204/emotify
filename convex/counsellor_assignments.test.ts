@@ -326,7 +326,16 @@ describe("caseload authorization across clinical endpoints", () => {
     const before = await snapshot();
     await as(admin).mutation(api.counsellorAssignments.assign, { studentId: s1 as any, counsellorId: counsellorB as any });
     await as(admin).mutation(api.counsellorAssignments.unassign, { studentId: s1 as any });
-    expect(await snapshot()).toEqual(before);
+    const after = await snapshot();
+    // Clinical records are untouched.
+    for (const table of ["screeningAttempts", "triages", "alerts", "followUps", "counsellorRequests", "clinicalTimelines"]) {
+      expect(after[table], table).toEqual(before[table]);
+    }
+    // Open appointments follow the student (workflow fields: counsellorId, status, history), but
+    // their identity and provenance never change.
+    const provenance = (rows: any[]) =>
+      rows.map(({ _id, userId, attemptId, triageId, counsellorRequestId, date, time, title, reason, createdAt }) => ({ _id, userId, attemptId, triageId, counsellorRequestId, date, time, title, reason, createdAt }));
+    expect(provenance(after.appointments)).toEqual(provenance(before.appointments));
   });
 
   test("the new counsellor is told about open safety alerts at hand-over", async () => {

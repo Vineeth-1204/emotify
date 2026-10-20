@@ -151,6 +151,7 @@
     "gender_non-binary": "Non-binary",
     "gender_other": "Other",
     "gender_prefer-not-to-say": "Prefer not to say",
+    "emergencyContact": "Emergency Contact",
     "emergencyContactLabel": "Emergency Contact Name",
     "emergencyPhoneLabel": "Emergency Contact Phone",
     "saveProfile": "Save Changes",

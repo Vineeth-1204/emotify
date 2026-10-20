@@ -283,7 +283,7 @@ export default function ProfileScreen() {
         style={StyleSheet.absoluteFill}
       />
 
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={[styles.content, { paddingBottom: 160 }]} showsVerticalScrollIndicator={false}>
         {/* Signature Header */}
         <View style={styles.header}>
           <View style={styles.avatarWrapper}>
@@ -489,8 +489,9 @@ export default function ProfileScreen() {
             <View style={styles.divider} />
             <DetailRow
               icon="call-outline"
-              label={t("profile.emergencyContactLabel")}
-              value={dbUser.emergencyContactName ? `${dbUser.emergencyContactName}${dbUser.emergencyContactPhone ? ` (${dbUser.emergencyContactPhone})` : ''}` : "-"}
+              label={t("profile.emergencyContact")}
+              value={dbUser.emergencyContactName || "-"}
+              subValue={dbUser.emergencyContactPhone || undefined}
               colors={colors}
               styles={styles}
             />
@@ -605,7 +606,7 @@ export default function ProfileScreen() {
           icon={<Ionicons name="log-out-outline" size={20} color={colors.error} />}
         />
 
-        <View style={{ height: 120 }} />
+        <View style={{ height: 20 }} />
       </ScrollView>
 
       {/* CUSTOMIZE COMPANION MODAL */}
@@ -1033,14 +1034,39 @@ function IdentityCard({ icon, label, color, traits, value, loading, styles }: an
   );
 }
 
-function DetailRow({ icon, label, value, colors, styles }: { icon: any; label: string; value: string; colors: any; styles: any }) {
+function DetailRow({
+  icon,
+  label,
+  value,
+  subValue,
+  colors,
+  styles,
+}: {
+  icon: any;
+  label: string;
+  value: string;
+  subValue?: string;
+  colors: any;
+  styles: any;
+}) {
   return (
     <View style={styles.row}>
       <View style={styles.rowLeft}>
         <Ionicons name={icon} size={18} color={colors.textSecondary} style={styles.icon} />
-        <Text style={styles.label}>{label}</Text>
+        <Text style={styles.label} numberOfLines={1}>
+          {label}
+        </Text>
       </View>
-      <Text style={styles.value}>{value}</Text>
+      <View style={styles.rowRight}>
+        <Text style={styles.value} numberOfLines={1}>
+          {value}
+        </Text>
+        {subValue ? (
+          <Text style={styles.subValue} numberOfLines={1}>
+            {subValue}
+          </Text>
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -1207,11 +1233,20 @@ function stylesFactory(colors: any) {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    padding: 14,
+    paddingVertical: 13,
+    paddingHorizontal: 14,
+    gap: 12,
   } as ViewStyle,
   rowLeft: {
     flexDirection: "row",
     alignItems: "center",
+    flexShrink: 0,
+    maxWidth: "52%",
+  } as ViewStyle,
+  rowRight: {
+    alignItems: "flex-end",
+    justifyContent: "center",
+    flex: 1,
   } as ViewStyle,
   icon: {
     marginRight: 12,
@@ -1225,6 +1260,14 @@ function stylesFactory(colors: any) {
     fontFamily: Theme.fontFamily.bold,
     fontSize: 14,
     color: colors.textSecondary,
+    textAlign: "right",
+  } as TextStyle,
+  subValue: {
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: 12,
+    color: colors.textMuted,
+    marginTop: 2,
+    textAlign: "right",
   } as TextStyle,
   divider: {
     height: 1,

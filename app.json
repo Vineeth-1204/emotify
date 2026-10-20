@@ -22,7 +22,8 @@
         "android.permission.USE_FINGERPRINT",
         "android.permission.POST_NOTIFICATIONS"
       ],
-      "package": "com.emotify_dev.emotify"
+      "package": "com.emotify_dev.emotify",
+      "googleServicesFile": "./android/app/google-services.json"
     },
     "web": {
       "output": "static",
@@ -63,8 +64,9 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "9a5891d9-824b-46b8-a928-4daf6a5fb502"
+        "projectId": "4f9d28f2-8302-4f94-8e9d-9f5fc8c2f30c"
       }
-    }
+    },
+    "owner": "vineeth07s-team"
   }
 }

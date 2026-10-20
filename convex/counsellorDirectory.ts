@@ -2,8 +2,9 @@ import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { mutation, query } from "./functions";
-import { requireAdmin } from "./authz";
+import { requireAdmin, getAuthenticatedUser } from "./authz";
 import { logAuditEvent } from "./audit";
+import { hashPassword } from "./authHelpers";
 
 /**
  * Staff directory (`counsellors` table): the institution's contact details for a counsellor,
@@ -100,6 +101,8 @@ export const listForAdmin = query({
         _id: e._id,
         name: e.name,
         role: e.role,
+        specialization: e.specialization ?? null,
+        maxWorkload: e.maxWorkload ?? 20,
         status: e.status,
         email: e.email,
         phone: e.phone,
@@ -218,3 +221,153 @@ export const setContactVisibility = mutation({
 export async function validateNewEntryLink(ctx: MutationCtx, userId: Id<"users"> | undefined) {
   if (userId) await assertLinkable(ctx, userId, null);
 }
+
+/**
+ * Admin: atomically create an authenticated counsellor user account, create a staff
+ * directory profile, and link the two records in a single ACID transaction.
+ *
+ * Requirements:
+ * - Admin-only authorization enforced on the server.
+ * - Role is assigned server-side as "counsellor" (never chosen by client).
+ * - Password hashed with bcryptjs; plain-text password is never logged or returned.
+ * - Unique mobile number enforced (10 digits).
+ * - Caseload capacity strictly capped (maximum 20 students).
+ * - Rollback on any failure ensures no orphaned account or directory entry.
+ */
+export const provisionCounsellor = mutation({
+  args: {
+    name: v.string(),
+    mobile_number: v.string(),
+    password: v.string(),
+    email: v.string(),
+    phone: v.optional(v.string()),
+    campus: v.optional(v.string()),
+    role: v.optional(v.string()),
+    specialization: v.optional(v.string()),
+    availability: v.optional(v.array(v.string())),
+    maxWorkload: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const admin = await requireAdmin(ctx);
+
+    const name = args.name.trim();
+    if (!name) {
+      throw new Error("Name is required.");
+    }
+
+    const cleanMobile = args.mobile_number.replace(/\D/g, "");
+    if (cleanMobile.length !== 10) {
+      throw new Error("Please enter a valid 10-digit mobile number.");
+    }
+
+    if (!args.password || args.password.length < 6) {
+      throw new Error("Password must be at least 6 characters long.");
+    }
+
+    const normalizedEmail = normaliseEmail(args.email);
+    const normalizedPhone = args.phone ? normalisePhone(args.phone) : "";
+
+    const workload = args.maxWorkload ?? 15;
+    if (typeof workload !== "number" || workload < 1 || workload > 20) {
+      throw new Error("Caseload capacity must be between 1 and 20 students.");
+    }
+
+    // Check duplicate mobile number
+    const existingUser = await ctx.db
+      .query("users")
+      .withIndex("by_mobile_number", (q) => q.eq("mobile_number", cleanMobile))
+      .first();
+
+    if (existingUser) {
+      throw new Error("Mobile number is already registered.");
+    }
+
+    // Hash password using the repository's bcrypt convention
+    const password_hash = await hashPassword(args.password);
+
+    const now = Date.now();
+
+    // 1. Create authenticated counsellor user account
+    const newUserId = await ctx.db.insert("users", {
+      full_name: name,
+      mobile_number: cleanMobile,
+      email: normalizedEmail || undefined,
+      campus: args.campus?.trim() || undefined,
+      password_hash,
+      role: "counsellor", // Strictly server-assigned
+      status: "active",
+      is_first_login: true,
+      created_at: now,
+      updated_at: now,
+      onboardingComplete: false,
+      screeningComplete: false,
+      biometricEnabled: false,
+    });
+
+    // 2. Create staff directory entry linked to the new user ID
+    const newEntryId = await ctx.db.insert("counsellors", {
+      userId: newUserId,
+      name,
+      email: normalizedEmail,
+      phone: normalizedPhone,
+      role: args.role?.trim() || "counsellor",
+      specialization: args.specialization?.trim() || undefined,
+      availability: args.availability && args.availability.length > 0 ? args.availability : ["Mon-Fri (09:00 - 17:00)"],
+      maxWorkload: workload,
+      currentWorkload: 0,
+      rating: 5.0,
+      status: "active",
+      createdAt: now,
+      shareEmailWithStudents: false,
+      sharePhoneWithStudents: false,
+    });
+
+    // 3. Log administrative audit event (never log passwords or hashes)
+    await logAuditEvent(
+      ctx,
+      String(admin._id),
+      "counsellor_provisioned",
+      JSON.stringify({
+        userId: newUserId,
+        entryId: newEntryId,
+        mobile_number: cleanMobile,
+        maxWorkload: workload,
+      })
+    );
+
+    return {
+      success: true,
+      userId: newUserId,
+      entryId: newEntryId,
+      name,
+      mobile_number: cleanMobile,
+    };
+  },
+});
+
+/**
+ * Counsellor: check directory linkage status of the currently authenticated counsellor.
+ * Returns { isCounsellor: boolean, isLinked: boolean, entry: ... }
+ * If caller is not a counsellor (e.g. admin or patient), isCounsellor is false.
+ */
+export const getMyDirectoryStatus = query({
+  args: {},
+  handler: async (ctx) => {
+    const caller = await getAuthenticatedUser(ctx);
+    if (!caller || caller.role !== "counsellor") {
+      return { isCounsellor: false, isLinked: false, entry: null };
+    }
+    const linked = await ctx.db
+      .query("counsellors")
+      .withIndex("by_userId", (q) => q.eq("userId", caller._id))
+      .collect();
+    const active = linked.filter((e) => e.status === "active");
+    const isLinked = active.length === 1 && linked.length === 1;
+    return {
+      isCounsellor: true,
+      isLinked,
+      entry: isLinked ? { _id: active[0]._id, name: active[0].name, role: active[0].role } : null,
+    };
+  },
+});
+

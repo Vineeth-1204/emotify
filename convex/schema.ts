@@ -685,6 +685,7 @@ export default defineSchema({
     email: v.string(),
     phone: v.string(),
     role: v.string(), // "counsellor" | "senior_psychiatrist" | "lead"
+    specialization: v.optional(v.string()),
     availability: v.array(v.string()),
     maxWorkload: v.number(),
     currentWorkload: v.optional(v.number()),

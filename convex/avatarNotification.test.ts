@@ -31,6 +31,17 @@ describe("Phase 1 & 2: Avatar Notification Resolution & Fallback", () => {
       mitraPreferences: { name: "Emoty", avatarGender: "male" },
     };
     expect(resolveUserAvatarCharacter(userWithMale)).toBe("boy");
+
+    const patientWithMale = {
+      role: "patient",
+      mitraPreferences: { name: "Emoty", avatarGender: "male" },
+    };
+    expect(resolveUserAvatarCharacter(patientWithMale)).toBe("boy");
+
+    const rolelessWithMale = {
+      mitraPreferences: { name: "Emoty", avatarGender: "boy" },
+    };
+    expect(resolveUserAvatarCharacter(rolelessWithMale)).toBe("boy");
   });
 
   test("AVATAR-NOTIF-02: Girl avatar resolves from stored preferences (female or girl)", () => {
@@ -44,6 +55,17 @@ describe("Phase 1 & 2: Avatar Notification Resolution & Fallback", () => {
       mitraPreferences: { name: "Emoty", avatarGender: "female" },
     };
     expect(resolveUserAvatarCharacter(userWithFemale)).toBe("girl");
+
+    const patientWithFemale = {
+      role: "patient",
+      mitraPreferences: { name: "Emoty", avatarGender: "female" },
+    };
+    expect(resolveUserAvatarCharacter(patientWithFemale)).toBe("girl");
+
+    const rolelessWithFemale = {
+      mitraPreferences: { name: "Emoty", avatarGender: "girl" },
+    };
+    expect(resolveUserAvatarCharacter(rolelessWithFemale)).toBe("girl");
   });
 
   test("AVATAR-NOTIF-03: Missing, null, or unknown preferences safely fall back to null", () => {
@@ -361,5 +383,243 @@ describe("Phase 2 & 3: End-to-End Notification Delivery with Avatar", () => {
     expect(sent.length).toBe(1);
     expect(sent[0].richContent).toBeUndefined();
     expect(sent[0].body).toBe("You have a new appointment request.");
+  });
+
+  test("AVATAR-DELIVERY-05: deliverNotification includes boy avatar URL for production student with role 'patient'", async () => {
+    vi.useFakeTimers();
+    process.env.EXPO_PUSH_LIVE = "stubbed-fetch";
+    const sent: any[] = [];
+    vi.stubGlobal("fetch", async (url: string, init?: any) => {
+      if (url.includes("/api/v2/push/send")) {
+        const body = JSON.parse(init.body);
+        sent.push(...body);
+        return new Response(JSON.stringify({ data: body.map(() => ({ status: "ok", id: "ticket-patient-boy-1" })) }), { status: 200 });
+      }
+      return new Response("{}", { status: 200 });
+    });
+
+    const t = convexTest(schema, modules);
+    const student = await t.run(async (ctx) => {
+      const u = await ctx.db.insert("users", {
+        full_name: "Patient Boy",
+        role: "patient",
+        status: "active",
+        created_at: Date.now(),
+        mitraPreferences: { name: "Emoty", avatarGender: "male" },
+      });
+      await ctx.db.insert("pushTokens", {
+        userId: u,
+        token: "ExponentPushToken[patient_boy_token]",
+        platform: "android",
+        updatedAt: Date.now(),
+      });
+      return u;
+    });
+
+    await t.run(async (ctx) => {
+      await createNotification(ctx, {
+        recipientId: student,
+        type: "appointment_confirmed",
+        title: "Appointment Update",
+        message: "Your appointment has been confirmed.",
+      });
+    });
+
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(sent.length).toBe(1);
+    expect(sent[0].richContent?.image).toBe("https://emotify-test.convex.site/api/avatar/boy.jpg");
+    expect(sent[0].body).toBe("Your appointment status has changed.");
+  });
+
+  test("AVATAR-DELIVERY-06: deliverNotification includes girl avatar URL for production student with role 'patient'", async () => {
+    vi.useFakeTimers();
+    process.env.EXPO_PUSH_LIVE = "stubbed-fetch";
+    const sent: any[] = [];
+    vi.stubGlobal("fetch", async (url: string, init?: any) => {
+      if (url.includes("/api/v2/push/send")) {
+        const body = JSON.parse(init.body);
+        sent.push(...body);
+        return new Response(JSON.stringify({ data: body.map(() => ({ status: "ok", id: "ticket-patient-girl-1" })) }), { status: 200 });
+      }
+      return new Response("{}", { status: 200 });
+    });
+
+    const t = convexTest(schema, modules);
+    const student = await t.run(async (ctx) => {
+      const u = await ctx.db.insert("users", {
+        full_name: "Patient Girl",
+        role: "patient",
+        status: "active",
+        created_at: Date.now(),
+        mitraPreferences: { name: "Emoty", avatarGender: "female" },
+      });
+      await ctx.db.insert("pushTokens", {
+        userId: u,
+        token: "ExponentPushToken[patient_girl_token]",
+        platform: "android",
+        updatedAt: Date.now(),
+      });
+      return u;
+    });
+
+    await t.run(async (ctx) => {
+      await createNotification(ctx, {
+        recipientId: student,
+        type: "counsellor_assigned",
+        title: "General Update",
+        message: "A counsellor has been assigned to you.",
+      });
+    });
+
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(sent.length).toBe(1);
+    expect(sent[0].richContent?.image).toBe("https://emotify-test.convex.site/api/avatar/girl.jpg");
+    expect(sent[0].body).toBe("You have an update from Emotify.");
+  });
+
+  test("AVATAR-DELIVERY-07: deliverNotification reflects dynamic avatar change immediately on subsequent notifications", async () => {
+    vi.useFakeTimers();
+    process.env.EXPO_PUSH_LIVE = "stubbed-fetch";
+    const sent: any[] = [];
+    vi.stubGlobal("fetch", async (url: string, init?: any) => {
+      if (url.includes("/api/v2/push/send")) {
+        const body = JSON.parse(init.body);
+        sent.push(...body);
+        return new Response(JSON.stringify({ data: body.map(() => ({ status: "ok", id: `ticket-${sent.length}` })) }), { status: 200 });
+      }
+      return new Response("{}", { status: 200 });
+    });
+
+    const t = convexTest(schema, modules);
+    const student = await t.run(async (ctx) => {
+      const u = await ctx.db.insert("users", {
+        full_name: "Morphing Student",
+        role: "patient",
+        status: "active",
+        created_at: Date.now(),
+        mitraPreferences: { name: "Emoty", avatarGender: "male" },
+      });
+      await ctx.db.insert("pushTokens", {
+        userId: u,
+        token: "ExponentPushToken[morph_token]",
+        platform: "android",
+        updatedAt: Date.now(),
+      });
+      return u;
+    });
+
+    // 1st notification: male preference -> boy avatar
+    await t.run(async (ctx) => {
+      await createNotification(ctx, {
+        recipientId: student,
+        type: "appointment_confirmed",
+        title: "First",
+        message: "First notification",
+      });
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(sent.length).toBe(1);
+    expect(sent[0].richContent?.image).toBe("https://emotify-test.convex.site/api/avatar/boy.jpg");
+
+    // Student changes avatar preference in profile to female
+    await t.run(async (ctx) => {
+      await ctx.db.patch(student, {
+        mitraPreferences: { name: "Emoty", avatarGender: "female" },
+      });
+    });
+
+    // 2nd notification: newly selected female preference -> girl avatar
+    await t.run(async (ctx) => {
+      await createNotification(ctx, {
+        recipientId: student,
+        type: "counsellor_assigned",
+        title: "Second",
+        message: "Second notification after profile update",
+      });
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(sent.length).toBe(2);
+    expect(sent[1].richContent?.image).toBe("https://emotify-test.convex.site/api/avatar/girl.jpg");
+  });
+
+  test("AVATAR-DELIVERY-08: Multi-user isolation - Student A (boy) and Student B (girl) notifications never cross over", async () => {
+    vi.useFakeTimers();
+    process.env.EXPO_PUSH_LIVE = "stubbed-fetch";
+    const sent: any[] = [];
+    vi.stubGlobal("fetch", async (url: string, init?: any) => {
+      if (url.includes("/api/v2/push/send")) {
+        const body = JSON.parse(init.body);
+        sent.push(...body);
+        return new Response(JSON.stringify({ data: body.map(() => ({ status: "ok", id: `ticket-${sent.length}` })) }), { status: 200 });
+      }
+      return new Response("{}", { status: 200 });
+    });
+
+    const t = convexTest(schema, modules);
+    const [studentA, studentB] = await t.run(async (ctx) => {
+      const a = await ctx.db.insert("users", {
+        full_name: "Student A",
+        role: "patient",
+        status: "active",
+        created_at: Date.now(),
+        mitraPreferences: { name: "Emoty", avatarGender: "male" },
+      });
+      await ctx.db.insert("pushTokens", {
+        userId: a,
+        token: "ExponentPushToken[student_a_token]",
+        platform: "android",
+        updatedAt: Date.now(),
+      });
+
+      const b = await ctx.db.insert("users", {
+        full_name: "Student B",
+        role: "patient",
+        status: "active",
+        created_at: Date.now(),
+        mitraPreferences: { name: "Emoty", avatarGender: "female" },
+      });
+      await ctx.db.insert("pushTokens", {
+        userId: b,
+        token: "ExponentPushToken[student_b_token]",
+        platform: "android",
+        updatedAt: Date.now(),
+      });
+
+      return [a, b];
+    });
+
+    // Notify Student A
+    await t.run(async (ctx) => {
+      await createNotification(ctx, {
+        recipientId: studentA,
+        type: "appointment_confirmed",
+        title: "For A",
+        message: "Notice for A",
+      });
+    });
+
+    // Notify Student B
+    await t.run(async (ctx) => {
+      await createNotification(ctx, {
+        recipientId: studentB,
+        type: "counsellor_assigned",
+        title: "For B",
+        message: "Notice for B",
+      });
+    });
+
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(sent.length).toBe(2);
+    // Student A receives Boy avatar
+    expect(sent[0].to).toBe("ExponentPushToken[student_a_token]");
+    expect(sent[0].richContent?.image).toBe("https://emotify-test.convex.site/api/avatar/boy.jpg");
+    // Student B receives Girl avatar
+    expect(sent[1].to).toBe("ExponentPushToken[student_b_token]");
+    expect(sent[1].richContent?.image).toBe("https://emotify-test.convex.site/api/avatar/girl.jpg");
   });
 });

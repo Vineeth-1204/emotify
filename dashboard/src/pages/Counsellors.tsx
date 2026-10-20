@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
-import { Link2, Link2Off, Mail, Pencil, Phone, Plus, ShieldCheck } from "lucide-react";
+import { createPortal } from "react-dom";
+import { Check, CheckCircle2, Copy, Eye, EyeOff, Link2, Link2Off, Mail, Pencil, Phone, Plus, RefreshCw, ShieldCheck, UserPlus, X } from "lucide-react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
@@ -8,6 +9,17 @@ import { LoadingState } from "../components/UIComponents";
 type Entry = NonNullable<ReturnType<typeof useQuery<typeof api.counsellorDirectory.listForAdmin>>>[number];
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message.replace(/^.*Uncaught Error: /, "").split("\n")[0] : "Something went wrong.");
+
+const PASSWORD_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%^&*";
+function generateSecurePassword(length = 12): string {
+  const bytes = new Uint32Array(length);
+  crypto.getRandomValues(bytes);
+  let pass = "";
+  for (let i = 0; i < length; i++) {
+    pass += PASSWORD_CHARS.charAt(bytes[i] % PASSWORD_CHARS.length);
+  }
+  return pass;
+}
 
 /**
  * Admin: the institution's counsellor directory. Each entry holds institutional contact
@@ -19,6 +31,7 @@ export default function Counsellors() {
   const entries = useQuery(api.counsellorDirectory.listForAdmin);
   const accounts = useQuery(api.counsellorAssignments.listCounsellorUsers, { includeInactive: true });
   const addCounsellor = useMutation(api.dashboard.addCounsellor);
+  const [showProvision, setShowProvision] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState({ name: "", email: "", phone: "", role: "counsellor", userId: "" });
   const [error, setError] = useState("");
@@ -58,9 +71,14 @@ export default function Counsellors() {
             Changing a stored value or the linked account hides it from students again until it is re-approved. Login details are never shown to students.
           </p>
         </div>
-        <button className="btn btn-primary" onClick={() => setShowAdd(true)} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <Plus size={18} /> Add directory entry
-        </button>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <button className="btn btn-primary" onClick={() => setShowProvision(true)} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <UserPlus size={18} /> Add &amp; provision counsellor
+          </button>
+          <button className="btn btn-secondary" onClick={() => setShowAdd(true)} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Plus size={18} /> Add directory entry only
+          </button>
+        </div>
       </div>
 
       {entries.length === 0 ? (
@@ -75,36 +93,475 @@ export default function Counsellors() {
         </div>
       )}
 
-      {showAdd && (
-        <div role="dialog" aria-modal="true" aria-labelledby="add-entry-title" style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <form onSubmit={handleAdd} className="glass-panel" style={{ background: "#fff", width: "92%", maxWidth: 480, padding: 24, display: "flex", flexDirection: "column", gap: 12 }}>
-            <h2 id="add-entry-title" style={{ fontSize: "1.2rem" }}>Add directory entry</h2>
-            <label style={labelStyle}>Name<input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} style={inputStyle} /></label>
-            <label style={labelStyle}>Institutional email<input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} style={inputStyle} /></label>
-            <label style={labelStyle}>Institutional phone<input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} style={inputStyle} /></label>
-            <label style={labelStyle}>Role
-              <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} style={inputStyle}>
-                <option value="counsellor">Counsellor</option>
-                <option value="senior_psychiatrist">Senior psychiatrist</option>
-                <option value="lead">Lead therapist</option>
-              </select>
+      {showProvision && (
+        <ProvisionCounsellorModal onClose={() => setShowProvision(false)} />
+      )}
+
+      {showAdd &&
+        createPortal(
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="add-entry-title"
+            style={{
+              position: "fixed",
+              inset: 0,
+              background: "rgba(15, 23, 42, 0.55)",
+              backdropFilter: "blur(10px)",
+              zIndex: 99999,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: "32px 16px",
+              overflowY: "auto",
+            }}
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setShowAdd(false);
+            }}
+          >
+            <form
+              onSubmit={handleAdd}
+              onClick={(e) => e.stopPropagation()}
+              className="glass-panel"
+              style={{
+                background: "#ffffff",
+                width: "100%",
+                maxWidth: 480,
+                margin: "auto",
+                maxHeight: "calc(100vh - 64px)",
+                overflowY: "auto",
+                padding: 28,
+                display: "flex",
+                flexDirection: "column",
+                gap: 14,
+                borderRadius: 20,
+                border: "1px solid var(--border-color)",
+                boxShadow: "0 25px 70px rgba(0, 0, 0, 0.25)",
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                <div>
+                  <h2 id="add-entry-title" style={{ fontSize: "1.25rem", fontWeight: 700, margin: 0, color: "var(--text-primary)" }}>
+                    Add directory entry
+                  </h2>
+                  <p style={{ margin: "4px 0 0 0", fontSize: "0.85rem", color: "var(--text-secondary)" }}>
+                    Add institutional details for student appointment booking.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowAdd(false)}
+                  aria-label="Close"
+                  style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-secondary)", padding: 4 }}
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              <label style={labelStyle}>Name *<input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} style={inputStyle} /></label>
+              <label style={labelStyle}>Institutional email<input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} style={inputStyle} /></label>
+              <label style={labelStyle}>Institutional phone<input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} style={inputStyle} /></label>
+              <label style={labelStyle}>Role
+                <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} style={inputStyle}>
+                  <option value="counsellor">Counsellor</option>
+                  <option value="senior_psychiatrist">Senior psychiatrist</option>
+                  <option value="lead">Lead therapist</option>
+                </select>
+              </label>
+              <label style={labelStyle}>Counsellor account (optional)
+                <select value={form.userId} onChange={(e) => setForm({ ...form, userId: e.target.value })} style={inputStyle}>
+                  <option value="">Link later</option>
+                  {unlinkedAccounts.map((a) => <option key={a._id} value={String(a._id)}>{a.full_name}{a.status === "inactive" ? " (inactive)" : ""}</option>)}
+                </select>
+              </label>
+              <p style={{ fontSize: "0.8rem", color: "var(--text-secondary)", margin: 0 }}>New entries share nothing with students until each contact field is approved.</p>
+              {error && <p role="alert" style={{ color: "var(--danger)", fontSize: "0.85rem", margin: 0 }}>{error}</p>}
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8 }}>
+                <button type="button" className="btn btn-secondary" onClick={() => setShowAdd(false)}>Cancel</button>
+                <button type="submit" className="btn btn-primary">Save</button>
+              </div>
+            </form>
+          </div>,
+          document.body
+        )}
+    </div>
+  );
+}
+
+function ProvisionCounsellorModal({ onClose }: { onClose: () => void }) {
+  const provision = useMutation(api.counsellorDirectory.provisionCounsellor);
+  const [name, setName] = useState("");
+  const [mobileNumber, setMobileNumber] = useState("");
+  const [password, setPassword] = useState(() => generateSecurePassword());
+  const [showPassword, setShowPassword] = useState(false);
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [campus, setCampus] = useState("");
+  const [role, setRole] = useState("counsellor");
+  const [specialization, setSpecialization] = useState("");
+  const [maxWorkload, setMaxWorkload] = useState(15);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [createdInfo, setCreatedInfo] = useState<{
+    name: string;
+    mobile: string;
+    pass: string;
+    campus?: string;
+  } | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+
+    if (!name.trim()) {
+      setError("Please enter the counsellor's full name.");
+      return;
+    }
+
+    const cleanMobile = mobileNumber.replace(/\D/g, "");
+    if (cleanMobile.length !== 10) {
+      setError("Please enter a valid 10-digit mobile number for login.");
+      return;
+    }
+
+    if (!password || password.length < 6) {
+      setError("Initial password must be at least 6 characters long.");
+      return;
+    }
+
+    if (!email.trim()) {
+      setError("Please enter an institutional email address.");
+      return;
+    }
+
+    if (maxWorkload < 1 || maxWorkload > 20) {
+      setError("Caseload capacity must be between 1 and 20 students (limit: 20).");
+      return;
+    }
+
+    setBusy(true);
+    try {
+      await provision({
+        name: name.trim(),
+        mobile_number: cleanMobile,
+        password: password.trim(),
+        email: email.trim(),
+        phone: phone.trim() || undefined,
+        campus: campus.trim() || undefined,
+        role,
+        specialization: specialization.trim() || undefined,
+        maxWorkload,
+      });
+
+      setCreatedInfo({
+        name: name.trim(),
+        mobile: cleanMobile,
+        pass: password.trim(),
+        campus: campus.trim() || undefined,
+      });
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleCopy = () => {
+    if (!createdInfo) return;
+    const text = `Emotify Counsellor Credentials\nName: ${createdInfo.name}\nMobile (Login): ${createdInfo.mobile}\nPassword: ${createdInfo.pass}${createdInfo.campus ? `\nCampus: ${createdInfo.campus}` : ""}\nRole: Counsellor`;
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2500);
+  };
+
+  return createPortal(
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="provision-modal-title"
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(15, 23, 42, 0.55)",
+        backdropFilter: "blur(10px)",
+        zIndex: 99999,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "32px 16px",
+        overflowY: "auto",
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !busy) onClose();
+      }}
+    >
+      <div
+        className="glass-panel"
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "#ffffff",
+          width: "100%",
+          maxWidth: 540,
+          margin: "auto",
+          maxHeight: "calc(100vh - 64px)",
+          overflowY: "auto",
+          padding: 28,
+          borderRadius: 20,
+          border: "1px solid var(--border-color)",
+          boxShadow: "0 25px 70px rgba(0, 0, 0, 0.25)",
+          display: "flex",
+          flexDirection: "column",
+          gap: 16,
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div>
+            <h2 id="provision-modal-title" style={{ fontSize: "1.3rem", fontWeight: 700, margin: 0, color: "var(--text-primary)" }}>
+              {createdInfo ? "Counsellor provisioned successfully" : "Add & provision counsellor"}
+            </h2>
+            <p style={{ margin: "4px 0 0 0", fontSize: "0.86rem", color: "var(--text-secondary)" }}>
+              {createdInfo
+                ? "The counsellor login account and staff directory profile are linked and ready."
+                : "Creates an authenticated counsellor account and directory record in one atomic operation."}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-secondary)", padding: 4 }}
+          >
+            <X size={20} />
+          </button>
+        </div>
+
+        {createdInfo ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                padding: "12px 16px",
+                background: "rgba(16, 185, 129, 0.1)",
+                borderRadius: 10,
+                border: "1px solid rgba(16, 185, 129, 0.3)",
+                color: "#047857",
+              }}
+            >
+              <CheckCircle2 size={24} style={{ flexShrink: 0 }} />
+              <div style={{ fontSize: "0.88rem" }}>
+                <strong>Account &amp; directory profile linked!</strong>
+                <p style={{ margin: "2px 0 0 0" }}>The counsellor can now sign in using their mobile number and initial password.</p>
+              </div>
+            </div>
+
+            <div
+              style={{
+                background: "#f8fafc",
+                border: "1px solid var(--border-color)",
+                borderRadius: 12,
+                padding: 16,
+                fontSize: "0.88rem",
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+              }}
+            >
+              <div><strong style={{ color: "var(--text-secondary)", fontSize: "0.76rem", textTransform: "uppercase" }}>Full Name:</strong> <div>{createdInfo.name}</div></div>
+              <div><strong style={{ color: "var(--text-secondary)", fontSize: "0.76rem", textTransform: "uppercase" }}>Login Mobile Number:</strong> <div><code>{createdInfo.mobile}</code></div></div>
+              <div>
+                <strong style={{ color: "var(--text-secondary)", fontSize: "0.76rem", textTransform: "uppercase" }}>Initial Password:</strong>
+                <div style={{ fontFamily: "monospace", fontSize: "0.95rem", background: "#fff", padding: "6px 10px", borderRadius: 6, border: "1px dashed var(--input-border)", marginTop: 2 }}>
+                  {createdInfo.pass}
+                </div>
+              </div>
+              {createdInfo.campus && (
+                <div><strong style={{ color: "var(--text-secondary)", fontSize: "0.76rem", textTransform: "uppercase" }}>Campus:</strong> <div>{createdInfo.campus}</div></div>
+              )}
+            </div>
+
+            <p style={{ fontSize: "0.8rem", color: "var(--text-secondary)", margin: 0 }}>
+              Copy and safely communicate these temporary credentials to the counsellor. Login details are never shared with students.
+            </p>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8 }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={handleCopy}
+                style={{ display: "flex", alignItems: "center", gap: 6 }}
+              >
+                {copied ? <Check size={16} /> : <Copy size={16} />}
+                {copied ? "Copied!" : "Copy credentials"}
+              </button>
+              <button type="button" className="btn btn-primary" onClick={onClose}>
+                Done
+              </button>
+            </div>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <label style={labelStyle}>
+              Full Name *
+              <input
+                required
+                placeholder="e.g. Dr. Sarah Rao"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                style={inputStyle}
+              />
             </label>
-            <label style={labelStyle}>Counsellor account (optional)
-              <select value={form.userId} onChange={(e) => setForm({ ...form, userId: e.target.value })} style={inputStyle}>
-                <option value="">Link later</option>
-                {unlinkedAccounts.map((a) => <option key={a._id} value={String(a._id)}>{a.full_name}{a.status === "inactive" ? " (inactive)" : ""}</option>)}
-              </select>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <label style={labelStyle}>
+                Login Mobile Number (10 digits) *
+                <input
+                  required
+                  type="tel"
+                  placeholder="e.g. 9876543210"
+                  value={mobileNumber}
+                  onChange={(e) => setMobileNumber(e.target.value)}
+                  style={inputStyle}
+                />
+              </label>
+
+              <label style={labelStyle}>
+                Campus
+                <input
+                  placeholder="e.g. Main Campus"
+                  value={campus}
+                  onChange={(e) => setCampus(e.target.value)}
+                  style={inputStyle}
+                />
+              </label>
+            </div>
+
+            <label style={labelStyle}>
+              Initial Password *
+              <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+                <input
+                  required
+                  type={showPassword ? "text" : "password"}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  style={{ ...inputStyle, width: "100%", paddingRight: 76 }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                  style={{
+                    position: "absolute",
+                    right: 40,
+                    background: "none",
+                    border: "none",
+                    color: "var(--text-secondary)",
+                    cursor: "pointer",
+                    padding: 4,
+                  }}
+                >
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPassword(generateSecurePassword())}
+                  aria-label="Generate new secure password"
+                  title="Generate new secure password"
+                  style={{
+                    position: "absolute",
+                    right: 10,
+                    background: "none",
+                    border: "none",
+                    color: "var(--text-secondary)",
+                    cursor: "pointer",
+                    padding: 4,
+                  }}
+                >
+                  <RefreshCw size={16} />
+                </button>
+              </div>
             </label>
-            <p style={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>New entries share nothing with students until each contact field is approved.</p>
-            {error && <p role="alert" style={{ color: "var(--danger)", fontSize: "0.85rem" }}>{error}</p>}
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
-              <button type="button" className="btn btn-secondary" onClick={() => setShowAdd(false)}>Cancel</button>
-              <button type="submit" className="btn btn-primary">Save</button>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <label style={labelStyle}>
+                Institutional Email *
+                <input
+                  required
+                  type="email"
+                  placeholder="counsellor@campus.edu"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  style={inputStyle}
+                />
+              </label>
+
+              <label style={labelStyle}>
+                Institutional Phone
+                <input
+                  type="tel"
+                  placeholder="+91 9876543210"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  style={inputStyle}
+                />
+              </label>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 12 }}>
+              <label style={labelStyle}>
+                Clinical Role / Title
+                <select value={role} onChange={(e) => setRole(e.target.value)} style={inputStyle}>
+                  <option value="counsellor">Counsellor</option>
+                  <option value="senior_psychiatrist">Senior psychiatrist</option>
+                  <option value="lead">Lead therapist</option>
+                </select>
+              </label>
+
+              <label style={labelStyle}>
+                Caseload Capacity (Max 20)
+                <input
+                  type="number"
+                  min={1}
+                  max={20}
+                  value={maxWorkload}
+                  onChange={(e) => setMaxWorkload(Number(e.target.value))}
+                  style={inputStyle}
+                />
+              </label>
+            </div>
+
+            <label style={labelStyle}>
+              Specializations
+              <input
+                placeholder="e.g. Anxiety, Depression, Academic Stress, CBT"
+                value={specialization}
+                onChange={(e) => setSpecialization(e.target.value)}
+                style={inputStyle}
+              />
+            </label>
+
+            <p style={{ fontSize: "0.78rem", color: "var(--text-secondary)", margin: "4px 0" }}>
+              The account is assigned the counsellor role server-side and linked to the directory record. Institutional contact details remain hidden from students until approved.
+            </p>
+
+            {error && <p role="alert" style={{ color: "var(--danger)", fontSize: "0.85rem", margin: 0 }}>{error}</p>}
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 10 }}>
+              <button type="button" className="btn btn-secondary" onClick={onClose} disabled={busy}>
+                Cancel
+              </button>
+              <button type="submit" className="btn btn-primary" disabled={busy} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <UserPlus size={16} />
+                {busy ? "Provisioning…" : "Provision & Link"}
+              </button>
             </div>
           </form>
-        </div>
-      )}
-    </div>
+        )}
+      </div>
+    </div>,
+    document.body
   );
 }
 
@@ -159,7 +616,17 @@ function DirectoryCard({ entry, unlinkedAccounts }: { entry: Entry; unlinkedAcco
       <header style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
         <div>
           <h3 style={{ fontSize: "1.08rem", fontWeight: 700 }}>{entry.name}</h3>
-          <span className="badge badge-blue" style={{ fontSize: "0.72rem" }}>{entry.role}</span>
+          <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 2 }}>
+            <span className="badge badge-blue" style={{ fontSize: "0.72rem" }}>{entry.role}</span>
+            {entry.specialization && (
+              <span className="badge" style={{ fontSize: "0.72rem", background: "rgba(100, 116, 139, 0.1)", color: "var(--text-secondary)" }}>
+                {entry.specialization}
+              </span>
+            )}
+            <span style={{ fontSize: "0.72rem", color: "var(--text-secondary)" }}>
+              Max: {entry.maxWorkload || 20}
+            </span>
+          </div>
         </div>
         <span className={`badge ${entry.status === "active" ? "badge-green" : "badge-red"}`}>{entry.status === "active" ? "Listed" : "Not listed"}</span>
       </header>

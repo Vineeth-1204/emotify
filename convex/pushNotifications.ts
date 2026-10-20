@@ -4,7 +4,7 @@ import { internal } from "./_generated/api";
 import { createNotification, pushCopyFor } from "./notify";
 import { MOBILE_DESTINATION_ROUTES, isNotificationDestination, type NotificationDestination } from "../common/notificationRoutes";
 import { readStoredEmotyPreferences } from "../common/companionName";
-import { resolveAvatarCharacterId, getNotificationAvatarUrl } from "../common/avatarNotification";
+import { resolveAvatarCharacterId, getNotificationAvatarUrl, isStudentUserRole } from "../common/avatarNotification";
 
 const FORBIDDEN_LOCKSCREEN_TERMS =
   /depress|anxiety disorder|psychos|suicid|risk|score|symptom|severe|crisis|emergency|attempt|diagnos/i;
@@ -292,7 +292,7 @@ export const deliverNotification = internalAction({
     const data = { notificationId: String(args.notificationId), destination, route: MOBILE_DESTINATION_ROUTES[destination] };
 
     // Resolve student's selected avatar (boy or girl). Non-student roles or missing preferences fall back to standard app icon.
-    const isStudent = delivery.recipientRole === "student" || !delivery.recipientRole;
+    const isStudent = isStudentUserRole(delivery.recipientRole);
     const avatarCharacter = isStudent ? resolveAvatarCharacterId(delivery.avatarGender) : null;
     const avatarUrl = getNotificationAvatarUrl(avatarCharacter, process.env.CONVEX_SITE_URL);
 
@@ -378,7 +378,7 @@ export const getUserAvatarGender = internalQuery({
   handler: async (ctx, args) => {
     const id = ctx.db.normalizeId("users", args.userId);
     const user = id ? await ctx.db.get(id) : null;
-    if (!user || (user.role && user.role !== "student")) return null;
+    if (!user || !isStudentUserRole(user.role)) return null;
     const prefs = readStoredEmotyPreferences(user);
     return prefs?.avatarGender ?? null;
   },

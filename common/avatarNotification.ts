@@ -10,6 +10,18 @@ import { readStoredEmotyPreferences, type StoredEmotyPreferences } from "./compa
 export type AvatarCharacterId = "boy" | "girl";
 
 /**
+ * Checks if a user role is a student role.
+ * In Emotify, student accounts have role 'patient' (self-registered students),
+ * 'student', or undefined/empty (legacy accounts). Staff roles ('counsellor', 'admin', 'auditor')
+ * are never treated as students.
+ */
+export function isStudentUserRole(role: string | null | undefined): boolean {
+  if (!role) return true;
+  const r = role.toLowerCase().trim();
+  return r === "patient" || r === "student" || r === "";
+}
+
+/**
  * Resolves avatar character ID from stored preference gender string.
  * Supports 'male' | 'female' as stored in users.mitraPreferences.avatarGender,
  * as well as 'boy' | 'girl'. Fails closed to null if unrecognized or absent.
@@ -33,8 +45,8 @@ export function resolveUserAvatarCharacter(
   user: { role?: string; mitraPreferences?: StoredEmotyPreferences } | null | undefined
 ): AvatarCharacterId | null {
   if (!user) return null;
-  // Non-student roles (counsellor, admin) receive standard app icon notifications
-  if (user.role && user.role !== "student") return null;
+  // Non-student roles (counsellor, admin, auditor) receive standard app icon notifications
+  if (!isStudentUserRole(user.role)) return null;
   const prefs = readStoredEmotyPreferences(user);
   return resolveAvatarCharacterId(prefs?.avatarGender);
 }
@@ -51,7 +63,11 @@ export function getNotificationAvatarUrl(
   const rawBase =
     baseUrl !== undefined
       ? baseUrl
-      : process.env.AVATAR_NOTIFICATION_BASE_URL || process.env.CONVEX_SITE_URL;
+      : process.env.AVATAR_NOTIFICATION_BASE_URL ||
+        process.env.CONVEX_SITE_URL ||
+        (process.env.CONVEX_CLOUD_URL
+          ? process.env.CONVEX_CLOUD_URL.replace(/\.convex\.cloud\/?$/, ".convex.site")
+          : null);
   const base = (rawBase || "").trim().replace(/\/+$/, "");
   if (!base) return null;
   return `${base}/api/avatar/${character}.jpg`;

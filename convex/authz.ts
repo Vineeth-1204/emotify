@@ -229,7 +229,7 @@ export async function getSelfStudent(
  * An explicit staff role, or any other explicit role, is never treated as a student.
  */
 export function isStudentRole(role: string | undefined | null): boolean {
-  return role === "patient" || role === undefined || role === null || role === "";
+  return role === "patient" || role === "student" || role === undefined || role === null || role === "";
 }
 
 /**

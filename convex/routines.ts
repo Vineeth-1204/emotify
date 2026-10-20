@@ -521,7 +521,7 @@ export const evaluateMicroGoalReminders = internalMutation({
 
       const { created } = await createNotification(ctx, {
         recipientId: goal.userId,
-        type: "reminder",
+        type: "microgoal_reminder",
         title: MICROGOAL_REMINDER_COPY.notificationTitle,
         message: nudgeMessage,
         priority: "low",
@@ -594,7 +594,7 @@ export const evaluateDailyRoutineReminders = internalMutation({
           const dedupeKey = `routine_morning:${studentId}:${time.localDateStr}`;
           const { created } = await createNotification(ctx, {
             recipientId: studentId,
-            type: "reminder",
+            type: "routine_morning",
             title: MORNING_ROUTINE_COPY.notificationTitle,
             message: MORNING_ROUTINE_COPY.notificationBody,
             priority: "low",
@@ -624,7 +624,7 @@ export const evaluateDailyRoutineReminders = internalMutation({
           const dedupeKey = `routine_evening:${studentId}:${time.localDateStr}`;
           const { created } = await createNotification(ctx, {
             recipientId: studentId,
-            type: "reminder",
+            type: "routine_evening",
             title: EVENING_GRATITUDE_COPY.notificationTitle,
             message: EVENING_GRATITUDE_COPY.notificationBody,
             priority: "low",

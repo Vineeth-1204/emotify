@@ -230,7 +230,13 @@
     "microgoalsTag": "Habits",
     "appointmentsTitle": "Appointments",
     "appointmentsDesc": "Manage clinical sessions and requests.",
-    "appointmentsTag": "Consult"
+    "appointmentsTag": "Consult",
+    "morningAffirmationTitle": "Morning Affirmation",
+    "morningAffirmationDesc": "Set an intentional thought or carry a gentle reminder for today.",
+    "morningAffirmationTag": "Routine",
+    "eveningGratitudeTitle": "Evening Gratitude",
+    "eveningGratitudeDesc": "Notice small good moments from today before winding down.",
+    "eveningGratitudeTag": "Routine"
   },
   "screening": {
     "title": "Wellness Check-Ins",

@@ -44,6 +44,11 @@ export const PUSH_COPY: Record<string, PushCopy | null> = {
   engagement_microgoal: { title: "Emotify", body: "A small step is waiting for you today. Ready to take it?", channelId: "reminders" },
   engagement_evening: { title: "Emotify", body: "Take a quiet moment to reflect on your day.", channelId: "reminders" },
   engagement_night: { title: "Emotify", body: "Time to unwind and relax tonight.", channelId: "reminders" },
+  // Daily Routines & MicroGoals (Phase 8 & 9)
+  routine_morning: { title: "Emotify", body: "Time for your morning affirmation. Set an intention for today.", channelId: "reminders" },
+  routine_evening: { title: "Emotify", body: "Notice small good moments from today before winding down.", channelId: "reminders" },
+  microgoal_reminder: { title: "Emotify", body: "A quick small step is waiting for you today. Ready to continue?", channelId: "reminders" },
+  reminder: { title: "Emotify", body: "You have a gentle reminder waiting in Emotify.", channelId: "reminders" },
   // Counsellor
   appointment_request_received: { title: "Emotify", body: "You have a new appointment request.", channelId: "appointments" },
   appointment_updated: { title: "Emotify", body: "An appointment has been updated.", channelId: "appointments" },

@@ -57,13 +57,17 @@ function ToolHubCard({
           {tool.renderIcon ? tool.renderIcon(tool.color) : <Ionicons name="apps-outline" size={24} color={tool.color} />}
         </View>
         <View style={styles.textContainer}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-            <Text style={styles.toolTitle}>{tool.title}</Text>
-            <View style={[styles.tagMini, { backgroundColor: tool.color + '10' }]}>
+          <View style={styles.toolTitleRow}>
+            <Text style={styles.toolTitle} numberOfLines={1}>
+              {tool.title}
+            </Text>
+            <View style={[styles.tagMini, { backgroundColor: tool.color + '18', borderColor: tool.color + '30' }]}>
               <Text style={[styles.tagMiniText, { color: tool.color }]}>{tool.categoryText}</Text>
             </View>
           </View>
-          <Text style={styles.toolDesc}>{tool.description}</Text>
+          <Text style={styles.toolDesc} numberOfLines={2}>
+            {tool.description}
+          </Text>
         </View>
         <View style={[styles.arrowBox, { backgroundColor: tool.color + '10' }]}>
           <Ionicons name="chevron-forward" size={14} color={tool.color} />
@@ -113,23 +117,23 @@ export default function ToolsScreen() {
     },
     {
       id: "morning-affirmation",
-      title: "Morning Affirmation",
-      description: "Set an intentional thought or carry a gentle reminder for today",
+      title: t("tools.morningAffirmationTitle"),
+      description: t("tools.morningAffirmationDesc"),
       renderIcon: (color: string) => <Ionicons name="sunny-outline" size={26} color={color} />,
       route: "/(auth)/tools/morning-affirmation" as const,
       color: "#F59E0B",
       category: "mindfulness",
-      categoryText: "Morning Routine",
+      categoryText: t("tools.morningAffirmationTag"),
     },
     {
       id: "evening-gratitude",
-      title: "Evening Gratitude",
-      description: "Notice small good moments from today before winding down",
+      title: t("tools.eveningGratitudeTitle"),
+      description: t("tools.eveningGratitudeDesc"),
       renderIcon: (color: string) => <Ionicons name="moon-outline" size={26} color={color} />,
       route: "/(auth)/tools/evening-gratitude" as const,
       color: "#6366F1",
       category: "mindfulness",
-      categoryText: "Evening Routine",
+      categoryText: t("tools.eveningGratitudeTag"),
     },
     {
       id: "jpmr",
@@ -194,7 +198,7 @@ export default function ToolsScreen() {
         style={StyleSheet.absoluteFill}
       />
 
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={[styles.content, { paddingBottom: 160 }]} showsVerticalScrollIndicator={false}>
         <View style={styles.header}>
           <Text style={styles.title}>{t("tools.title")}</Text>
           <Text style={styles.subtitle}>{t("tools.subtitle")}</Text>
@@ -254,7 +258,7 @@ export default function ToolsScreen() {
           )}
         </View>
 
-        <View style={{ height: 120 }} />
+        <View style={{ height: 20 }} />
       </ScrollView>
     </View>
   );
@@ -335,26 +339,36 @@ function stylesFactory(colors: any) {
   textContainer: {
     flex: 1,
   } as ViewStyle,
+  toolTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    marginBottom: 3,
+  } as ViewStyle,
   toolTitle: {
     fontFamily: Theme.fontFamily.bold,
-    fontSize: 16,
+    fontSize: 15.5,
     color: colors.text,
+    flexShrink: 1,
   } as TextStyle,
   tagMini: {
-    paddingHorizontal: 6,
+    paddingHorizontal: 7,
     paddingVertical: 2,
     borderRadius: 6,
+    borderWidth: 1,
+    flexShrink: 0,
   } as ViewStyle,
   tagMiniText: {
     fontFamily: Theme.fontFamily.bold,
-    fontSize: 9,
+    fontSize: 9.5,
+    letterSpacing: 0.1,
   } as TextStyle,
   toolDesc: {
     fontFamily: Theme.fontFamily.medium,
     fontSize: 12,
     color: colors.textMuted,
-    lineHeight: 16,
-    marginTop: 2,
+    lineHeight: 16.5,
   } as TextStyle,
   arrowBox: {
     width: 24,

@@ -36,14 +36,23 @@ const RECEIPT_CHECK_DELAY_MS = 15 * 60 * 1000;
 
 /**
  * Real delivery is opt-in per deployment: set EXPO_PUSH_LIVE=true (and optionally
- * EXPO_ACCESS_TOKEN for Expo enhanced push security). Otherwise messages are logged as "mock".
+ * EXPO_ACCESS_TOKEN for Expo enhanced push security). Otherwise nothing is sent and the
+ * notification row records pushStatus "mock" with pushError "live_push_disabled".
  * Unit tests never reach the network unless a test stubs fetch and opts in explicitly.
  */
 export function isLivePushEnabled(): boolean {
-  const flag = process.env.EXPO_PUSH_LIVE;
+  const flag = process.env.EXPO_PUSH_LIVE?.trim().toLowerCase();
   if (!flag) return false;
   if (process.env.NODE_ENV === "test") return flag === "stubbed-fetch";
-  return flag === "true" || flag === "1";
+  return flag === "true" || flag === "1" || flag === "yes" || flag === "on";
+}
+
+/** Recorded on the notification when this deployment does not send real pushes. */
+export const LIVE_PUSH_DISABLED = "live_push_disabled";
+
+/** Provider error text without any push token in it (Expo messages quote the token). */
+function redactTokens(text: string): string {
+  return text.replace(/(?:ExponentPushToken|ExpoPushToken)\[[^\]]*\]/g, "[token]").slice(0, 200);
 }
 
 function expoHeaders(): Record<string, string> {
@@ -68,13 +77,23 @@ type SendOutcome = {
 /** Sends messages to the Expo push service. Never throws; tokens are not logged. */
 async function sendToExpo(messages: ExpoPushMessage[]): Promise<SendOutcome> {
   if (!isLivePushEnabled()) {
-    console.log(`[PUSH MOCK] ${messages.length} message(s) on channel ${messages[0]?.channelId ?? "default"}`);
-    return { status: "mock", successCount: messages.length, failedCount: 0, tickets: [], invalidTokens: [] };
+    console.warn(
+      `[PUSH MOCK] ${messages.length} message(s) not sent: EXPO_PUSH_LIVE is not "true" on this deployment, so devices receive nothing.`
+    );
+    return { status: "mock", successCount: messages.length, failedCount: 0, tickets: [], invalidTokens: [], error: LIVE_PUSH_DISABLED };
   }
   try {
     const response = await fetch(EXPO_PUSH_SEND_URL, { method: "POST", headers: expoHeaders(), body: JSON.stringify(messages) });
     if (!response.ok) {
-      return { status: "failed", successCount: 0, failedCount: messages.length, tickets: [], invalidTokens: [], error: `Expo push HTTP ${response.status}` };
+      const detail = redactTokens(await response.text().catch(() => "")).slice(0, 120);
+      return {
+        status: "failed",
+        successCount: 0,
+        failedCount: messages.length,
+        tickets: [],
+        invalidTokens: [],
+        error: `Expo push HTTP ${response.status}${detail ? `: ${detail}` : ""}`,
+      };
     }
     const result: any = await response.json();
     const tickets: any[] = Array.isArray(result?.data) ? result.data : [];
@@ -87,13 +106,13 @@ async function sendToExpo(messages: ExpoPushMessage[]): Promise<SendOutcome> {
       } else {
         out.failedCount++;
         if (ticket?.details?.error === "DeviceNotRegistered" && token) out.invalidTokens.push(token);
-        out.error = ticket?.details?.error ?? ticket?.message ?? "ticket_error";
+        out.error = `ticket:${ticket?.details?.error ?? (ticket?.message ? redactTokens(String(ticket.message)) : "unknown")}`;
       }
     });
     if (out.successCount === 0 && out.failedCount > 0) out.status = "failed";
     return out;
   } catch (err: any) {
-    return { status: "failed", successCount: 0, failedCount: messages.length, tickets: [], invalidTokens: [], error: String(err?.message || err).slice(0, 200) };
+    return { status: "failed", successCount: 0, failedCount: messages.length, tickets: [], invalidTokens: [], error: redactTokens(String(err?.message || err)) };
   }
 }
 
@@ -135,6 +154,100 @@ export const recordDelivery = internalMutation({
       pushError: args.pushError,
       pushUpdatedAt: Date.now(),
     });
+  },
+});
+
+/** "ExponentPushToken[…wxyz]": enough to tell devices apart, never the usable token. */
+function maskToken(token: string): string {
+  const inner = /\[([^\]]*)\]/.exec(token)?.[1] ?? "";
+  return `${token.split("[")[0]}[…${inner.slice(-4)}]`;
+}
+
+/** The first pipeline stage that did not succeed for one notification, in plain words. */
+function pushStage(n: any, now: number): string {
+  switch (n.pushStatus) {
+    case undefined:
+      return "1 in-app only: this notification type has no push copy, so no push is attempted";
+    case "queued":
+      return now - n.createdAt > 60_000
+        ? "2 dispatch did not run: delivery was scheduled but never completed (check Convex logs for pushNotifications:deliverNotification)"
+        : "2 dispatch pending: delivery is scheduled";
+    case "skipped":
+      return `3 skipped by the server: ${n.pushError ?? "unknown reason"}`;
+    case "no_tokens":
+      return "4 no device token: the recipient has no registered Expo push token (the app did not register; see the device checks)";
+    case "mock":
+      return "5 live push disabled: EXPO_PUSH_LIVE is not \"true\" on this deployment, so nothing was sent to Expo";
+    case "failed":
+      return String(n.pushError ?? "").includes("receipt:")
+        ? `7 rejected by FCM/APNs (Expo receipt): ${n.pushError}`
+        : `6 rejected by Expo: ${n.pushError ?? "unknown error"}`;
+    case "partially_failed":
+      return `7 delivered to FCM/APNs for some devices; others failed: ${n.pushError}`;
+    case "sent":
+      return n.pushError
+        ? `6 accepted by Expo for some devices; others failed: ${n.pushError}`
+        : "6 accepted by Expo; the FCM/APNs receipt is checked about 15 minutes after sending";
+    case "provider_accepted":
+      return "7 accepted by FCM/APNs: delivery left the server side; if nothing appeared, check the phone (channel settings, Do Not Disturb, battery optimisation)";
+    default:
+      return `unknown status ${n.pushStatus}`;
+  }
+}
+
+/**
+ * Owner diagnostic for "the in-app notification arrived but the phone showed nothing".
+ * Internal, so only the deployment owner can run it (dashboard or CLI):
+ *   npx convex run pushNotifications:diagnosePush '{}'
+ *   npx convex run pushNotifications:diagnosePush '{"userId":"<users _id>"}'
+ * Reports the latest push-eligible notifications, the recipient's devices and the first stage
+ * that did not succeed. Returns no secrets, no full push tokens and no notification text.
+ */
+export const diagnosePush = internalQuery({
+  args: { userId: v.optional(v.id("users")), limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const limit = Math.min(Math.max(args.limit ?? 5, 1), 20);
+    const rows = args.userId
+      ? await ctx.db
+          .query("notifications")
+          .withIndex("by_recipient_and_created", (q) => q.eq("recipientId", String(args.userId)))
+          .order("desc")
+          .take(limit)
+      : (await ctx.db.query("notifications").order("desc").take(200)).filter((n) => n.pushStatus !== undefined).slice(0, limit);
+    const now = Date.now();
+
+    const recipientIds = [...new Set(rows.map((n) => n.recipientId))];
+    const recipients = [];
+    for (const rid of recipientIds) {
+      const id = ctx.db.normalizeId("users", rid);
+      const user = id ? await ctx.db.get(id) : null;
+      const tokens = id ? await ctx.db.query("pushTokens").withIndex("by_userId", (q) => q.eq("userId", String(id))).take(20) : [];
+      recipients.push({
+        recipientId: rid,
+        role: user?.role ?? null,
+        active: !!user && user.status !== "inactive",
+        devices: tokens.map((t) => ({ platform: t.platform, token: maskToken(t.token), registeredAt: new Date(t.updatedAt).toISOString() })),
+      });
+    }
+
+    return {
+      deployment: {
+        livePushEnabled: isLivePushEnabled(),
+        expoPushLiveSet: !!process.env.EXPO_PUSH_LIVE,
+        expoAccessTokenSet: !!process.env.EXPO_ACCESS_TOKEN,
+      },
+      notifications: rows.map((n) => ({
+        notificationId: n._id,
+        createdAt: new Date(n.createdAt).toISOString(),
+        type: n.type,
+        recipientId: n.recipientId,
+        pushStatus: n.pushStatus ?? null,
+        pushError: n.pushError ?? null,
+        expoTickets: n.pushTicketIds?.length ?? 0,
+        stage: pushStage(n, now),
+      })),
+      recipients,
+    };
   },
 });
 
@@ -188,6 +301,7 @@ export const deliverNotification = internalAction({
       await ctx.scheduler.runAfter(RECEIPT_CHECK_DELAY_MS, internal.pushNotifications.checkReceipts, {
         notificationId: args.notificationId,
         tickets: outcome.tickets,
+        ticketError: outcome.error,
       });
     }
     return { status: outcome.status };
@@ -199,6 +313,8 @@ export const checkReceipts = internalAction({
   args: {
     notificationId: v.id("notifications"),
     tickets: v.array(v.object({ id: v.string(), token: v.string() })),
+    /** Error from devices Expo refused at send time (kept so the final record shows it). */
+    ticketError: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     if (!isLivePushEnabled() || args.tickets.length === 0) return { checked: 0 };
@@ -210,24 +326,31 @@ export const checkReceipts = internalAction({
       });
       if (!response.ok) return { checked: 0 };
       const receipts: Record<string, any> = (await response.json())?.data ?? {};
+      // A receipt says whether Expo handed the message to FCM/APNs. It does not prove the phone
+      // displayed it; that is only observable on the device.
       let errors = 0;
+      let accepted = 0;
+      const codes = new Set<string>();
       for (const ticket of args.tickets) {
         const receipt = receipts[ticket.id];
+        if (receipt?.status === "ok") accepted++;
         if (receipt?.status !== "error") continue;
         errors++;
+        codes.add(receipt.details?.error ?? (receipt.message ? redactTokens(String(receipt.message)) : "unknown"));
         if (receipt.details?.error === "DeviceNotRegistered") {
           await ctx.runMutation(internal.pushTokens.deleteToken, { token: ticket.token });
         }
       }
-      if (errors > 0) {
+      if (errors > 0 || accepted > 0) {
+        const problems = [args.ticketError, errors > 0 ? `receipt:${[...codes].join(",")}` : undefined].filter(Boolean);
         await ctx.runMutation(internal.pushNotifications.recordDelivery, {
           notificationId: args.notificationId,
-          pushStatus: errors === args.tickets.length ? "failed" : "sent",
+          pushStatus: problems.length === 0 ? "provider_accepted" : accepted === 0 ? "failed" : "partially_failed",
           pushTicketIds: args.tickets.map((t) => t.id),
-          pushError: `receipt_errors:${errors}`,
+          pushError: problems.length > 0 ? problems.join("; ") : undefined,
         });
       }
-      return { checked: args.tickets.length, errors };
+      return { checked: args.tickets.length, errors, accepted };
     } catch {
       return { checked: 0 };
     }

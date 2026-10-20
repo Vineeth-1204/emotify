@@ -183,7 +183,8 @@ describe("OS push delivery", () => {
     const tokens = await t.run(async (ctx) => (await ctx.db.query("pushTokens").collect()).map((r) => r.token));
     expect(tokens).toEqual([TOKEN_A]);
     const confirmed = (await rows()).find((n) => n.type === "appointment_confirmed")!;
-    expect(confirmed).toMatchObject({ pushStatus: "sent", pushTicketIds: ["ticket-1"] });
+    // One device accepted by FCM (receipt ok), the other refused by Expo: both outcomes recorded.
+    expect(confirmed).toMatchObject({ pushStatus: "partially_failed", pushTicketIds: ["ticket-1"], pushError: "ticket:DeviceNotRegistered" });
   });
 
   test("provider failure keeps the in-app notification and records the error", async () => {
@@ -196,7 +197,7 @@ describe("OS push delivery", () => {
     await as(counsellorA).mutation(api.appointments.updateAppointmentStatus, { appointmentId: id, status: "accepted" });
     await runScheduled();
     const note = (await rows()).find((n) => n.type === "appointment_confirmed")!;
-    expect(note).toMatchObject({ pushStatus: "failed", pushError: "Expo push HTTP 503", read: false });
+    expect(note).toMatchObject({ pushStatus: "failed", pushError: "Expo push HTTP 503: unavailable", read: false });
   });
 
   test("no push to deactivated accounts", async () => {

@@ -308,6 +308,15 @@ and important, and `default` otherwise.
 **Invalid tokens.** `DeviceNotRegistered` tokens are removed, both from tickets immediately and from receipts after
 15 minutes.
 
+**Delivery diagnostics** (added after a report that the in-app notification appeared but the Android tray stayed
+empty):
+
+- Every stage leaves evidence on the notification row. Mock mode records `pushError: live_push_disabled`.
+- Expo HTTP, ticket and receipt errors are recorded with their codes, and token text is redacted.
+- When the receipt is OK, the row says `provider_accepted`.
+- The owner can run `npx convex run pushNotifications:diagnosePush '{}'` to see the first failing stage.
+- The `EXPO_PUSH_LIVE` flag accepts `true`, `1`, `yes` or `on`, in any case.
+
 **Live sending is off by default:**
 
 - `EXPO_PUSH_LIVE` unset → `mock` (the payload is built and validated, nothing is sent).

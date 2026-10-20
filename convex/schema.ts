@@ -717,7 +717,7 @@ export default defineSchema({
     relatedId: v.optional(v.string()), // e.g. the appointment id, re-authorised on open
     dedupeKey: v.optional(v.string()), // one notification per recipient per business event
     // OS push delivery record (the in-app row is the record of truth; push is best effort).
-    pushStatus: v.optional(v.string()), // "queued" | "sent" | "mock" | "no_tokens" | "skipped" | "failed"
+    pushStatus: v.optional(v.string()), // "queued" | "sent" | "provider_accepted" | "partially_failed" | "mock" | "no_tokens" | "skipped" | "failed"
     pushTicketIds: v.optional(v.array(v.string())),
     pushError: v.optional(v.string()),
     pushUpdatedAt: v.optional(v.number()),

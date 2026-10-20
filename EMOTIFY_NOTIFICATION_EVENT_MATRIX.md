@@ -109,11 +109,17 @@ All rows are raised in `convex/counsellorAssignments.ts`.
 | `pushStatus` | Meaning |
 |---|---|
 | `queued` | Row written; delivery scheduled. |
-| `sent` | Expo accepted the request (live mode). Per-ticket errors are counted. `DeviceNotRegistered` tokens are deleted from both the ticket and the receipt responses. If the receipts show errors, the row is updated with `pushError: receipt_errors:N`, and `failed` if every ticket errored. |
-| `mock` | Mock mode (`EXPO_PUSH_LIVE` unset): payload built and validated, nothing sent. |
+| `mock` | Live sending is off on this deployment (`EXPO_PUSH_LIVE` is not `true`). Nothing was sent; `pushError` is `live_push_disabled`. |
 | `no_tokens` | The recipient has no registered device. The in-app row is still there. |
 | `skipped` | Nothing sent. `pushError` gives the reason: `recipient_inactive`, `no_push_copy` or `copy_failed_privacy_check`. |
-| `failed` | Provider or network error (`pushError` holds a short reason). The in-app row is never removed. |
+| `sent` | Expo accepted the message (ticket ok); the receipt is checked about 15 minutes later. A device refused at send time is recorded as `ticket:<code>` and its token is deleted if the code is `DeviceNotRegistered`. |
+| `provider_accepted` | The Expo receipt says the message was handed to FCM/APNs. This is the last stage the server can observe; it is **not** proof that the phone displayed it. |
+| `partially_failed` | Some devices accepted, others failed; `pushError` lists `ticket:<code>` and/or `receipt:<code>`. |
+| `failed` | Nothing accepted. `pushError` is `Expo push HTTP <status>: <detail>`, `ticket:<code>` or `receipt:<code>` (for example `receipt:InvalidCredentials` for wrong FCM credentials). Error text never contains a push token. The in-app row is never removed. |
+
+The deployment owner can see the first failing stage for recent notifications with
+`npx convex run pushNotifications:diagnosePush '{}'`. Add `'{"userId":"<id>"}'` to see one user's notifications. It
+reports booleans for the env settings, masked device tokens and the stage; it never prints secrets or full tokens.
 
 `deliverNotification` runs only while `pushStatus === "queued"`, so a re-invoked scheduled job cannot send twice
 (NS "a scheduled delivery runs once even if invoked again").

@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { internalAction, internalMutation, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
-import { pushCopyFor } from "./notify";
+import { createNotification, pushCopyFor } from "./notify";
 import { MOBILE_DESTINATION_ROUTES, isNotificationDestination, type NotificationDestination } from "../common/notificationRoutes";
 import { readStoredEmotyPreferences } from "../common/companionName";
 import { resolveAvatarCharacterId, getNotificationAvatarUrl } from "../common/avatarNotification";
@@ -449,6 +449,61 @@ export const sendPushNotification = internalAction({
       sentCount: tokens.length,
       successCount: outcome.successCount,
       failedCount: outcome.failedCount,
+    };
+  },
+});
+
+/**
+ * Development & testing trigger: dispatches a single test notification through
+ * the shared notification and Expo push-delivery pipeline.
+ *
+ * Restricts recipient to valid, active students/patients.
+ * Generates a unique dedupe key per intentional test run.
+ */
+export const dispatchTestNotification = internalMutation({
+  args: {
+    studentId: v.string(),
+    testRunId: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    // 1. Validate recipient exists in DB
+    const id = ctx.db.normalizeId("users", args.studentId);
+    const recipient = id ? await ctx.db.get(id) : null;
+    if (!recipient) {
+      throw new Error(`Recipient not found: ${args.studentId}`);
+    }
+
+    // 2. Validate recipient is active
+    if (recipient.status === "inactive") {
+      throw new Error(`Recipient is inactive: ${args.studentId}`);
+    }
+
+    // 3. Restrict to student or patient role
+    if (recipient.role && recipient.role !== "student" && recipient.role !== "patient") {
+      throw new Error(`Recipient must have student or patient role, found: ${recipient.role}`);
+    }
+
+    // 4. Generate unique test deduplication key per intentional run
+    const runSuffix = args.testRunId?.trim() || `${Date.now()}`;
+    const dedupeKey = `test_notification:${args.studentId}:${runSuffix}`;
+
+    // 5. Reuse existing shared notification pipeline
+    const { id: notificationId, created } = await createNotification(ctx, {
+      recipientId: args.studentId,
+      type: "notification_test",
+      title: "Emotify notification test",
+      message: "Your test notification arrived successfully.",
+      priority: "low",
+      destination: "notifications",
+      dedupeKey,
+      category: "operational",
+    });
+
+    return {
+      dispatched: created,
+      notificationId,
+      dedupeKey,
+      recipientId: args.studentId,
     };
   },
 });

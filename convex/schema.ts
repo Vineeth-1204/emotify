@@ -50,6 +50,22 @@ export default defineSchema({
         updatedAt: v.optional(v.number()),
       })
     ),
+    // Configurable student notification preferences
+    notificationPreferences: v.optional(
+      v.object({
+        engagementEnabled: v.optional(v.boolean()),
+        quietHoursStart: v.optional(v.number()),
+        quietHoursEnd: v.optional(v.number()),
+        maxPerDay: v.optional(v.number()),
+        minSpacingHours: v.optional(v.number()),
+        timezone: v.optional(v.string()),
+        morningReminderTime: v.optional(v.string()), // "07:00"
+        eveningReminderTime: v.optional(v.string()), // "20:30"
+        morningReminderEnabled: v.optional(v.boolean()),
+        eveningReminderEnabled: v.optional(v.boolean()),
+        microGoalReminderEnabled: v.optional(v.boolean()),
+      })
+    ),
   })
     .index("by_clerkId", ["clerkId"])
     .index("by_mobile_number", ["mobile_number"])
@@ -335,6 +351,14 @@ export default defineSchema({
     sourceType: v.optional(v.string()), // "cbt" | "self_initiated" | "routine" | "screening"
     attemptId: v.optional(v.id("screeningAttempts")),
     triageId: v.optional(v.id("triages")),
+    slot: v.optional(v.string()), // "must_do" | "feel_better" | "grow_stronger"
+    symptomCategory: v.optional(v.string()),
+    intensityGroup: v.optional(v.string()), // "light_some" | "intense_overwhelming"
+    preIntensity: v.optional(v.number()),
+    postIntensity: v.optional(v.number()),
+    intensityDrop: v.optional(v.number()),
+    dialogueMessage: v.optional(v.string()),
+    nudgeSentAt: v.optional(v.number()),
   }).index("by_userId", ["userId"]),
 
   points: defineTable({
@@ -637,6 +661,11 @@ export default defineSchema({
     riskFlags: v.optional(v.array(v.string())),
     sessionStatus: v.string(), // "active" | "completed" | "safety_mode" | "support_mode" | "paused"
     currentStep: v.string(), // "understanding" | "clarification" | "guided_discovery" | "reflection" | "balanced_thought" | "belief" | "emotion_after" | "recovery_coach" | "completed" | "safety_mode" | "support_mode"
+    beliefBefore: v.optional(v.number()),
+    thinkingPatternId: v.optional(v.string()), // "TP01" - "TP15"
+    supportModeActivity: v.optional(v.string()),
+    supportModeNote: v.optional(v.string()),
+    autonomyChoiceMade: v.optional(v.boolean()),
   })
     .index("by_userId", ["userId"])
     .index("by_userId_and_timestamp", ["userId", "timestamp"])
@@ -721,6 +750,7 @@ export default defineSchema({
     pushTicketIds: v.optional(v.array(v.string())),
     pushError: v.optional(v.string()),
     pushUpdatedAt: v.optional(v.number()),
+    category: v.optional(v.string()), // "engagement" | "operational"
   })
     .index("by_recipientId", ["recipientId"])
     .index("by_read", ["read"])
@@ -865,6 +895,40 @@ export default defineSchema({
     .index("by_userId", ["userId"])
     .index("by_token", ["token"])
     .index("by_userId_and_token", ["userId", "token"]),
+
+  positiveMemories: defineTable({
+    userId: v.string(),
+    bestPartOfDay: v.string(), // Positive_Event
+    strengthIdentified: v.string(),
+    gratitudeResponse: v.string(),
+    emotion: v.string(),
+    tomorrowGoal: v.string(),
+    createdAt: v.number(),
+    sessionId: v.optional(v.string()),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_userId_and_createdAt", ["userId", "createdAt"]),
+
+  morningAffirmations: defineTable({
+    userId: v.string(),
+    dateStr: v.string(), // "YYYY-MM-DD"
+    affirmationId: v.optional(v.string()), // e.g. "MORN_01" - "MORN_07"
+    affirmationText: v.string(),
+    isCustom: v.boolean(),
+    createdAt: v.number(),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_userId_and_dateStr", ["userId", "dateStr"]),
+
+  eveningGratitudes: defineTable({
+    userId: v.string(),
+    dateStr: v.string(), // "YYYY-MM-DD"
+    gratitudeEntries: v.array(v.string()),
+    branch: v.string(), // "minimal_mild" | "moderate_severe"
+    createdAt: v.number(),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_userId_and_dateStr", ["userId", "dateStr"]),
 });
 
 

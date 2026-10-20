@@ -11,7 +11,8 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
-  Animated
+  Animated,
+  Modal
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { CHECKIN_POST_SESSION_HREF, CHECKIN_RETURN_TO, isCheckinReturn } from "@/common/checkinReturn";
@@ -221,6 +222,7 @@ export default function ReframeScreen() {
   // Convex endpoints
   const startSession = useMutation(api.cbt.startSession);
   const selectBalancedThought = useMutation(api.cbt.selectBalancedThought);
+  const submitBeliefBefore = useMutation(api.cbt.submitBeliefBeforeRating);
   const submitBeliefRating = useMutation(api.cbt.submitBeliefRating);
   const submitEmotionAfterRating = useMutation(api.cbt.submitEmotionAfterRating);
   const acceptGoal = useMutation(api.cbt.acceptGoal);
@@ -229,6 +231,7 @@ export default function ReframeScreen() {
   const endSession = useMutation(api.cbt.endSession);
   const submitMessage = useAction(api.cbt.submitMessage);
   const recommendGoal = useAction(api.cbt.recommendGoalAction);
+  const savePositiveMemoryMutation = useMutation(api.positiveGrowth.savePositiveMemory);
 
   // States
   const [activeSession, setActiveSession] = useState<any | null>(null);
@@ -243,6 +246,16 @@ export default function ReframeScreen() {
   const [goalRec, setGoalRec] = useState<any | null>(null);
   const [goalLoading, setGoalLoading] = useState(false);
   const [selectedGoals, setSelectedGoals] = useState<string[]>([]);
+
+  // Positive Growth states (6 Steps)
+  const [showGrowthModal, setShowGrowthModal] = useState(false);
+  const [growthStep, setGrowthStep] = useState(1);
+  const [growthReflection, setGrowthReflection] = useState("");
+  const [growthStrength, setGrowthStrength] = useState("");
+  const [growthGratitude, setGrowthGratitude] = useState("");
+  const [growthEmotion, setGrowthEmotion] = useState("Calm");
+  const [growthTomorrow, setGrowthTomorrow] = useState("");
+  const [growthSaving, setGrowthSaving] = useState(false);
 
   // Support mode states
   const [supportTab, setSupportTab] = useState<string | null>(null);
@@ -880,6 +893,30 @@ export default function ReframeScreen() {
                 );
               })}
 
+              {/* Mandatory Autonomy Option */}
+              <TouchableOpacity
+                style={[
+                  styles.autonomyChip,
+                  editedBalancedThought === "I'm not ready to change my thought yet." && styles.autonomyChipSelected
+                ]}
+                onPress={() => {
+                  setEditedBalancedThought("I'm not ready to change my thought yet.");
+                  setSelectedThoughtIndex(99);
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                }}
+              >
+                <Ionicons name="shield-checkmark-outline" size={16} color="#6D28D9" style={{ marginRight: 6 }} />
+                <Text style={styles.autonomyChipText}>I'm not ready to change my thought yet.</Text>
+              </TouchableOpacity>
+
+              {editedBalancedThought === "I'm not ready to change my thought yet." && (
+                <View style={styles.autonomyNoteBox}>
+                  <Text style={styles.autonomyNoteText}>
+                    That is completely okay. You do not have to force a change today. Honoring your pace is part of healthy reflection.
+                  </Text>
+                </View>
+              )}
+
               <Text style={styles.editLabel}>Edit Balanced Thought:</Text>
               <TextInput
                 style={styles.textArea}
@@ -991,6 +1028,17 @@ export default function ReframeScreen() {
                 }}
                 style={styles.actionBtn}
               />
+
+              <Button
+                title="🌱 Positive Growth Journey (Optional)"
+                variant="outline"
+                onPress={() => {
+                  setShowGrowthModal(true);
+                  setGrowthStep(1);
+                }}
+                style={[styles.actionBtnOutline, { marginTop: 12 }]}
+                textStyle={{ color: Colors.primary }}
+              />
             </View>
           </ScrollView>
         )}
@@ -1047,6 +1095,182 @@ export default function ReframeScreen() {
           </View>
         )}
       </KeyboardAvoidingView>
+
+      {/* POSITIVE GROWTH JOURNEY MODAL (6 STEPS) */}
+      <Modal visible={showGrowthModal} transparent animationType="slide">
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          style={styles.growthModalOverlay}
+        >
+          <View style={styles.growthModalContent}>
+            <View style={styles.growthModalHeader}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                <Ionicons name="leaf" size={20} color="#16A34A" />
+                <Text style={styles.growthModalTitle}>Positive Growth • Step {growthStep} of 6</Text>
+              </View>
+              <TouchableOpacity onPress={() => setShowGrowthModal(false)}>
+                <Ionicons name="close" size={24} color={Colors.text} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingVertical: 10 }}>
+              {growthStep === 1 && (
+                <View>
+                  <Text style={styles.growthStepTitle}>1. Daily Reflection</Text>
+                  <Text style={styles.growthStepDesc}>What went even a little bit well today? What was the best part of your day?</Text>
+                  <TextInput
+                    style={styles.growthTextArea}
+                    multiline
+                    numberOfLines={4}
+                    placeholder="Share something positive or peaceful, however small..."
+                    placeholderTextColor={Colors.textMuted}
+                    value={growthReflection}
+                    onChangeText={setGrowthReflection}
+                    textAlignVertical="top"
+                  />
+                  <Button
+                    title="Next Step"
+                    onPress={() => setGrowthStep(2)}
+                    disabled={!growthReflection.trim()}
+                    style={styles.actionBtn}
+                  />
+                </View>
+              )}
+
+              {growthStep === 2 && (
+                <View>
+                  <Text style={styles.growthStepTitle}>2. Strength Discovery</Text>
+                  <Text style={styles.growthStepDesc}>What strength, effort, patience, or skill of yours helped make that happen?</Text>
+                  <TextInput
+                    style={styles.growthTextArea}
+                    multiline
+                    numberOfLines={4}
+                    placeholder="e.g., My patience, curiosity, showing up, kindness..."
+                    placeholderTextColor={Colors.textMuted}
+                    value={growthStrength}
+                    onChangeText={setGrowthStrength}
+                    textAlignVertical="top"
+                  />
+                  <View style={{ flexDirection: "row", gap: 10, marginTop: 10 }}>
+                    <Button title="Back" variant="outline" onPress={() => setGrowthStep(1)} style={{ flex: 1 }} />
+                    <Button title="Next Step" onPress={() => setGrowthStep(3)} disabled={!growthStrength.trim()} style={{ flex: 2, backgroundColor: Colors.primary }} />
+                  </View>
+                </View>
+              )}
+
+              {growthStep === 3 && (
+                <View>
+                  <Text style={styles.growthStepTitle}>3. Gratitude & Connection</Text>
+                  <Text style={styles.growthStepDesc}>Who or what are you grateful for in this moment?</Text>
+                  <TextInput
+                    style={styles.growthTextArea}
+                    multiline
+                    numberOfLines={4}
+                    placeholder="e.g., A supportive friend, warm tea, quiet moments..."
+                    placeholderTextColor={Colors.textMuted}
+                    value={growthGratitude}
+                    onChangeText={setGrowthGratitude}
+                    textAlignVertical="top"
+                  />
+                  <View style={{ flexDirection: "row", gap: 10, marginTop: 10 }}>
+                    <Button title="Back" variant="outline" onPress={() => setGrowthStep(2)} style={{ flex: 1 }} />
+                    <Button title="Next Step" onPress={() => setGrowthStep(4)} disabled={!growthGratitude.trim()} style={{ flex: 2, backgroundColor: Colors.primary }} />
+                  </View>
+                </View>
+              )}
+
+              {growthStep === 4 && (
+                <View>
+                  <Text style={styles.growthStepTitle}>4. Emotion Check-In</Text>
+                  <Text style={styles.growthStepDesc}>How do you feel as you focus on this memory right now?</Text>
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginVertical: 12 }}>
+                    {["Calm", "Grateful", "Hopeful", "Relieved", "Proud", "Peaceful"].map((em) => (
+                      <TouchableOpacity
+                        key={em}
+                        style={[
+                          styles.emotionChip,
+                          growthEmotion === em && styles.emotionChipActive
+                        ]}
+                        onPress={() => setGrowthEmotion(em)}
+                      >
+                        <Text style={[styles.emotionChipText, growthEmotion === em && { color: "#FFFFFF", fontWeight: "bold" }]}>
+                          {em}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                  <View style={{ flexDirection: "row", gap: 10, marginTop: 10 }}>
+                    <Button title="Back" variant="outline" onPress={() => setGrowthStep(3)} style={{ flex: 1 }} />
+                    <Button title="Next Step" onPress={() => setGrowthStep(5)} style={{ flex: 2, backgroundColor: Colors.primary }} />
+                  </View>
+                </View>
+              )}
+
+              {growthStep === 5 && (
+                <View>
+                  <Text style={styles.growthStepTitle}>5. Tomorrow's Small Step</Text>
+                  <Text style={styles.growthStepDesc}>What is one small thing you can look forward to or do tomorrow?</Text>
+                  <TextInput
+                    style={styles.growthTextArea}
+                    multiline
+                    numberOfLines={4}
+                    placeholder="e.g., Take a 5-minute morning walk, listen to my favorite music..."
+                    placeholderTextColor={Colors.textMuted}
+                    value={growthTomorrow}
+                    onChangeText={setGrowthTomorrow}
+                    textAlignVertical="top"
+                  />
+                  <View style={{ flexDirection: "row", gap: 10, marginTop: 10 }}>
+                    <Button title="Back" variant="outline" onPress={() => setGrowthStep(4)} style={{ flex: 1 }} />
+                    <Button title="Review & Save" onPress={() => setGrowthStep(6)} disabled={!growthTomorrow.trim()} style={{ flex: 2, backgroundColor: Colors.primary }} />
+                  </View>
+                </View>
+              )}
+
+              {growthStep === 6 && (
+                <View>
+                  <Text style={styles.growthStepTitle}>6. Preserve in Memory Vault</Text>
+                  <Text style={styles.growthStepDesc}>Review your reflection before preserving it securely in your personal Memory Vault.</Text>
+                  
+                  <View style={styles.vaultSummaryCard}>
+                    <Text style={styles.vaultLabel}>🌟 Best Part: <Text style={styles.vaultVal}>{growthReflection}</Text></Text>
+                    <Text style={styles.vaultLabel}>💪 Strength Used: <Text style={styles.vaultVal}>{growthStrength}</Text></Text>
+                    <Text style={styles.vaultLabel}>🙏 Grateful For: <Text style={styles.vaultVal}>{growthGratitude}</Text></Text>
+                    <Text style={styles.vaultLabel}>🌿 Feeling: <Text style={styles.vaultVal}>{growthEmotion}</Text></Text>
+                    <Text style={styles.vaultLabel}>🎯 Tomorrow: <Text style={styles.vaultVal}>{growthTomorrow}</Text></Text>
+                  </View>
+
+                  <Button
+                    title={growthSaving ? "Saving..." : "Save to Memory Vault"}
+                    onPress={async () => {
+                      setGrowthSaving(true);
+                      try {
+                        await savePositiveMemoryMutation({
+                          bestPartOfDay: growthReflection,
+                          strengthIdentified: growthStrength,
+                          gratitudeResponse: growthGratitude,
+                          emotion: growthEmotion,
+                          tomorrowGoal: growthTomorrow,
+                          sessionId: activeSession?._id,
+                        });
+                        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+                        Alert.alert("Saved!", "Your positive growth reflection has been saved to your Memory Vault.");
+                        setShowGrowthModal(false);
+                      } catch (err: any) {
+                        Alert.alert("Error", err.message || "Failed to save memory.");
+                      } finally {
+                        setGrowthSaving(false);
+                      }
+                    }}
+                    disabled={growthSaving}
+                    style={[styles.actionBtn, { backgroundColor: "#16A34A", marginTop: 12 }]}
+                  />
+                </View>
+              )}
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   );
 }
@@ -1735,5 +1959,127 @@ const styles = StyleSheet.create({
     color: Colors.text,
     lineHeight: 22,
     marginBottom: Theme.spacing.md
-  }
+  },
+  autonomyChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#F1F5F9",
+    borderWidth: 1.5,
+    borderColor: "#CBD5E1",
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginVertical: 10,
+  },
+  autonomyChipSelected: {
+    backgroundColor: "#EDE9FE",
+    borderColor: "#7C3AED",
+  },
+  autonomyChipText: {
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: 13,
+    color: "#334155",
+  },
+  autonomyNoteBox: {
+    backgroundColor: "#F8FAFC",
+    borderLeftWidth: 3,
+    borderLeftColor: "#7C3AED",
+    padding: 10,
+    borderRadius: 8,
+    marginBottom: 12,
+  },
+  autonomyNoteText: {
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: 12,
+    lineHeight: 18,
+    color: "#475569",
+    fontStyle: "italic",
+  },
+  growthModalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.4)",
+    justifyContent: "flex-end",
+  },
+  growthModalContent: {
+    backgroundColor: "#FFFFFF",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: Theme.spacing.lg,
+    maxHeight: "85%",
+  },
+  growthModalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#E2E8F0",
+  },
+  growthModalTitle: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: 16,
+    color: "#16A34A",
+  },
+  growthStepTitle: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: 17,
+    color: Colors.text,
+    marginTop: 8,
+    marginBottom: 4,
+  },
+  growthStepDesc: {
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: 13,
+    lineHeight: 18,
+    color: Colors.textSecondary,
+    marginBottom: 12,
+  },
+  growthTextArea: {
+    backgroundColor: "#F8FAFC",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    borderRadius: 14,
+    padding: 12,
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: 14,
+    color: Colors.text,
+    minHeight: 110,
+    marginBottom: 14,
+  },
+  emotionChip: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: "#F1F5F9",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+  },
+  emotionChipActive: {
+    backgroundColor: "#16A34A",
+    borderColor: "#16A34A",
+  },
+  emotionChipText: {
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: 13,
+    color: Colors.text,
+  },
+  vaultSummaryCard: {
+    backgroundColor: "#F0FDF4",
+    borderWidth: 1,
+    borderColor: "#BBF7D0",
+    borderRadius: 16,
+    padding: 14,
+    gap: 8,
+    marginVertical: 10,
+  },
+  vaultLabel: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: 13,
+    color: "#166534",
+  },
+  vaultVal: {
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: 13,
+    color: "#14532D",
+  },
 });

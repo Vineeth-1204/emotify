@@ -14,7 +14,7 @@ import { isNotificationDestination, type NotificationDestination } from "../comm
  * scores, clinical terms or free text, so nothing sensitive reaches a lock screen.
  */
 
-export type PushChannel = "default" | "appointments" | "important";
+export type PushChannel = "default" | "appointments" | "important" | "reminders";
 
 export interface PushCopy {
   title: string;
@@ -36,6 +36,14 @@ export const PUSH_COPY: Record<string, PushCopy | null> = {
   appointment_transferred: null,
   counsellor_unassigned: null,
   counsellor_assigned: { title: "Emotify", body: "You have an update from Emotify.", channelId: "default" },
+  // Care follow-ups (shared pipeline)
+  follow_up_created: { title: "Emotify", body: "A care follow-up has been scheduled for you.", channelId: "appointments" },
+  follow_up_completed: { title: "Emotify", body: "A care follow-up has been marked complete.", channelId: "appointments" },
+  // Adaptive Student Engagement
+  engagement_morning: { title: "Emotify", body: "Time for your morning check-in. How are you feeling today?", channelId: "reminders" },
+  engagement_microgoal: { title: "Emotify", body: "A small step is waiting for you today. Ready to take it?", channelId: "reminders" },
+  engagement_evening: { title: "Emotify", body: "Take a quiet moment to reflect on your day.", channelId: "reminders" },
+  engagement_night: { title: "Emotify", body: "Time to unwind and relax tonight.", channelId: "reminders" },
   // Counsellor
   appointment_request_received: { title: "Emotify", body: "You have a new appointment request.", channelId: "appointments" },
   appointment_updated: { title: "Emotify", body: "An appointment has been updated.", channelId: "appointments" },
@@ -51,6 +59,8 @@ export const PUSH_COPY: Record<string, PushCopy | null> = {
   appointment_needs_counsellor: { title: "Emotify", body: "An appointment request needs a counsellor.", channelId: "appointments" },
   caseload_capacity: null,
   counsellor_inactive_caseload: null,
+  // Development / Testing
+  notification_test: { title: "Emotify notification test", body: "Your test notification arrived successfully.", channelId: "default" },
 };
 
 export function pushCopyFor(type: string): PushCopy | null {
@@ -70,6 +80,7 @@ export interface NotificationInput {
   dedupeKey?: string;
   /** Defaults to whether the type has push copy. */
   push?: boolean;
+  category?: "engagement" | "operational";
 }
 
 /**
@@ -107,6 +118,7 @@ export async function createNotification(
     relatedId: input.relatedId,
     dedupeKey: input.dedupeKey,
     pushStatus: wantsPush ? "queued" : undefined,
+    category: input.category ?? (input.type.startsWith("engagement_") ? "engagement" : "operational"),
   });
 
   // Push is scheduled only after the row exists, in the same transaction: if this mutation

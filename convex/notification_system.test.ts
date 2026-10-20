@@ -127,7 +127,7 @@ describe("OS push delivery", () => {
       if (!copy) continue;
       expect(validatePrivacySafePushContent(copy.title, copy.body), type).toBe(true);
       expect(copy.body, type).not.toMatch(/\d|counsell?or [A-Z]|Student [0-9]|screen|score|alert/i);
-      expect(["default", "appointments", "important"]).toContain(copy.channelId);
+      expect(["default", "appointments", "important", "reminders"]).toContain(copy.channelId);
     }
   });
 

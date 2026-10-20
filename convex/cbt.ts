@@ -7,6 +7,7 @@ import { assertCanAccessStudent, requireAdmin } from "./authz";
 import { getGeminiModels } from "./emotyContract";
 import { classifyServerSafety, getControlledCrisisResponse } from "./emotySafety";
 import { CRISIS_RESOURCES } from "../common/crisisResources";
+import { THINKING_PATTERNS, MANDATORY_AUTONOMY_OPTION, SUPPORT_ACTIVITIES, type ThinkingPattern } from "../common/cbtCatalogue";
 
 // Helper to sanitize inputs
 function sanitizeInput(input: string): string {
@@ -197,6 +198,28 @@ export const updateSessionContext = mutation({
   },
 });
 
+/** Store the belief rating in the initial automatic thought (0 to 100%). */
+export const submitBeliefBeforeRating = mutation({
+  args: { sessionId: v.id("cbtSessions"), score: v.number() },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new ConvexError("Unauthenticated");
+    const userId = identity.subject;
+
+    const session = await ctx.db.get(args.sessionId);
+    if (!session || session.userId !== userId) throw new ConvexError("Unauthorized or not found");
+
+    if (args.score < 0 || args.score > 100) throw new ConvexError("Belief score must be 0-100");
+
+    await ctx.db.patch(args.sessionId, {
+      beliefBefore: args.score,
+      timestamp: Date.now(),
+    });
+
+    return { success: true };
+  },
+});
+
 /** Select and store the student's chosen/edited balanced thought. */
 export const selectBalancedThought = mutation({
   args: { sessionId: v.id("cbtSessions"), thought: v.string() },
@@ -208,13 +231,16 @@ export const selectBalancedThought = mutation({
     const session = await ctx.db.get(args.sessionId);
     if (!session || session.userId !== userId) throw new Error("Unauthorized or not found");
 
+    const isAutonomyChoice = args.thought === MANDATORY_AUTONOMY_OPTION || args.thought.toLowerCase().includes("not ready to change");
+
     await ctx.db.patch(args.sessionId, {
       balancedThought: args.thought,
+      autonomyChoiceMade: isAutonomyChoice,
       currentStep: "belief",
       timestamp: Date.now(),
     });
 
-    return { success: true };
+    return { success: true, autonomyChoiceMade: isAutonomyChoice };
   },
 });
 
@@ -238,6 +264,87 @@ export const submitBeliefRating = mutation({
     });
 
     return { success: true };
+  },
+});
+
+/** Switch CBT session into Support Mode when the student prefers supportive activities */
+export const startSupportMode = mutation({
+  args: { sessionId: v.id("cbtSessions"), reason: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new ConvexError("Unauthenticated");
+    const userId = identity.subject;
+
+    const session = await ctx.db.get(args.sessionId);
+    if (!session || session.userId !== userId) throw new ConvexError("Unauthorized or not found");
+
+    const supportMsg = "Sometimes it's hard to put thoughts into words, and that's completely okay. Let's do a gentle calming activity together.";
+    const updated = [
+      ...session.conversation,
+      { role: "assistant", content: supportMsg, timestamp: Date.now() },
+    ];
+
+    await ctx.db.patch(args.sessionId, {
+      conversation: updated,
+      sessionStatus: "support_mode",
+      currentStep: "support_mode",
+      timestamp: Date.now(),
+    });
+
+    return { success: true, message: supportMsg, activities: SUPPORT_ACTIVITIES };
+  },
+});
+
+/** Choose a Support Mode activity (breathing, grounding, free_writing, emotion_cards, micro_goal) */
+export const selectSupportActivity = mutation({
+  args: {
+    sessionId: v.id("cbtSessions"),
+    activityId: v.string(),
+    note: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new ConvexError("Unauthenticated");
+    const userId = identity.subject;
+
+    const session = await ctx.db.get(args.sessionId);
+    if (!session || session.userId !== userId) throw new ConvexError("Unauthorized or not found");
+
+    await ctx.db.patch(args.sessionId, {
+      supportModeActivity: args.activityId,
+      supportModeNote: args.note,
+      timestamp: Date.now(),
+    });
+
+    return { success: true };
+  },
+});
+
+/** Complete Support Mode session without penalizing the student (treated as a completed therapeutic intervention) */
+export const completeSupportMode = mutation({
+  args: {
+    sessionId: v.id("cbtSessions"),
+    note: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new ConvexError("Unauthenticated");
+    const userId = identity.subject;
+
+    const session = await ctx.db.get(args.sessionId);
+    if (!session || session.userId !== userId) throw new ConvexError("Unauthorized or not found");
+
+    await ctx.db.patch(args.sessionId, {
+      sessionStatus: "completed",
+      currentStep: "completed",
+      supportModeNote: args.note || session.supportModeNote,
+      timestamp: Date.now(),
+    });
+
+    return {
+      success: true,
+      message: "You took time for yourself today. Every small pause helps your mind feel a little calmer. 💛",
+    };
   },
 });
 
@@ -823,11 +930,17 @@ export const submitMessage = action({
 
       if (session.currentStep === "reflection") {
         // User has submitted reflection. Generate 3 balanced thoughts.
-        const thoughts = responseJson.balancedThoughts || [
+        const tp = session.thinkingPatternId ? THINKING_PATTERNS[session.thinkingPatternId] : null;
+        let thoughts = tp ? [...tp.suggestedNewThoughts] : (responseJson.balancedThoughts || [
           "I might make mistakes, but I can learn and improve over time.",
           "This situation is stressful, but it doesn't define my whole value.",
-          "I don't have to be perfect to do a good job."
-        ];
+          MANDATORY_AUTONOMY_OPTION
+        ]);
+        if (thoughts.length >= 3) {
+          thoughts[2] = MANDATORY_AUTONOMY_OPTION;
+        } else {
+          thoughts.push(MANDATORY_AUTONOMY_OPTION);
+        }
         const intro = responseJson.responseMessage || "I've drafted three balanced thoughts based on our chat. Which one feels most helpful to you? Feel free to select and customize it:";
 
         const updatedHistory = [...conversationHistory, { role: "assistant", content: `${intro}\n\n1. ${thoughts[0]}\n\n2. ${thoughts[1]}\n\n3. ${thoughts[2]}`, timestamp: Date.now() }];
@@ -1296,9 +1409,28 @@ async function handleMockResponse(ctx: any, sessionId: Id<"cbtSessions">, sessio
 
     // Transition when either sufficient comprehensive input has been provided on turn 2+, or after 3 turns
     if (userTurns >= 3 || (userTurns >= 2 && hasSituationAndThought)) {
-      // Transition to guided discovery directly (skip clarification for mock ease)
-      const firstQuestion = "What evidence supports the idea that this is completely ruined?";
-      const transitionReply = `I understand. You feel like you're being hard on yourself about this situation.\n\nLet's work through it. First: ${firstQuestion}`;
+      // Match against TP01-TP15 library
+      let matchedTp: ThinkingPattern = THINKING_PATTERNS.TP02;
+      for (const tp of Object.values(THINKING_PATTERNS)) {
+        for (const stmt of tp.studentStatements) {
+          const words = stmt.toLowerCase().replace(/[^a-z0-9 ]/g, "").split(" ").filter((w: string) => w.length > 3);
+          const matches = words.filter((w: string) => clean.includes(w));
+          if (matches.length >= 2) {
+            matchedTp = tp;
+            break;
+          }
+        }
+      }
+      if (clean.includes("ruin") || clean.includes("disaster") || clean.includes("worst")) {
+        matchedTp = THINKING_PATTERNS.TP05;
+      } else if (clean.includes("fault") || clean.includes("blame")) {
+        matchedTp = THINKING_PATTERNS.TP06;
+      } else if (clean.includes("fail") || clean.includes("stupid") || clean.includes("useless")) {
+        matchedTp = THINKING_PATTERNS.TP10;
+      }
+
+      const firstQuestion = matchedTp.challengeQuestions[0];
+      const transitionReply = `I understand. You feel like you're carrying a heavy thought right now.\n\nLet's work through it together. First: ${firstQuestion}`;
       const updated = [...history, { role: "assistant", content: transitionReply, timestamp: now }];
 
       await ctx.runMutation(internal.cbt.updateSessionInternal, {
@@ -1309,13 +1441,10 @@ async function handleMockResponse(ctx: any, sessionId: Id<"cbtSessions">, sessio
           automaticThought: userMsg,
           emotion: "Anxiety",
           emotionBefore: 7,
-          thinkingStyle: "I'm being hard on myself",
-          cbtDistortion: "All-or-Nothing Thinking",
-          challengeQuestions: [
-            "What evidence supports this idea?",
-            "What evidence goes against it?",
-            "What would you tell a friend in this situation?"
-          ],
+          thinkingStyle: matchedTp.name,
+          thinkingPatternId: matchedTp.id,
+          cbtDistortion: matchedTp.name,
+          challengeQuestions: [...matchedTp.challengeQuestions],
           challengeAnswers: [],
           stepIndex: 0,
           currentStep: "guided_discovery",
@@ -1399,13 +1528,14 @@ async function handleMockResponse(ctx: any, sessionId: Id<"cbtSessions">, sessio
   }
 
   if (session.currentStep === "reflection") {
-    const thoughts = [
+    const tp = session.thinkingPatternId ? THINKING_PATTERNS[session.thinkingPatternId] : null;
+    const thoughts = tp ? [...tp.suggestedNewThoughts] : [
       "I made a mistake, but it's one event and I can learn from it.",
       "This is challenging, but I have handled tough things before.",
-      "I am doing my best, and that is enough for today."
+      MANDATORY_AUTONOMY_OPTION
     ];
-    const intro = "I've drafted three balanced thoughts based on our chat. Choose the one that fits best:";
-    const updated = [...history, { role: "assistant", content: `${intro}\n\n1. ${thoughts[0]}\n\n2. ${thoughts[1]}`, timestamp: now }];
+    const intro = "I've drafted three balanced thoughts based on our chat. Choose the one that fits best, or you can take your time:";
+    const updated = [...history, { role: "assistant", content: `${intro}\n\n1. ${thoughts[0]}\n\n2. ${thoughts[1]}\n\n3. ${thoughts[2]}`, timestamp: now }];
 
     await ctx.runMutation(internal.cbt.updateSessionInternal, {
       sessionId,

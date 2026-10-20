@@ -64,6 +64,8 @@ export default function MicroGoalsScreen() {
   // Convex Queries
   const todayCheckin = useQuery(api.microGoals.getTodayCheckin, { dateStr: getLocalDateString() });
   const dailyGoals = useQuery(api.microGoals.getTodayGoals, { userId: user?.id ?? "", dateStr: getLocalDateString() });
+  const symptomData = useQuery(api.microGoals.getTodaySymptomGoals, { userId: user?.id ?? "", dateStr: getLocalDateString() });
+  const symptomWeeklySummary = useQuery(api.microGoals.getSymptomWeeklySummary, { userId: user?.id ?? "" });
   const streakInfo = useQuery(api.microGoals.getStreak, { userId: user?.id ?? "", dateStr: getLocalDateString() });
   const gamification = useQuery(api.microGoals.getGamificationStats);
   const weeklyMission = useQuery(api.microGoals.getWeeklyMission);
@@ -75,6 +77,7 @@ export default function MicroGoalsScreen() {
   // Convex Mutations
   const submitCheckin = useMutation(api.microGoals.submitMorningCheckin);
   const completeGoalWithFeeling = useMutation(api.microGoals.completeGoalWithFeeling);
+  const generateSymptomGoals = useMutation(api.microGoals.generateSymptomMicroGoals);
   const scheduleGoalRelative = useMutation(api.microGoals.scheduleGoalRelative);
   const snoozeGoal = useMutation(api.microGoals.snoozeGoal);
   const skipGoal = useMutation(api.microGoals.skipGoal);
@@ -92,6 +95,12 @@ export default function MicroGoalsScreen() {
 
   // Completion awards data
   const [rewardData, setRewardData] = useState<{ xp: number; coins: number; levelUp: boolean; perfectDay: boolean; newLevel: number } | null>(null);
+
+  useEffect(() => {
+    if (dailyGoals !== undefined && dailyGoals.length === 0 && symptomData && !symptomData.safetyOverride) {
+      generateSymptomGoals({ dateStr: getLocalDateString() }).catch(() => {});
+    }
+  }, [dailyGoals, symptomData]);
 
   if (
     dailyGoals === undefined ||
@@ -188,11 +197,24 @@ export default function MicroGoalsScreen() {
     setIsFeelingVisible(false);
     setIsMutationLoading(true);
     try {
-      const res = await completeGoalWithFeeling({ id: selectedGoal._id, feelingAfter: feeling, dateStr: getLocalDateString() });
+      const pre = selectedGoal.preIntensity ?? 6;
+      const calculatedPost =
+        feeling === "better"
+          ? Math.max(1, pre - 2)
+          : feeling === "same"
+          ? pre
+          : Math.min(10, pre + 1);
+
+      const res = await completeGoalWithFeeling({
+        id: selectedGoal._id,
+        feelingAfter: feeling,
+        postIntensity: calculatedPost,
+        dateStr: getLocalDateString(),
+      });
       if (res.success) {
         setRewardData({
-          xp: res.xpAward || 10,
-          coins: res.coinsAward || 10,
+          xp: res.xpAward || 1,
+          coins: res.coinsAward || 1,
           levelUp: !!res.levelUp,
           perfectDay: !!res.perfectDayBonus,
           newLevel: res.newLevel || currentLevel
@@ -245,7 +267,22 @@ export default function MicroGoalsScreen() {
           onPress={() => handleOpenGoalDetails(goal)}
           disabled={goal.completed || goal.skipped}
         >
-          <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 4, marginBottom: 2 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 4 }}>
+            {goal.slot === "must_do" && (
+              <View style={[styles.slotBadge, { backgroundColor: "#ECFDF5", borderColor: "#A7F3D0" }]}>
+                <Text style={[styles.slotBadgeText, { color: "#065F46" }]}>✅ MUST DO</Text>
+              </View>
+            )}
+            {goal.slot === "feel_better" && (
+              <View style={[styles.slotBadge, { backgroundColor: "#EFF6FF", borderColor: "#BFDBFE" }]}>
+                <Text style={[styles.slotBadgeText, { color: "#1E40AF" }]}>🌿 FEEL BETTER</Text>
+              </View>
+            )}
+            {goal.slot === "grow_stronger" && (
+              <View style={[styles.slotBadge, { backgroundColor: "#FAF5FF", borderColor: "#E9D5FF" }]}>
+                <Text style={[styles.slotBadgeText, { color: "#6B21A8" }]}>📚 GROW STRONGER</Text>
+              </View>
+            )}
             {goal.isDailyChallenge && (
               <View style={styles.challengeBadge}>
                 <Text style={styles.challengeBadgeText}>TODAY'S PICK</Text>
@@ -409,6 +446,33 @@ export default function MicroGoalsScreen() {
                 </View>
               )}
 
+              {/* Safety override banner if Item 9 is active */}
+              {symptomData?.safetyOverride && (
+                <View style={styles.safetyCardBox}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                    <Ionicons name="heart" size={22} color="#DC2626" />
+                    <Text style={styles.safetyCardTitle}>Safety Support</Text>
+                  </View>
+                  <Text style={styles.safetyCardDesc}>
+                    {symptomData.dialogueMessage || "Your safety and well-being are what matter most right now. Please reach out to someone who can help."}
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.safetyActionBtn}
+                    onPress={() => router.push("/(auth)/tools/reframe")}
+                  >
+                    <Text style={styles.safetyActionBtnText}>Access Support Resources</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {/* Symptom empathy dialogue message */}
+              {symptomData?.dialogueMessage && !symptomData?.safetyOverride ? (
+                <View style={styles.dialogueBanner}>
+                  <Ionicons name="sparkles" size={18} color="#6D28D9" style={{ marginRight: 8, marginTop: 2 }} />
+                  <Text style={styles.dialogueBannerText}>{symptomData.dialogueMessage}</Text>
+                </View>
+              ) : null}
+
               <View style={styles.todayTasksHeader}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.todayTasksTitle}>Your tasks</Text>
@@ -439,6 +503,42 @@ export default function MicroGoalsScreen() {
             ========================================== */}
         {activeTab === "progress" && (
           <View style={styles.tabSection}>
+            {/* Weekly Symptom Summary */}
+            {symptomWeeklySummary && (
+              <View style={styles.glassCard}>
+                <Text style={styles.sectionTitle}>Weekly Reflection</Text>
+                <Text style={styles.checkinSubtitle}>{symptomWeeklySummary.reflectionMessage}</Text>
+                
+                <View style={styles.statsSummaryGrid}>
+                  <View style={styles.statSummaryBox}>
+                    <Text style={styles.statSummaryNum}>{symptomWeeklySummary.goalsCompleted}</Text>
+                    <Text style={styles.statSummaryLabel}>Completed</Text>
+                  </View>
+                  <View style={styles.statSummaryBox}>
+                    <Text style={styles.statSummaryNum}>{symptomWeeklySummary.goalsSkipped}</Text>
+                    <Text style={styles.statSummaryLabel}>Skipped</Text>
+                  </View>
+                  <View style={styles.statSummaryBox}>
+                    <Text style={[styles.statSummaryNum, { color: '#8B6518' }]}>+{symptomWeeklySummary.calmPointsEarned}</Text>
+                    <Text style={styles.statSummaryLabel}>Calm Points</Text>
+                  </View>
+                  <View style={styles.statSummaryBox}>
+                    <Text style={[styles.statSummaryNum, { color: Colors.primary }]}>
+                      {symptomWeeklySummary.avgIntensityDrop > 0 ? `-${symptomWeeklySummary.avgIntensityDrop}` : "0"}
+                    </Text>
+                    <Text style={styles.statSummaryLabel}>Avg Drop</Text>
+                  </View>
+                </View>
+
+                {symptomWeeklySummary.modelingMessage ? (
+                  <View style={styles.modelingBox}>
+                    <Ionicons name="bulb-outline" size={16} color="#6D28D9" style={{ marginRight: 6 }} />
+                    <Text style={styles.modelingText}>"{symptomWeeklySummary.modelingMessage}"</Text>
+                  </View>
+                ) : null}
+              </View>
+            )}
+
             {/* Weekly Missions */}
             <View style={styles.glassCard}>
               <Text style={styles.sectionTitle}>This week</Text>
@@ -1628,5 +1728,105 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#6D28D9',
     flex: 1,
+  },
+  slotBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  slotBadgeText: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: 10,
+    letterSpacing: 0.5,
+  },
+  dialogueBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#F5F3FF',
+    borderWidth: 1,
+    borderColor: '#DDD6FE',
+    borderRadius: 16,
+    padding: 12,
+    marginVertical: 4,
+  },
+  dialogueBannerText: {
+    flex: 1,
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: 12,
+    lineHeight: 18,
+    color: '#5B21B6',
+  },
+  safetyCardBox: {
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    borderRadius: 16,
+    padding: 14,
+    marginVertical: 4,
+  },
+  safetyCardTitle: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: 15,
+    color: '#DC2626',
+  },
+  safetyCardDesc: {
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: 12,
+    lineHeight: 18,
+    color: '#991B1B',
+    marginBottom: 10,
+  },
+  safetyActionBtn: {
+    backgroundColor: '#DC2626',
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    alignSelf: 'flex-start',
+  },
+  safetyActionBtnText: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: 12,
+    color: '#FFFFFF',
+  },
+  statsSummaryGrid: {
+    flexDirection: 'row',
+    gap: 8,
+    marginVertical: 12,
+  },
+  statSummaryBox: {
+    flex: 1,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  statSummaryNum: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: 16,
+    color: Colors.text,
+  },
+  statSummaryLabel: {
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: 10,
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
+  modelingBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F5F3FF',
+    borderRadius: 10,
+    padding: 10,
+    marginTop: 4,
+  },
+  modelingText: {
+    flex: 1,
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: 11,
+    fontStyle: 'italic',
+    color: '#5B21B6',
   },
 });

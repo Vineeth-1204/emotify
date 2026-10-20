@@ -5,6 +5,7 @@ import { assertCanAccessStudent, getAuthenticatedUser, getStaffScope, getStaffRe
 import type { Doc } from "./_generated/dataModel";
 import { legacyFollowUpSourceType } from "../common/legacyClientCompat";
 import { sanitizePlainText } from "./sanitizer";
+import { createNotification, notifyEach } from "./notify";
 
 export const create = mutation({
   args: {
@@ -114,15 +115,15 @@ export const create = mutation({
     });
 
     if (isStaff) {
-      await ctx.db.insert("notifications", {
+      await createNotification(ctx, {
         recipientId: canonicalTargetUserId,
         type: "follow_up_created",
         title: "Care Follow-up Scheduled",
         message: `A follow-up (${args.type.replace(/_/g, " ")}) has been scheduled for ${new Date(args.dueDate).toLocaleDateString()}.`,
         priority: "medium",
-        read: false,
-        archived: false,
-        createdAt: Date.now(),
+        destination: "appointments",
+        relatedId: String(followUpId),
+        dedupeKey: `follow_up:${followUpId}:created`,
       });
     }
 
@@ -421,30 +422,27 @@ export const markComplete = mutation({
     });
 
     if (isStaff) {
-      await ctx.db.insert("notifications", {
+      await createNotification(ctx, {
         recipientId: followUp.userId,
         type: "follow_up_completed",
         title: "Care Follow-up Completed",
         message: `Your follow-up (${followUp.type.replace(/_/g, " ")}) has been marked completed by the counselor.`,
         priority: "medium",
-        read: false,
-        archived: false,
-        createdAt: now,
+        destination: "appointments",
+        relatedId: String(followUp._id),
+        dedupeKey: `follow_up:${followUp._id}:completed:student`,
       });
     } else {
       const staff = await getStaffRecipientsForStudent(ctx, followUp.userId);
-      for (const s of staff) {
-        await ctx.db.insert("notifications", {
-          recipientId: String(s._id),
-          type: "follow_up_completed",
-          title: "Follow-up Completed by Student",
-          message: `${caller.full_name || "A student"} completed their care follow-up (${followUp.type.replace(/_/g, " ")}).`,
-          priority: "medium",
-          read: false,
-          archived: false,
-          createdAt: now,
-        });
-      }
+      await notifyEach(ctx, staff.map((s: any) => s._id), {
+        type: "follow_up_completed",
+        title: "Follow-up Completed by Student",
+        message: `${caller.full_name || "A student"} completed their care follow-up (${followUp.type.replace(/_/g, " ")}).`,
+        priority: "medium",
+        destination: "appointments",
+        relatedId: String(followUp._id),
+        dedupeKey: `follow_up:${followUp._id}:completed:staff`,
+      });
     }
 
     return { success: true };

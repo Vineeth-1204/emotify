@@ -112,6 +112,26 @@ export default function ToolsScreen() {
       categoryText: t("tools.companionTag"),
     },
     {
+      id: "morning-affirmation",
+      title: "Morning Affirmation",
+      description: "Set an intentional thought or carry a gentle reminder for today",
+      renderIcon: (color: string) => <Ionicons name="sunny-outline" size={26} color={color} />,
+      route: "/(auth)/tools/morning-affirmation" as const,
+      color: "#F59E0B",
+      category: "mindfulness",
+      categoryText: "Morning Routine",
+    },
+    {
+      id: "evening-gratitude",
+      title: "Evening Gratitude",
+      description: "Notice small good moments from today before winding down",
+      renderIcon: (color: string) => <Ionicons name="moon-outline" size={26} color={color} />,
+      route: "/(auth)/tools/evening-gratitude" as const,
+      color: "#6366F1",
+      category: "mindfulness",
+      categoryText: "Evening Routine",
+    },
+    {
       id: "jpmr",
       title: t("tools.jpmrTitle"),
       description: t("tools.jpmrDesc"),
@@ -357,4 +377,3 @@ function stylesFactory(colors: any) {
   } as TextStyle,
   };
 }
-

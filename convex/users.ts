@@ -1808,4 +1808,130 @@ export const updateStudentProfile = mutation({
   },
 });
 
+// ==========================================
+// NOTIFICATION PREFERENCES (Adaptive Engagement)
+// ==========================================
+
+export const getNotificationPreferences = query({
+  args: { userId: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      return {
+        engagementEnabled: true,
+        quietHoursStart: 22,
+        quietHoursEnd: 7,
+        maxPerDay: 4,
+        minSpacingHours: 2.5,
+        timezone: "Asia/Kolkata",
+      };
+    }
+    const targetUserId = args.userId || identity.subject;
+    await assertCanAccessStudent(ctx, targetUserId);
+
+    let user = null;
+    try {
+      user = await ctx.db.get(targetUserId as Id<"users">);
+    } catch {}
+    if (!user) {
+      user = await ctx.db
+        .query("users")
+        .withIndex("by_clerkId", (q) => q.eq("clerkId", targetUserId))
+        .first();
+    }
+    if (!user) {
+      return {
+        engagementEnabled: true,
+        quietHoursStart: 22,
+        quietHoursEnd: 7,
+        maxPerDay: 4,
+        minSpacingHours: 2.5,
+        timezone: "Asia/Kolkata",
+      };
+    }
+
+    const prefs = user.notificationPreferences;
+    return {
+      engagementEnabled: prefs?.engagementEnabled ?? true,
+      quietHoursStart: prefs?.quietHoursStart ?? 22,
+      quietHoursEnd: prefs?.quietHoursEnd ?? 7,
+      maxPerDay: prefs?.maxPerDay ?? 4,
+      minSpacingHours: prefs?.minSpacingHours ?? 2.5,
+      timezone: prefs?.timezone ?? "Asia/Kolkata",
+    };
+  },
+});
+
+export const updateNotificationPreferences = mutation({
+  args: {
+    userId: v.optional(v.string()),
+    engagementEnabled: v.optional(v.boolean()),
+    quietHoursStart: v.optional(v.number()),
+    quietHoursEnd: v.optional(v.number()),
+    maxPerDay: v.optional(v.number()),
+    minSpacingHours: v.optional(v.number()),
+    timezone: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const targetUserId = args.userId || identity.subject;
+    await assertCanAccessStudent(ctx, targetUserId);
+
+    let user = null;
+    try {
+      user = await ctx.db.get(targetUserId as Id<"users">);
+    } catch {}
+    if (!user) {
+      user = await ctx.db
+        .query("users")
+        .withIndex("by_clerkId", (q) => q.eq("clerkId", targetUserId))
+        .first();
+    }
+    if (!user) throw new Error("User not found");
+
+    const currentPrefs = user.notificationPreferences || {};
+    const patch: Record<string, any> = { ...currentPrefs };
+
+    if (args.engagementEnabled !== undefined) {
+      patch.engagementEnabled = args.engagementEnabled;
+    }
+    if (args.quietHoursStart !== undefined) {
+      if (args.quietHoursStart < 0 || args.quietHoursStart > 23 || !Number.isInteger(args.quietHoursStart)) {
+        throw new Error("quietHoursStart must be an integer between 0 and 23");
+      }
+      patch.quietHoursStart = args.quietHoursStart;
+    }
+    if (args.quietHoursEnd !== undefined) {
+      if (args.quietHoursEnd < 0 || args.quietHoursEnd > 23 || !Number.isInteger(args.quietHoursEnd)) {
+        throw new Error("quietHoursEnd must be an integer between 0 and 23");
+      }
+      patch.quietHoursEnd = args.quietHoursEnd;
+    }
+    if (args.maxPerDay !== undefined) {
+      if (args.maxPerDay < 1 || args.maxPerDay > 4 || !Number.isInteger(args.maxPerDay)) {
+        throw new Error("maxPerDay must be an integer between 1 and 4");
+      }
+      patch.maxPerDay = args.maxPerDay;
+    }
+    if (args.minSpacingHours !== undefined) {
+      if (args.minSpacingHours < 0.5 || args.minSpacingHours > 12) {
+        throw new Error("minSpacingHours must be between 0.5 and 12");
+      }
+      patch.minSpacingHours = args.minSpacingHours;
+    }
+    if (args.timezone !== undefined) {
+      const cleanTz = args.timezone.trim();
+      patch.timezone = cleanTz || "Asia/Kolkata";
+    }
+
+    await ctx.db.patch(user._id, {
+      notificationPreferences: patch,
+      updated_at: Date.now(),
+    });
+
+    return patch;
+  },
+});
+
 

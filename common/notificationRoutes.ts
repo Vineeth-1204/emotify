@@ -10,6 +10,8 @@ export const ALLOWED_NOTIFICATION_ROUTES = new Set<string>([
   "/(auth)/tools/appointments",
   "/(auth)/tools/reframe",
   "/(auth)/tools/grounding",
+  "/(auth)/tools/morning-affirmation",
+  "/(auth)/tools/evening-gratitude",
 ]);
 
 /**
@@ -38,6 +40,11 @@ export const NOTIFICATION_DESTINATIONS = [
   "requests",
   "my_counsellor",
   "home",
+  "emotion_map",
+  "microgoals",
+  "grounding",
+  "morning_affirmation",
+  "evening_gratitude",
 ] as const;
 export type NotificationDestination = (typeof NOTIFICATION_DESTINATIONS)[number];
 
@@ -55,6 +62,11 @@ export const MOBILE_DESTINATION_ROUTES: Record<NotificationDestination, string> 
   requests: "/(auth)/tools/appointments",
   my_counsellor: "/(auth)/(tabs)/profile",
   home: "/(auth)/(tabs)",
+  emotion_map: "/(auth)/tools/emotion-map",
+  microgoals: "/(auth)/tools/microgoals",
+  grounding: "/(auth)/tools/grounding",
+  morning_affirmation: "/(auth)/tools/morning-affirmation",
+  evening_gratitude: "/(auth)/tools/evening-gratitude",
 };
 
 /** Staff website path for each destination. */
@@ -66,6 +78,11 @@ export const DASHBOARD_DESTINATION_ROUTES: Record<NotificationDestination, strin
   requests: "/requests",
   my_counsellor: "/notifications",
   home: "/",
+  emotion_map: "/",
+  microgoals: "/",
+  grounding: "/",
+  morning_affirmation: "/",
+  evening_gratitude: "/",
 };
 
 /**

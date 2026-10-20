@@ -6,6 +6,7 @@
     "orientation": "portrait",
     "scheme": "emotify",
     "userInterfaceStyle": "dark",
+    "icon": "./assets/icon.png",
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
@@ -14,7 +15,8 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#0F0F1A"
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#FFFFFF"
       },
       "edgeToEdgeEnabled": true,
       "permissions": [
@@ -26,6 +28,7 @@
       "googleServicesFile": "./android/app/google-services.json"
     },
     "web": {
+      "favicon": "./assets/favicon.png",
       "output": "static",
       "bundler": "metro"
     },

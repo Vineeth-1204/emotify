@@ -44,26 +44,26 @@ export async function requireAuthenticated(
 }
 
 /**
- * Require Admin role. Throws "Unauthorized" if caller is not an admin.
+ * Require Admin role. Throws "Unauthorized" if caller is not an active admin.
  */
 export async function requireAdmin(
   ctx: { auth: { getUserIdentity: () => Promise<any> }; db: any }
 ): Promise<AuthenticatedUser> {
   const { user } = await requireAuthenticated(ctx);
-  if (!user || user.role !== "admin") {
+  if (!user || user.role !== "admin" || user.status === "inactive") {
     throw new Error("Unauthorized: Administrative access required.");
   }
   return user;
 }
 
 /**
- * Require Counselor or Admin role. Throws "Unauthorized" if caller is a student.
+ * Require Counselor or Admin role. Throws "Unauthorized" if caller is a student or inactive.
  */
 export async function requireCounselorOrAdmin(
   ctx: { auth: { getUserIdentity: () => Promise<any> }; db: any }
 ): Promise<AuthenticatedUser> {
   const { user } = await requireAuthenticated(ctx);
-  if (!user || (user.role !== "admin" && user.role !== "counsellor")) {
+  if (!user || (user.role !== "admin" && user.role !== "counsellor") || user.status === "inactive") {
     throw new Error("Unauthorized: Counselor or Admin access required.");
   }
   return user;
@@ -93,10 +93,16 @@ export async function assertCanAccessStudent(
   const user = await getAuthenticatedUser(ctx);
 
   if (user && user.role === "admin") {
+    if (user.status === "inactive") {
+      throw new Error("Unauthorized: Inactive admin cannot access student records.");
+    }
     return;
   }
 
   if (user && user.role === "counsellor") {
+    if (user.status === "inactive") {
+      throw new Error("Unauthorized: Inactive counsellor cannot access student records.");
+    }
     const student = await resolveStudentUser(ctx, targetUserId);
     if (student && (await isAssignedCounsellor(ctx, user._id, student._id))) {
       return;
@@ -152,7 +158,7 @@ export async function getStaffScope(
   ctx: { auth: { getUserIdentity: () => Promise<any> }; db: any }
 ): Promise<StaffScope | null> {
   const caller = await getAuthenticatedUser(ctx);
-  if (!caller || (caller.role !== "admin" && caller.role !== "counsellor")) return null;
+  if (!caller || (caller.role !== "admin" && caller.role !== "counsellor") || caller.status === "inactive") return null;
   if (caller.role === "admin") return { studentIds: null, studentKeys: null, caller };
 
   const assignments = await ctx.db

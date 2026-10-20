@@ -49,6 +49,21 @@ const COUNSELLOR = { mobile: process.env.VERIFY_COUNSELLOR_MOBILE, password: pro
 const DIRECTORY_ENTRY_ID = process.env.VERIFY_DIRECTORY_ENTRY_ID;
 const OLD_STATIC_KID = "static-key-1";
 
+// Safeguard against accidental production mutations:
+const IS_PROD_DEPLOYMENT =
+  process.env.NODE_ENV === "production" ||
+  process.env.IS_PRODUCTION === "1" ||
+  process.env.VERIFY_PROD === "1" ||
+  (CONVEX_URL && (CONVEX_URL.includes("prod") || !CONVEX_URL.includes("dev")));
+
+if (RUN_SAFETY && (IS_PROD_DEPLOYMENT || process.env.ALLOW_SAFETY_MUTATIONS !== "true")) {
+  console.error(
+    "\n[CRITICAL SAFETY GUARD] VERIFY_SAFETY=1 generates real suicide-risk alerts and MUST NEVER run against production.\n" +
+    "To run against a dev deployment, you must explicitly set ALLOW_SAFETY_MUTATIONS=true and ensure IS_PRODUCTION is not enabled.\n"
+  );
+  process.exit(2);
+}
+
 if (!CONVEX_URL || !STUDENT.mobile || !STUDENT.password) {
   console.error("Set CONVEX_URL, VERIFY_STUDENT_MOBILE and VERIFY_STUDENT_PASSWORD.");
   process.exit(2);
@@ -114,8 +129,13 @@ async function main() {
     jwks = await res.json();
     assert(Array.isArray(jwks.keys) && jwks.keys.length === 1, "expected exactly one key");
     const [k] = jwks.keys;
-    assert(k.kid && k.kid !== OLD_STATIC_KID, `kid is "${k.kid}" - the old repository key is still in use`);
-    for (const f of ["d", "p", "q", "dp", "dq", "qi"]) assert(k[f] === undefined, `private field "${f}" is published`);
+    assert(k.kid && k.kid !== OLD_STATIC_KID, `kid is "${k.kid}" - the old compromised key "${OLD_STATIC_KID}" is still in use!`);
+    assert(k.kty === "RSA", `kty is "${k.kty}", expected "RSA"`);
+    assert(k.alg === "RS256", `alg is "${k.alg}", expected "RS256"`);
+    assert(k.use === "sig", `use is "${k.use}", expected "sig"`);
+    assert(typeof k.n === "string" && k.n.length > 0, "missing public modulus n");
+    assert(typeof k.e === "string" && k.e.length > 0, "missing public exponent e");
+    for (const f of ["d", "p", "q", "dp", "dq", "qi", "k"]) assert(k[f] === undefined, `private field "${f}" is published`);
   });
 
   const first = await login(STUDENT);

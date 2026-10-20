@@ -29,7 +29,7 @@ export const MAX_BULK_ASSIGNMENTS = 100;
 
 const OPEN_ALERT_STATUSES = new Set(["pending", "escalated", "active", "acknowledged"]);
 
-type EndReason = "reassigned" | "unassigned" | "student_deleted" | "counsellor_deleted";
+type EndReason = "reassigned" | "unassigned" | "student_deleted" | "counsellor_deleted" | "student_deactivated" | "counsellor_deactivated";
 type AssignOutcome = "assigned" | "reassigned" | "unchanged";
 
 async function activeRowsForStudent(ctx: QueryCtx | MutationCtx, studentId: Id<"users">) {
@@ -255,6 +255,22 @@ export async function endAssignmentsForDeletedUser(ctx: MutationCtx, userId: Id<
     .withIndex("by_counsellor_and_active", (q) => q.eq("counsellorId", userId).eq("active", true))
     .collect();
   await endRows(ctx, asCounsellor, endedBy, "counsellor_deleted", now);
+  return { endedAsStudent: asStudent.length, endedAsCounsellor: asCounsellor.length };
+}
+
+/**
+ * Ends every active assignment that involves a user being deactivated (as student or as
+ * counsellor), so an inactive counsellor no longer retains an active caseload.
+ */
+export async function endAssignmentsForDeactivatedUser(ctx: MutationCtx, userId: Id<"users">, endedBy: Id<"users">) {
+  const now = Date.now();
+  const asStudent = await activeRowsForStudent(ctx, userId);
+  await endRows(ctx, asStudent, endedBy, "student_deactivated", now);
+  const asCounsellor = await ctx.db
+    .query("counsellorAssignments")
+    .withIndex("by_counsellor_and_active", (q) => q.eq("counsellorId", userId).eq("active", true))
+    .collect();
+  await endRows(ctx, asCounsellor, endedBy, "counsellor_deactivated", now);
   return { endedAsStudent: asStudent.length, endedAsCounsellor: asCounsellor.length };
 }
 

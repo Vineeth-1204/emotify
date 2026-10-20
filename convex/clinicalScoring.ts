@@ -9,7 +9,7 @@
  *   the product and have no scoring path.
  */
 
-export type InstrumentId = "phq9" | "gad7" | "pq16";
+export type InstrumentId = "phq9" | "gad7" | "pq16" | "pss10";
 
 export type InstrumentStatus = "active";
 
@@ -275,6 +275,81 @@ export function scorePQ16Responses(responses?: Record<string, number>): Instrume
   };
 }
 
+// ─── PSS-10 (Perceived Stress Scale - 10 items) ───
+export const PSS10_CONFIG = {
+  id: "pss10" as const,
+  title: "Perceived Stress Scale (PSS-10)",
+  studentTitle: "Stress & Coping Check",
+  questionCount: 10,
+  minOptionValue: 0,
+  maxOptionValue: 4,
+  maxScore: 40,
+  reverseItems: [4, 5, 7, 8] as const,
+  status: "active" as InstrumentStatus,
+};
+
+export function getPSS10Severity(score: number): ClinicalSeverity {
+  if (score >= 27) {
+    return { severity: "High Perceived Stress", level: "severe", summary: "High perceived stress symptoms" };
+  }
+  if (score >= 14) {
+    return { severity: "Moderate Stress", level: "moderate", summary: "Moderate stress symptoms" };
+  }
+  return { severity: "Low Stress", level: "minimal", summary: "Low stress symptoms" };
+}
+
+export function scorePSS10Responses(responses?: Record<string, number>): InstrumentValidationResult {
+  if (!responses || Object.keys(responses).length === 0) {
+    return {
+      administered: false,
+      score: 0,
+      maxScore: PSS10_CONFIG.maxScore,
+      severity: "Not Administered",
+      level: "minimal",
+    };
+  }
+
+  const answeredKeys = Object.keys(responses);
+  if (answeredKeys.length !== PSS10_CONFIG.questionCount) {
+    return {
+      administered: false,
+      score: 0,
+      maxScore: PSS10_CONFIG.maxScore,
+      severity: "Incomplete",
+      level: "minimal",
+      error: `PSS-10 requires all ${PSS10_CONFIG.questionCount} questions to be answered (received ${answeredKeys.length}).`,
+    };
+  }
+
+  const reverseSet = new Set<number>([4, 5, 7, 8]);
+  let total = 0;
+  for (let i = 1; i <= PSS10_CONFIG.questionCount; i++) {
+    const val = getItemValue(responses, "pss10", i);
+    if (val === undefined || typeof val !== "number" || val < 0 || val > 4 || !Number.isInteger(val)) {
+      return {
+        administered: false,
+        score: 0,
+        maxScore: PSS10_CONFIG.maxScore,
+        severity: "Invalid Responses",
+        level: "minimal",
+        error: `Invalid response for PSS-10 Question ${i}: must be an integer between 0 and 4.`,
+      };
+    }
+    const itemScore = reverseSet.has(i) ? 4 - val : val;
+    total += itemScore;
+  }
+
+  const { severity, level } = getPSS10Severity(total);
+
+  return {
+    administered: true,
+    score: total,
+    maxScore: PSS10_CONFIG.maxScore,
+    severity,
+    level,
+  };
+}
+
 // ─── Core Triage Classification ───
 export interface AssessmentTriageResult {
   level: "mild" | "moderate" | "severe" | "suicide_flag" | "psychosis_flag";
@@ -290,6 +365,8 @@ export function evaluateClinicalTriage(scores: {
   gad7Score: number;
   pq16Score: number;
   pq16Administered?: boolean;
+  pss10Score?: number;
+  pss10Administered?: boolean;
 }): AssessmentTriageResult {
   // Priority 1: Suicide Risk via Item 9
   if (scores.item9Score > 0) {
@@ -314,8 +391,12 @@ export function evaluateClinicalTriage(scores: {
     };
   }
 
-  // Priority 3: Severe Depression or Anxiety
-  if (scores.phq9Score >= 15 || scores.gad7Score >= 15) {
+  // Priority 3: Severe Depression, Anxiety, or High Stress
+  if (
+    scores.phq9Score >= 15 ||
+    scores.gad7Score >= 15 ||
+    (scores.pss10Administered && (scores.pss10Score ?? 0) >= 27)
+  ) {
     return {
       level: "severe",
       suicideFlag: false,
@@ -325,10 +406,11 @@ export function evaluateClinicalTriage(scores: {
     };
   }
 
-  // Priority 4: Moderate Depression or Anxiety
+  // Priority 4: Moderate Depression, Anxiety, or Stress
   if (
     (scores.phq9Score >= 10 && scores.phq9Score <= 14) ||
-    (scores.gad7Score >= 10 && scores.gad7Score <= 14)
+    (scores.gad7Score >= 10 && scores.gad7Score <= 14) ||
+    (scores.pss10Administered && (scores.pss10Score ?? 0) >= 14 && (scores.pss10Score ?? 0) <= 26)
   ) {
     return {
       level: "moderate",

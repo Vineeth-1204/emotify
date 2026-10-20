@@ -11,7 +11,9 @@ import {
   scorePHQ9Responses,
   scoreGAD7Responses,
   scorePQ16Responses,
+  scorePSS10Responses,
   evaluateClinicalTriage,
+  type InstrumentValidationResult,
 } from "./clinicalScoring";
 import { outcomeForTriageLevel } from "../common/screeningOutcome";
 
@@ -101,7 +103,8 @@ export const submitScreeningAttempt = mutation({
     responses: v.object({
       phq9: v.record(v.string(), v.number()),
       gad7: v.record(v.string(), v.number()),
-      pq16: v.record(v.string(), v.number()),
+      pq16: v.optional(v.record(v.string(), v.number())),
+      pss10: v.optional(v.record(v.string(), v.number())),
     }),
     /**
      * Idempotency key: a random id the client creates once per logical submission and reuses
@@ -133,7 +136,13 @@ export const submitScreeningAttempt = mutation({
       if (!SUBMISSION_KEY_RE.test(args.submissionKey)) {
         throw new Error("Invalid submission key.");
       }
-      fingerprint = await responsesFingerprint(args.responses);
+      const cleanResponses: Record<string, Record<string, number>> = {
+        phq9: args.responses.phq9,
+        gad7: args.responses.gad7,
+        ...(args.responses.pq16 ? { pq16: args.responses.pq16 } : {}),
+        ...(args.responses.pss10 ? { pss10: args.responses.pss10 } : {}),
+      };
+      fingerprint = await responsesFingerprint(cleanResponses);
       const existing = await ctx.db
         .query("screeningSubmissions")
         .withIndex("by_user_and_key", (q) => q.eq("userId", userId).eq("key", args.submissionKey!))
@@ -161,9 +170,32 @@ export const submitScreeningAttempt = mutation({
       throw new Error(gad7Result.error || "GAD-7 screening must be administered with all 7 items answered.");
     }
 
-    const pq16Result = scorePQ16Responses(args.responses.pq16);
-    if (!pq16Result.administered || pq16Result.error) {
-      throw new Error(pq16Result.error || "PQ-16 screening must be administered with all 16 items answered.");
+    let pq16Result: InstrumentValidationResult;
+    if (args.responses.pq16 !== undefined) {
+      pq16Result = scorePQ16Responses(args.responses.pq16);
+      if (!pq16Result.administered || pq16Result.error) {
+        throw new Error(pq16Result.error || "PQ-16 screening must be administered with all 16 items answered.");
+      }
+    } else {
+      pq16Result = {
+        administered: false,
+        score: 0,
+        maxScore: 16,
+        severity: "Not Administered",
+        level: "minimal",
+      };
+    }
+
+    let pss10Result: InstrumentValidationResult | undefined;
+    if (args.responses.pss10 !== undefined) {
+      pss10Result = scorePSS10Responses(args.responses.pss10);
+      if (!pss10Result.administered || pss10Result.error) {
+        throw new Error(pss10Result.error || "PSS-10 screening must be administered with all 10 items answered.");
+      }
+    }
+
+    if (args.responses.pq16 === undefined && args.responses.pss10 === undefined) {
+      throw new Error("Screening requires either PSS-10 or PQ-16 to be administered.");
     }
 
     // 2. Authoritative Clinical Triage Evaluation
@@ -173,6 +205,8 @@ export const submitScreeningAttempt = mutation({
       gad7Score: gad7Result.score,
       pq16Score: pq16Result.score,
       pq16Administered: pq16Result.administered,
+      pss10Score: pss10Result?.score ?? 0,
+      pss10Administered: pss10Result?.administered ?? false,
     });
 
     const now = Date.now();
@@ -271,12 +305,14 @@ export const submitScreeningAttempt = mutation({
       instrumentVersions: {
         phq9: "PHQ-9.v1",
         gad7: "GAD-7.v1",
-        pq16: "PQ-16.v1",
+        pq16: pq16Result.administered ? "PQ-16.v1" : "Not Administered",
+        ...(pss10Result?.administered ? { pss10: "PSS-10.v1" } : {}),
       },
       responses: {
         phq9: args.responses.phq9,
         gad7: args.responses.gad7,
-        pq16: args.responses.pq16,
+        ...(args.responses.pq16 ? { pq16: args.responses.pq16 } : {}),
+        ...(args.responses.pss10 ? { pss10: args.responses.pss10 } : {}),
       },
       results: {
         phq9: {
@@ -296,12 +332,23 @@ export const submitScreeningAttempt = mutation({
           level: gad7Result.level,
         },
         pq16: {
-          administered: true,
+          administered: pq16Result.administered,
           score: pq16Result.score,
           maxScore: pq16Result.maxScore,
           severity: pq16Result.severity,
           level: pq16Result.level,
         },
+        ...(pss10Result?.administered
+          ? {
+              pss10: {
+                administered: true,
+                score: pss10Result.score,
+                maxScore: pss10Result.maxScore,
+                severity: pss10Result.severity,
+                level: pss10Result.level,
+              },
+            }
+          : {}),
       },
       triageLevel: triage.level,
       suicideFlag: triage.suicideFlag,

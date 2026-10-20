@@ -9,6 +9,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useThemeColors } from "@/context/MoodThemeContext";
 import { Calendar } from "react-native-calendars";
 import { EmotyAvatar } from "@/components/avatar/EmotyAvatar";
+import { CRISIS_RESOURCES } from "@/common/crisisResources";
 
 const HOURS = Array.from({ length: 12 }, (_, i) => (i + 1).toString().padStart(2, '0'));
 const MINUTES = Array.from({ length: 60 }, (_, i) => i.toString().padStart(2, '0'));
@@ -242,13 +243,29 @@ export default function AppointmentsScreen() {
     }
     setSubmittingReq(true);
     try {
-      await createCounsellorRequest({
+      const res = await createCounsellorRequest({
         thought_original: reqThought.trim(),
         sourceType: "self_initiated",
+        returnOutcome: true,
       });
       setShowCounsellorReqModal(false);
       setReqThought("");
-      Alert.alert("Request Sent", "Your counselor support request has been submitted.");
+
+      const outcome = res as unknown as { deduplicated?: boolean; deliveryStatus?: string };
+
+      if (outcome && typeof outcome === "object" && outcome.deduplicated) {
+        Alert.alert(
+          "Request Already Active",
+          "You already have a pending counselor support request. Our care team has your details and will contact you shortly."
+        );
+      } else if (outcome && typeof outcome === "object" && outcome.deliveryStatus === "no_active_staff") {
+        Alert.alert(
+          "Request Received",
+          `Your request has been recorded. Our counselors are currently offline. If you need immediate support, please call ${CRISIS_RESOURCES.helplineName} on ${CRISIS_RESOURCES.helplineNumber}.`
+        );
+      } else {
+        Alert.alert("Request Sent", "Your counselor support request has been submitted and staff have been notified.");
+      }
     } catch (err: any) {
       Alert.alert("Request Error", err.message || "Failed to submit request.");
     } finally {

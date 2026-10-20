@@ -53,6 +53,13 @@ import { SENSORY_54321_PROTOCOL } from "@/constants/GroundingProtocols";
 import { formatProtocolDuration, resolveActiveBreathingProtocol } from "@/constants/BreathingProtocols";
 import { CHECKIN_RETURN_TO } from "@/common/checkinReturn";
 import { getGuidedMeditation, openGuidedMeditation } from "@/common/guidedMeditations";
+import { MeditationPlayerModal } from "@/components/meditation/MeditationPlayerModal";
+import {
+  INTENSITY_ANCHORS,
+  map10ScaleToAnchor,
+  evaluateReassessment,
+  type ReassessmentResult,
+} from "@/common/meditationReassessment";
 import {
   getIntensityLevel,
   intensityPrompt,
@@ -256,15 +263,23 @@ export default function EmotionMapScreen() {
   const [routedEmotionKey, setRoutedEmotionKey] = useState<CanonicalEmotionKey | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
-  // Phase 3 — Modal states for inline interventions
+  // Phase 3 & 5 — Modal states for inline interventions
   const [showBreathingModal, setShowBreathingModal] = useState(false);
   const [showGroundingModal, setShowGroundingModal] = useState(false);
+  const [showMeditationModal, setShowMeditationModal] = useState(false);
+  const [completedMeditationTitle, setCompletedMeditationTitle] = useState<string | null>(null);
 
-  // Phase 3 — Post-intervention state
+  // Phase 3 & 5 — Post-intervention state
   // emotionLogId: the _id of the emotionLog created in step 4 — used to patch postIntensity
   const [emotionLogId, setEmotionLogId] = useState<string | null>(null);
   // postIntensityValue: the user's self-reported feeling after intervention
   const [postIntensityValue, setPostIntensityValue] = useState<number>(5);
+  // postIntensityAnchor: 4-anchor re-rating (1=A little, 2=Some, 3=A lot, 4=Overwhelming)
+  const [postIntensityAnchor, setPostIntensityAnchor] = useState<1 | 2 | 3 | 4>(2);
+  // reselectedEmotion: student's feeling after intervention
+  const [reselectedEmotion, setReselectedEmotion] = useState<string | null>(null);
+  // reassessmentResult: delta and branching
+  const [reassessmentResult, setReassessmentResult] = useState<ReassessmentResult | null>(null);
   // postOutcome: simple 3-way result for Emoty followup message
   const [postOutcome, setPostOutcome] = useState<"better" | "same" | "worse" | null>(null);
   const [isSavingPost, setIsSavingPost] = useState(false);
@@ -601,13 +616,57 @@ export default function EmotionMapScreen() {
     } as any);
   };
 
-  // Phase 3 — Handle genuine intervention completion (inline breathing/grounding)
+  // Phase 3 & 5 — Handle genuine intervention completion (inline breathing/grounding)
   const handleInlineInterventionComplete = () => {
     setShowBreathingModal(false);
     setShowGroundingModal(false);
-    setPostIntensityValue(Math.max(1, intensity - 1)); // seed with slight improvement as default
+    setShowMeditationModal(false);
+    const initialEmotion = secondaryEmotion || primaryEmotion || strongestEmotion || "calm";
+    setReselectedEmotion(initialEmotion);
+    setPostIntensityAnchor(Math.max(1, map10ScaleToAnchor(intensity) - 1) as 1 | 2 | 3 | 4);
+    setPostIntensityValue(Math.max(1, intensity - 1));
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
     setStep(7);
+  };
+
+  // Phase 5 — Handle genuine meditation completion
+  const handleMeditationComplete = (title: string) => {
+    setShowMeditationModal(false);
+    setCompletedMeditationTitle(title);
+    const initialEmotion = secondaryEmotion || primaryEmotion || strongestEmotion || "calm";
+    setReselectedEmotion(initialEmotion);
+    setPostIntensityAnchor(Math.max(1, map10ScaleToAnchor(intensity) - 1) as 1 | 2 | 3 | 4);
+    setPostIntensityValue(Math.max(1, intensity - 1));
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    setStep(7);
+  };
+
+  // Phase 5 — Full post-intervention reassessment with 4 anchors and emotion re-selection
+  const handleConfirmPostReassessment = async () => {
+    setIsSavingPost(true);
+    try {
+      const result = evaluateReassessment(intensity, postIntensityAnchor);
+      setReassessmentResult(result);
+      setPostOutcome(result.branch === "improved" ? "better" : result.branch === "worse" ? "worse" : "same");
+
+      if (emotionLogId) {
+        await recordPostIntensity({
+          logId: emotionLogId as any,
+          postIntensity: postIntensityAnchor,
+          postEmotion: reselectedEmotion || undefined,
+          deltaIntensity: result.delta,
+          branchTaken: result.branch,
+          meditationTitle: completedMeditationTitle || routedIntervention?.title,
+        });
+      }
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      setStep(8);
+    } catch (err) {
+      console.warn("Post-intensity recording failed (non-blocking):", err);
+      setStep(8);
+    } finally {
+      setIsSavingPost(false);
+    }
   };
 
   // Phase 3 — Post-intervention intensity submitted by user
@@ -1257,6 +1316,16 @@ export default function EmotionMapScreen() {
                     <Ionicons name="open-outline" size={18} color={Colors.textMuted} />
                   </Pressable>
                 )}
+                {guidedMeditation && (
+                  <TouchableOpacity
+                    style={styles.inAppMeditationBtn}
+                    onPress={() => setShowMeditationModal(true)}
+                    activeOpacity={0.88}
+                  >
+                    <Ionicons name="headset-outline" size={18} color={Colors.primary} />
+                    <Text style={styles.inAppMeditationText}>Play Guided Meditation In-App</Text>
+                  </TouchableOpacity>
+                )}
                 <TouchableOpacity style={styles.maybeLaterBtn} onPress={() => router.replace("/(auth)/(tabs)")}>
                   <Text style={styles.maybeLaterText}>Maybe later</Text>
                 </TouchableOpacity>
@@ -1303,7 +1372,7 @@ export default function EmotionMapScreen() {
                 </TouchableOpacity>
               </View>
             )}
-            {/* STEP 7: Post-Intervention Check — Phase 3 */}
+            {/* STEP 7: Post-Intervention Check — Phase 3 & 5 */}
             {step === 7 && (
               <View style={styles.stepCard}>
                 <View style={styles.emotyHeaderRow}>
@@ -1313,76 +1382,231 @@ export default function EmotionMapScreen() {
                     <Text style={styles.emotySubtext}>How do you feel now compared to before?</Text>
                   </View>
                 </View>
-                <View style={styles.postCheckRow}>
-                  <TouchableOpacity
-                    style={[styles.postCheckBtn, styles.postCheckBetter]}
-                    onPress={() => handleSubmitPostCheck("better")}
-                    disabled={isSavingPost}
-                    activeOpacity={0.85}
-                  >
-                    <Ionicons name="arrow-up" size={22} color="#16A34A" />
-                    <Text style={[styles.postCheckLabel, { color: "#16A34A" }]}>A bit better</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.postCheckBtn, styles.postCheckSame]}
-                    onPress={() => handleSubmitPostCheck("same")}
-                    disabled={isSavingPost}
-                    activeOpacity={0.85}
-                  >
-                    <Ionicons name="remove" size={22} color={Colors.textSecondary} />
-                    <Text style={[styles.postCheckLabel, { color: Colors.textSecondary }]}>About the same</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.postCheckBtn, styles.postCheckWorse]}
-                    onPress={() => handleSubmitPostCheck("worse")}
-                    disabled={isSavingPost}
-                    activeOpacity={0.85}
-                  >
-                    <Ionicons name="arrow-down" size={22} color="#EA580C" />
-                    <Text style={[styles.postCheckLabel, { color: "#EA580C" }]}>A bit harder</Text>
-                  </TouchableOpacity>
+
+                {/* Canonical 8 Emotion Re-selection */}
+                <Text style={styles.reassessSectionTitle}>What feeling describes you best right now?</Text>
+                <View style={styles.reassessEmotionGrid}>
+                  {(["calm", "happy", "worried", "sad", "angry", "tired", "embarrassed", "guilty"] as const).map((emKey) => {
+                    const isSelected = (reselectedEmotion || "").toLowerCase().includes(emKey);
+                    return (
+                      <TouchableOpacity
+                        key={emKey}
+                        style={[styles.reassessEmotionChip, isSelected && styles.reassessEmotionChipActive]}
+                        onPress={() => {
+                          Haptics.selectionAsync().catch(() => {});
+                          setReselectedEmotion(emKey);
+                        }}
+                      >
+                        <Text style={[styles.reassessEmotionText, isSelected && styles.reassessEmotionTextActive]}>
+                          {emKey.charAt(0).toUpperCase() + emKey.slice(1)}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
                 </View>
-                {isSavingPost && <ActivityIndicator size="small" color={Colors.primary} style={{ marginTop: 12 }} />}
+
+                {/* 4-Anchor Intensity Re-rating */}
+                <Text style={styles.reassessSectionTitle}>How strong is this feeling?</Text>
+                <View style={styles.anchorCardList}>
+                  {INTENSITY_ANCHORS.map((anchor) => {
+                    const isSelected = postIntensityAnchor === anchor.level;
+                    return (
+                      <TouchableOpacity
+                        key={anchor.level}
+                        style={[
+                          styles.anchorCard,
+                          isSelected && { borderColor: anchor.color, backgroundColor: anchor.color + "12" },
+                        ]}
+                        onPress={() => {
+                          Haptics.selectionAsync().catch(() => {});
+                          setPostIntensityAnchor(anchor.level);
+                        }}
+                      >
+                        <View style={styles.anchorHeaderRow}>
+                          <Text style={styles.anchorEmoji}>{anchor.emoji}</Text>
+                          <Text style={[styles.anchorLabel, isSelected && { color: anchor.color }]}>
+                            {anchor.label}
+                          </Text>
+                        </View>
+                        <Text style={styles.anchorDesc}>{anchor.description}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                {/* Confirm Reassessment */}
+                <TouchableOpacity
+                  style={styles.startInterventionBtn}
+                  onPress={handleConfirmPostReassessment}
+                  disabled={isSavingPost}
+                  activeOpacity={0.88}
+                >
+                  <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={styles.startBtnGradient}>
+                    {isSavingPost ? (
+                      <ActivityIndicator size="small" color={Colors.white} />
+                    ) : (
+                      <>
+                        <Text style={styles.startBtnText}>Confirm & Continue</Text>
+                        <Ionicons name="arrow-forward" size={20} color={Colors.white} />
+                      </>
+                    )}
+                  </LinearGradient>
+                </TouchableOpacity>
+
                 <TouchableOpacity style={styles.maybeLaterBtn} onPress={() => router.replace("/(auth)/(tabs)")}>
                   <Text style={styles.maybeLaterText}>Skip and go home</Text>
                 </TouchableOpacity>
               </View>
             )}
-            {/* STEP 8: Emoty Followup — Phase 3 */}
+            {/* STEP 8: Emoty Followup — Phase 3 & 5 */}
             {step === 8 && (
               <View style={styles.stepCard}>
                 <View style={styles.emotyHeaderRow}>
                   <EmotyAvatar
-                    state={postOutcome === "better" ? "celebrating" : postOutcome === "worse" ? "supportive" : "calm"}
+                    state={
+                      reassessmentResult?.branch === "improved" || postOutcome === "better"
+                        ? "celebrating"
+                        : reassessmentResult?.branch === "worse" || postOutcome === "worse"
+                        ? "supportive"
+                        : "calm"
+                    }
                     size="md"
                   />
                   <View style={styles.emotySpeechBubble}>
-                    {postOutcome === "better" && (
-                      <>
-                        <Text style={styles.emotySpeechText}>Good. I am glad that helped a little.</Text>
-                        <Text style={styles.emotySubtext}>Every small moment of care counts.</Text>
-                      </>
-                    )}
-                    {postOutcome === "same" && (
-                      <>
-                        <Text style={styles.emotySpeechText}>{"That's okay."}</Text>
-                        <Text style={styles.emotySubtext}>Sometimes it takes a little longer. You showed up for yourself today.</Text>
-                      </>
-                    )}
-                    {postOutcome === "worse" && (
-                      <>
-                        <Text style={styles.emotySpeechText}>Thanks for telling me.</Text>
-                        <Text style={styles.emotySubtext}>It is okay to feel that way. Rest if you need to. Your counsellor can help if things feel overwhelming.</Text>
-                      </>
-                    )}
+                    <Text style={styles.emotySpeechText}>
+                      {reassessmentResult?.supportiveHeading ||
+                        (postOutcome === "better"
+                          ? "Good. I am glad that helped a little."
+                          : postOutcome === "worse"
+                          ? "Thanks for telling me."
+                          : "That's okay.")}
+                    </Text>
+                    <Text style={styles.emotySubtext}>
+                      {reassessmentResult?.supportiveBody ||
+                        (postOutcome === "better"
+                          ? "Every small moment of care counts."
+                          : postOutcome === "worse"
+                          ? "It is okay to feel that way. Rest if you need to. Your counsellor can help if things feel overwhelming."
+                          : "Sometimes it takes a little longer. You showed up for yourself today.")}
+                    </Text>
                   </View>
                 </View>
-                <TouchableOpacity style={styles.startInterventionBtn} onPress={() => router.replace("/(auth)/(tabs)")} activeOpacity={0.9}>
-                  <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={styles.startBtnGradient}>
-                    <Text style={styles.startBtnText}>Back to Home</Text>
-                    <Ionicons name="home-outline" size={20} color={Colors.white} />
-                  </LinearGradient>
-                </TouchableOpacity>
+
+                {/* Reassessment observation summary */}
+                <View style={styles.reassessSummaryCard}>
+                  <View style={styles.reassessSummaryRow}>
+                    <View style={styles.reassessSummaryItem}>
+                      <Text style={styles.reassessSummaryLabel}>BEFORE</Text>
+                      <Text style={styles.reassessSummaryVal}>
+                        {primaryEmotion || "Emotion"} · {intensity}/10
+                      </Text>
+                    </View>
+                    <Ionicons name="arrow-forward-outline" size={18} color={Colors.textMuted} />
+                    <View style={styles.reassessSummaryItem}>
+                      <Text style={styles.reassessSummaryLabel}>AFTER</Text>
+                      <Text style={styles.reassessSummaryVal}>
+                        {reselectedEmotion || primaryEmotion || "Emotion"} ·{" "}
+                        {INTENSITY_ANCHORS.find((a) => a.level === postIntensityAnchor)?.label || "Done"}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+
+                {/* Dynamic Branch Actions */}
+                {reassessmentResult?.branch === "improved" && (
+                  <View style={{ gap: 10, marginTop: 12 }}>
+                    <TouchableOpacity
+                      style={styles.branchActionBtn}
+                      onPress={() => router.replace("/(auth)/tools/microgoals")}
+                      activeOpacity={0.88}
+                    >
+                      <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={styles.branchActionGradient}>
+                        <Text style={styles.branchActionText}>Try a MicroGoal</Text>
+                        <Ionicons name="flag-outline" size={20} color={Colors.white} />
+                      </LinearGradient>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.branchSecondaryBtn}
+                      onPress={() => router.replace("/(auth)/(tabs)")}
+                    >
+                      <Text style={styles.branchSecondaryText}>Back to Home</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                {reassessmentResult?.branch === "unchanged" && (
+                  <View style={{ gap: 10, marginTop: 12 }}>
+                    <TouchableOpacity
+                      style={styles.branchActionBtn}
+                      onPress={() => router.replace("/(auth)/tools/microgoals")}
+                      activeOpacity={0.88}
+                    >
+                      <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={styles.branchActionGradient}>
+                        <Text style={styles.branchActionText}>Try a MicroGoal</Text>
+                        <Ionicons name="flag-outline" size={20} color={Colors.white} />
+                      </LinearGradient>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.branchSecondaryBtn}
+                      onPress={() => router.replace("/(auth)/tools/appointments")}
+                    >
+                      <Text style={styles.branchSecondaryText}>Connect with a counsellor</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.branchSecondaryBtn}
+                      onPress={() => router.replace("/(auth)/(tabs)")}
+                    >
+                      <Text style={styles.branchSecondaryText}>Back to Home</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                {reassessmentResult?.branch === "worse" && (
+                  <View style={{ gap: 10, marginTop: 12 }}>
+                    <TouchableOpacity
+                      style={styles.branchActionBtn}
+                      onPress={() => router.replace("/(auth)/tools/appointments")}
+                      activeOpacity={0.88}
+                    >
+                      <LinearGradient colors={["#EA580C", "#C2410C"]} style={styles.branchActionGradient}>
+                        <Text style={styles.branchActionText}>Connect with a counsellor</Text>
+                        <Ionicons name="chatbubbles-outline" size={20} color={Colors.white} />
+                      </LinearGradient>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.branchSecondaryBtn}
+                      onPress={() => Linking.openURL("tel:14416").catch(() => {})}
+                    >
+                      <Ionicons name="call-outline" size={16} color={Colors.text} style={{ marginRight: 6 }} />
+                      <Text style={styles.branchSecondaryText}>Call 14416 (Tele-MANAS Helpline)</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.branchSecondaryBtn}
+                      onPress={() => setShowBreathingModal(true)}
+                    >
+                      <Text style={styles.branchSecondaryText}>Try gentle Box Breathing</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.branchSecondaryBtn}
+                      onPress={() => router.replace("/(auth)/(tabs)")}
+                    >
+                      <Text style={styles.branchSecondaryText}>Back to Home</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                {!reassessmentResult && (
+                  <TouchableOpacity
+                    style={styles.startInterventionBtn}
+                    onPress={() => router.replace("/(auth)/(tabs)")}
+                    activeOpacity={0.9}
+                  >
+                    <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={styles.startBtnGradient}>
+                      <Text style={styles.startBtnText}>Back to Home</Text>
+                      <Ionicons name="home-outline" size={20} color={Colors.white} />
+                    </LinearGradient>
+                  </TouchableOpacity>
+                )}
               </View>
             )}
           </View>
@@ -1657,6 +1881,15 @@ export default function EmotionMapScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Phase 5 — Guided Meditation Player Modal (inline, completion → step 7) */}
+      <MeditationPlayerModal
+        visible={showMeditationModal}
+        meditation={guidedMeditation}
+        emotionColor={activeColors.primary}
+        onClose={() => setShowMeditationModal(false)}
+        onComplete={(title) => handleMeditationComplete(title)}
+      />
     </View>
   );
 }
@@ -2435,6 +2668,145 @@ const styles = StyleSheet.create({
   postCheckWorse: {
     backgroundColor: "#FFF7ED",
     borderColor: "#FDBA74",
+  },
+  // Phase 5 — In-App Meditation & 4-Anchor Reassessment styles
+  inAppMeditationBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    marginTop: 8,
+    paddingVertical: 12,
+    borderRadius: Theme.borderRadius.lg,
+    backgroundColor: Colors.primary + "12",
+    borderWidth: 1.5,
+    borderColor: Colors.primary + "30",
+  },
+  inAppMeditationText: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: Theme.fontSize.sm,
+    color: Colors.primary,
+  },
+  reassessSectionTitle: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: Theme.fontSize.sm,
+    color: Colors.text,
+    marginTop: Theme.spacing.md,
+    marginBottom: 8,
+  },
+  reassessEmotionGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginBottom: Theme.spacing.md,
+  },
+  reassessEmotionChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: Theme.borderRadius.full,
+    backgroundColor: "#F8FAFC",
+    borderWidth: 1.5,
+    borderColor: "#E2E8F0",
+  },
+  reassessEmotionChipActive: {
+    backgroundColor: Colors.primary,
+    borderColor: Colors.primary,
+  },
+  reassessEmotionText: {
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: Theme.fontSize.xs,
+    color: Colors.textSecondary,
+  },
+  reassessEmotionTextActive: {
+    fontFamily: Theme.fontFamily.bold,
+    color: Colors.white,
+  },
+  anchorCardList: {
+    gap: 8,
+    marginBottom: Theme.spacing.md,
+  },
+  anchorCard: {
+    padding: 12,
+    borderRadius: Theme.borderRadius.lg,
+    backgroundColor: "#F8FAFC",
+    borderWidth: 1.5,
+    borderColor: "#E2E8F0",
+  },
+  anchorHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 2,
+  },
+  anchorEmoji: {
+    fontSize: 16,
+  },
+  anchorLabel: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: Theme.fontSize.sm,
+    color: Colors.text,
+  },
+  anchorDesc: {
+    fontFamily: Theme.fontFamily.regular,
+    fontSize: Theme.fontSize.xs,
+    color: Colors.textSecondary,
+  },
+  reassessSummaryCard: {
+    backgroundColor: "#F8FAFC",
+    borderRadius: Theme.borderRadius.lg,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    marginVertical: Theme.spacing.md,
+  },
+  reassessSummaryRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  reassessSummaryItem: {
+    flex: 1,
+  },
+  reassessSummaryLabel: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: 10,
+    color: Colors.textMuted,
+    letterSpacing: 1,
+    marginBottom: 2,
+  },
+  reassessSummaryVal: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: Theme.fontSize.sm,
+    color: Colors.text,
+  },
+  branchActionBtn: {
+    borderRadius: Theme.borderRadius.lg,
+    overflow: "hidden",
+  },
+  branchActionGradient: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 14,
+  },
+  branchActionText: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: Theme.fontSize.md,
+    color: Colors.white,
+  },
+  branchSecondaryBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 12,
+    borderRadius: Theme.borderRadius.lg,
+    backgroundColor: "#F1F5F9",
+  },
+  branchSecondaryText: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: Theme.fontSize.sm,
+    color: Colors.text,
   },
 });
 

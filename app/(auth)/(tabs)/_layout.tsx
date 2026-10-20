@@ -51,12 +51,27 @@ export default function TabLayout() {
     if (!user) return;
     try {
       // Canonical counselor request record (server notifies staff and links the latest triage)
-      await createCounsellorRequest({
+      const res = await createCounsellorRequest({
         sourceType: "emergency_modal",
         situation_text: "Student requested immediate counselor contact from emergency modal",
+        returnOutcome: true,
       });
 
-      Alert.alert("Request Sent", "A counselor has been notified and will reach out to you shortly.");
+      const outcome = res as unknown as { deduplicated?: boolean; deliveryStatus?: string };
+
+      if (outcome && typeof outcome === "object" && outcome.deduplicated) {
+        Alert.alert(
+          "Request Already Active",
+          "You already have an active request for counselor support. Our care team has your details and will reach out to you shortly."
+        );
+      } else if (outcome && typeof outcome === "object" && outcome.deliveryStatus === "no_active_staff") {
+        Alert.alert(
+          "Support Request Received",
+          `Your request has been recorded. Our counselors are currently offline. If you need urgent support right now, please call ${CRISIS_RESOURCES.helplineName} on ${CRISIS_RESOURCES.helplineNumber} or emergency services on ${CRISIS_RESOURCES.emergencyNumber}.`
+        );
+      } else {
+        Alert.alert("Request Sent", "A counselor has been notified and will reach out to you shortly.");
+      }
     } catch (err: any) {
       Alert.alert("Request Error", err.message || "Failed to submit request.");
     }

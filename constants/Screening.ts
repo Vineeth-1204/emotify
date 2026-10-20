@@ -82,10 +82,37 @@ export const PQ16_OPTIONS: ScreeningOption[] = [
 
 export const PQ16_INSTRUCTION = 'Please indicate whether you have experienced any of the following:';
 
+// ─── PSS-10 (Perceived Stress Scale) ───
+// Validated instrument: items 4, 5, 7, 8 are reverse scored.
+export const PSS10_QUESTIONS: ScreeningQuestion[] = [
+  { id: 1, text: 'Been upset because of something unexpected' },
+  { id: 2, text: 'Felt unable to control important things in your life' },
+  { id: 3, text: 'Felt nervous and stressed' },
+  { id: 4, text: 'Felt confident about handling personal problems' },
+  { id: 5, text: 'Felt things were going your way' },
+  { id: 6, text: 'Found you could not cope with everything you had to do' },
+  { id: 7, text: 'Been able to control irritations in your life' },
+  { id: 8, text: 'Felt you were on top of things' },
+  { id: 9, text: 'Been angered by things outside your control' },
+  { id: 10, text: 'Felt difficulties piling up too high to overcome' },
+];
+
+export const PSS10_OPTIONS: ScreeningOption[] = [
+  { label: 'Never', value: 0 },
+  { label: 'Almost never', value: 1 },
+  { label: 'Sometimes', value: 2 },
+  { label: 'Fairly often', value: 3 },
+  { label: 'Very often', value: 4 },
+];
+
+export const PSS10_REVERSE_ITEMS = [4, 5, 7, 8] as const;
+
+export const PSS10_INSTRUCTION = 'In the last month, how often have you...';
+
 // ─── Screening order & Instruments Definition ───
-export const SCREENING_ORDER = ['phq9', 'gad7', 'pq16'] as const;
+export const SCREENING_ORDER = ['phq9', 'gad7', 'pss10', 'pq16'] as const;
 export type ScreeningType = typeof SCREENING_ORDER[number];
-export type ScreeningInstrumentId = 'phq9' | 'gad7' | 'pq16';
+export type ScreeningInstrumentId = 'phq9' | 'gad7' | 'pq16' | 'pss10';
 
 export interface QuestionnaireDefinition {
   id: ScreeningInstrumentId;
@@ -131,6 +158,20 @@ export const INSTRUMENT_DEFINITIONS: Record<ScreeningInstrumentId, Questionnaire
     questions: GAD7_QUESTIONS,
     options: GAD7_OPTIONS,
   },
+  pss10: {
+    id: 'pss10',
+    title: 'Perceived Stress Scale (PSS-10)',
+    shortTitle: 'Stress & Coping Check',
+    description: 'Reflect on feelings and thoughts regarding unpredictable, uncontrollable, or overloading events in the last month.',
+    instruction: PSS10_INSTRUCTION,
+    version: 'PSS-10.v1',
+    status: 'active',
+    questionCount: 10,
+    minScore: 0,
+    maxScore: 40,
+    questions: PSS10_QUESTIONS,
+    options: PSS10_OPTIONS,
+  },
   pq16: {
     id: 'pq16',
     title: 'Prodromal Questionnaire (PQ-16)',
@@ -149,7 +190,7 @@ export const INSTRUMENT_DEFINITIONS: Record<ScreeningInstrumentId, Questionnaire
 
 /** Total active screening questions administered in the mobile app */
 export const ACTIVE_SCREENING_QUESTIONS_COUNT =
-  PHQ9_QUESTIONS.length + GAD7_QUESTIONS.length + PQ16_QUESTIONS.length;
+  PHQ9_QUESTIONS.length + GAD7_QUESTIONS.length + PSS10_QUESTIONS.length + PQ16_QUESTIONS.length;
 
 
 // ─── Thinking Traps for Reframe Tool ───

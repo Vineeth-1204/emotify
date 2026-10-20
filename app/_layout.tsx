@@ -8,10 +8,13 @@ import {
 } from "@expo-google-fonts/dm-sans";
 import * as SplashScreen from "expo-splash-screen";
 import React, { useEffect } from "react";
-import { View, ActivityIndicator } from "react-native";
+import { View, ActivityIndicator, Platform } from "react-native";
 import { StatusBar } from "expo-status-bar";
+import * as Notifications from "expo-notifications";
 import { AuthProvider, useAppAuth } from "@/utils/auth";
 import { api } from "@/convex/_generated/api";
+import { useMutation } from "convex/react";
+import { registerForPushNotificationsAsync, validateNotificationRoute } from "@/utils/notifications";
 import { MoodThemeProvider } from "@/context/MoodThemeContext";
 import { AvatarProvider } from "@/context/AvatarContext";
 import { LanguageProvider } from "@/context/LanguageContext";
@@ -30,6 +33,7 @@ function InitialLayout() {
   const { isAuthenticated, token, logout, isLoading: authLoading, isLoggingOut } = useAppAuth();
   const segments = useSegments();
   const router = useRouter();
+  const registerPushToken = useMutation(api.pushTokens.registerPushToken);
 
   // Active session monitoring
   const isSessionActive = useQuery(
@@ -42,6 +46,44 @@ function InitialLayout() {
       logout();
     }
   }, [isAuthenticated, isSessionActive, logout]);
+
+  // Push notifications registration & navigation listener
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    let isMounted = true;
+    registerForPushNotificationsAsync().then((pushToken) => {
+      if (pushToken && isMounted) {
+        registerPushToken({ token: pushToken, platform: Platform.OS }).catch((err) => {
+          console.warn("[PUSH] Failed to persist push token:", err);
+        });
+      }
+    });
+
+    const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
+      const rawRoute = response.notification.request.content.data?.route;
+      const validRoute = validateNotificationRoute(rawRoute);
+      if (validRoute) {
+        router.push(validRoute as any);
+      }
+    });
+
+    // Check cold-start notification launch
+    Notifications.getLastNotificationResponseAsync().then((response) => {
+      if (response && isMounted) {
+        const rawRoute = response.notification.request.content.data?.route;
+        const validRoute = validateNotificationRoute(rawRoute);
+        if (validRoute) {
+          router.push(validRoute as any);
+        }
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      subscription.remove();
+    };
+  }, [isAuthenticated, registerPushToken, router]);
 
   const [fontsLoaded] = useFonts({
     DMSans_400Regular,

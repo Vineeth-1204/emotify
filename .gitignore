@@ -47,5 +47,9 @@ yarn-error.*
 *.apk
 *.pdf
 scratch/
+SS/
+*.mp4
+scratch_analyze.py
+verify_timestamps.py
 ~$*
 *.tmp

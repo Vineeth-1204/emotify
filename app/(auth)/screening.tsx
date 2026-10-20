@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { View, StyleSheet, ActivityIndicator, Text, ScrollView, TouchableOpacity } from "react-native";
+import { View, StyleSheet, ActivityIndicator, Text, ScrollView, TouchableOpacity, Linking } from "react-native";
 import { useRouter } from "expo-router";
 import { useAppAuth } from "@/utils/auth";
 import { useMutation, useQuery, useConvexConnectionState } from "convex/react";
@@ -16,6 +16,7 @@ import { useLanguage } from "@/context/LanguageContext";
 import { useAvatar } from "@/context/AvatarContext";
 import { getEmotyPresence } from "@/common/emotyPresence";
 import { EmotyPresence } from "@/components/avatar/EmotyPresence";
+import { CRISIS_RESOURCES, HELPLINE_DIAL_URL } from "@/common/crisisResources";
 import {
   PHQ9_QUESTIONS,
   PHQ9_OPTIONS,
@@ -23,6 +24,9 @@ import {
   GAD7_QUESTIONS,
   GAD7_OPTIONS,
   GAD7_INSTRUCTION,
+  PSS10_QUESTIONS,
+  PSS10_OPTIONS,
+  PSS10_INSTRUCTION,
   PQ16_QUESTIONS,
   PQ16_OPTIONS,
   PQ16_INSTRUCTION,
@@ -30,6 +34,7 @@ import {
 import {
   scorePHQ9,
   scoreGAD7,
+  scorePSS10,
   scorePQ16,
 } from "@/utils/scoring";
 
@@ -51,6 +56,15 @@ const INSTRUMENTS = [
     options: GAD7_OPTIONS,
     instruction: GAD7_INSTRUCTION,
     scoring: scoreGAD7,
+  },
+  {
+    id: "pss10",
+    title: "Stress & Coping Check",
+    desc: "Reflect on feelings and thoughts regarding stressful events in the last month.",
+    questions: PSS10_QUESTIONS,
+    options: PSS10_OPTIONS,
+    instruction: PSS10_INSTRUCTION,
+    scoring: scorePSS10,
   },
   {
     id: "pq16",
@@ -77,6 +91,7 @@ export default function ScreeningScreen() {
   const [answers, setAnswers] = useState<ScreeningState>({
     phq9: new Array(PHQ9_QUESTIONS.length).fill(null),
     gad7: new Array(GAD7_QUESTIONS.length).fill(null),
+    pss10: new Array(PSS10_QUESTIONS.length).fill(null),
     pq16: new Array(PQ16_QUESTIONS.length).fill(null),
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -156,6 +171,11 @@ export default function ScreeningScreen() {
         pq16Responses[`pq16_q${idx + 1}`] = val;
       });
 
+      const pss10Responses: Record<string, number> = {};
+      (answers.pss10 as number[]).forEach((val, idx) => {
+        pss10Responses[`pss10_q${idx + 1}`] = val;
+      });
+
       // 2. Idempotency key for this submission: reused on every retry (including after an app
       //    restart), so a submission the server already committed is never recorded twice.
       const submissionKey = await getOrCreateSubmissionKey(SecureStore, user.id, () => Crypto.randomUUID());
@@ -169,6 +189,7 @@ export default function ScreeningScreen() {
           phq9: phq9Responses,
           gad7: gad7Responses,
           pq16: pq16Responses,
+          pss10: pss10Responses,
         },
       });
 
@@ -213,7 +234,23 @@ export default function ScreeningScreen() {
         />
         <ActivityIndicator size="small" color={Colors.primary} style={{ marginTop: 16 }} />
         {!connection.isWebSocketConnected && (connection.hasEverConnected || connection.connectionRetries > 0) && (
-          <Text style={styles.waitingText} accessibilityLiveRegion="polite">{t("screening.submit.waiting")}</Text>
+          <View style={{ alignItems: "center", paddingHorizontal: 24, marginTop: 12 }}>
+            <Text style={styles.waitingText} accessibilityLiveRegion="polite">{t("screening.submit.waiting")}</Text>
+            <TouchableOpacity
+              onPress={() => Linking.openURL(HELPLINE_DIAL_URL)}
+              accessibilityRole="link"
+              style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 16 }}
+            >
+              <Ionicons name="call-outline" size={14} color={Colors.textSecondary} />
+              <Text style={{ fontFamily: Theme.fontFamily.medium, fontSize: 13, color: Colors.textSecondary, textAlign: "center" }}>
+                {t("screening.result.safetyFooter", {
+                  helplineName: CRISIS_RESOURCES.helplineName,
+                  helplineNumber: CRISIS_RESOURCES.helplineNumber,
+                  emergencyNumber: CRISIS_RESOURCES.emergencyNumber,
+                })}
+              </Text>
+            </TouchableOpacity>
+          </View>
         )}
       </View>
     );
@@ -357,6 +394,20 @@ export default function ScreeningScreen() {
           <View style={styles.submitError} accessibilityLiveRegion="polite" accessibilityRole="alert">
             <Ionicons name="information-circle-outline" size={20} color={Colors.textSecondary} />
             <Text style={styles.submitErrorText}>{t("screening.submit.error")}</Text>
+            <TouchableOpacity
+              onPress={() => Linking.openURL(HELPLINE_DIAL_URL)}
+              accessibilityRole="link"
+              style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 6 }}
+            >
+              <Ionicons name="call-outline" size={14} color={Colors.textSecondary} />
+              <Text style={{ fontFamily: Theme.fontFamily.medium, fontSize: 13, color: Colors.textSecondary }}>
+                {t("screening.result.safetyFooter", {
+                  helplineName: CRISIS_RESOURCES.helplineName,
+                  helplineNumber: CRISIS_RESOURCES.helplineNumber,
+                  emergencyNumber: CRISIS_RESOURCES.emergencyNumber,
+                })}
+              </Text>
+            </TouchableOpacity>
           </View>
         )}
         <TouchableOpacity

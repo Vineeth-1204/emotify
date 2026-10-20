@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { internalMutation } from "./_generated/server";
 import { mutation, query } from "./functions";
+import { internal } from "./_generated/api";
 import { assertCanAccessStudent, requireCounselorOrAdmin, getStaffRecipientsForStudent } from "./authz";
 import type { Id } from "./_generated/dataModel";
 import { checkRateLimit } from "./rateLimiter";
@@ -33,6 +34,11 @@ export async function insertSafetyAlert(
   }
 ): Promise<Id<"alerts">> {
   const now = Date.now();
+
+  // Admins plus the student's assigned counsellor (all counsellors if unassigned)
+  const staff = await getStaffRecipientsForStudent(ctx, params.userId);
+  const deliveryStatus = staff.length > 0 ? "delivered" : "no_active_staff";
+
   const alertId = await ctx.db.insert("alerts", {
     userId: params.userId,
     type: params.type,
@@ -42,6 +48,9 @@ export async function insertSafetyAlert(
     sourceId: params.sourceId,
     attemptId: params.attemptId,
     triageId: params.triageId,
+    deliveryStatus,
+    notifiedStaffCount: staff.length,
+    deliveryFailureCount: staff.length === 0 ? 1 : 0,
   });
 
   let studentLabel = "A student";
@@ -57,8 +66,6 @@ export async function insertSafetyAlert(
   const origin =
     params.source === "screening" ? "a screening" : params.source === "companion" ? "the Emoty companion" : params.source === "cbt" ? "a Think Differently (CBT) session" : "the system";
 
-  // Admins plus the student's assigned counsellor (all counsellors if unassigned)
-  const staff = await getStaffRecipientsForStudent(ctx, params.userId);
   for (const member of staff) {
     await ctx.db.insert("notifications", {
       recipientId: String(member._id),
@@ -72,7 +79,31 @@ export async function insertSafetyAlert(
     });
   }
 
-  console.log(`[ALERT TRIGGERED] type=${params.type} source=${params.source} notified=${staff.length}`);
+  if (staff.length === 0) {
+    await logAuditEvent(
+      ctx,
+      params.userId,
+      "alert_delivery_failure",
+      `Safety alert created but zero active staff recipients were found. alertType=${params.type} source=${params.source}`
+    );
+    console.warn(`[ALERT DELIVERY WARNING] alertId=${alertId} type=${params.type} notified=0`);
+  } else {
+    console.log(`[ALERT TRIGGERED] type=${params.type} source=${params.source} notified=${staff.length}`);
+  }
+
+  // External emergency-contact notification for critical safety events
+  if (isCritical && (ctx as any).scheduler) {
+    try {
+      await (ctx as any).scheduler.runAfter(0, internal.emergencyDispatch.dispatchExternalAlert, {
+        alertId,
+        userId: params.userId,
+        alertType: params.type,
+      });
+    } catch (schedErr) {
+      console.warn("[EXTERNAL DISPATCH SCHEDULER WARNING]", schedErr);
+    }
+  }
+
   return alertId;
 }
 
@@ -320,4 +351,20 @@ export const getTriageAlerts = query({
       .collect();
   },
 });
+
+/** Staff: get unresolved alerts where notification delivery could not reach any active staff */
+export const getUndeliveredAlerts = query({
+  args: {},
+  handler: async (ctx) => {
+    await requireCounselorOrAdmin(ctx);
+    const undelivered = await ctx.db
+      .query("alerts")
+      .withIndex("by_deliveryStatus", (q) => q.eq("deliveryStatus", "no_active_staff"))
+      .collect();
+    return undelivered
+      .filter((a) => a.status === "pending")
+      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  },
+});
+
 

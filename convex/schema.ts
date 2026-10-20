@@ -103,6 +103,7 @@ export default defineSchema({
     phq9_total: v.number(),
     gad7_total: v.number(),
     pq16_total: v.number(),
+    pss10_total: v.optional(v.number()),
     // RETIRED (WSAS / ReQoL-10 are not part of Emotify): never written; kept optional only so
     // documents from earlier versions validate until screening:purgeRetiredInstrumentData has run.
     wsas_total: v.optional(v.number()),
@@ -123,6 +124,7 @@ export default defineSchema({
       phq9: v.string(),
       gad7: v.string(),
       pq16: v.string(),
+      pss10: v.optional(v.string()),
       // RETIRED: see screenings.wsas_total.
       wsas: v.optional(v.string()),
       reqol10: v.optional(v.string()),
@@ -131,6 +133,7 @@ export default defineSchema({
       phq9: v.optional(v.record(v.string(), v.number())),
       gad7: v.optional(v.record(v.string(), v.number())),
       pq16: v.optional(v.record(v.string(), v.number())),
+      pss10: v.optional(v.record(v.string(), v.number())),
       // RETIRED: see screenings.wsas_total.
       wsas: v.optional(v.record(v.string(), v.number())),
       reqol10: v.optional(v.record(v.string(), v.number())),
@@ -159,6 +162,15 @@ export default defineSchema({
         severity: v.string(),
         level: v.string(),
       }),
+      pss10: v.optional(
+        v.object({
+          administered: v.boolean(),
+          score: v.number(),
+          maxScore: v.number(),
+          severity: v.string(),
+          level: v.string(),
+        })
+      ),
       // RETIRED: see screenings.wsas_total.
       wsas: v.optional(
         v.object({
@@ -216,11 +228,20 @@ export default defineSchema({
     sourceId: v.optional(v.string()), // e.g. companion messageId or cbtSessions._id
     studentDismissedAt: v.optional(v.number()), // last time the student closed the emergency screen
     studentDismissCount: v.optional(v.number()),
+    deliveryStatus: v.optional(v.string()), // "delivered" | "no_active_staff" | "delivery_failed"
+    deliveryFailureCount: v.optional(v.number()),
+    notifiedStaffCount: v.optional(v.number()),
+    externalDispatchStatus: v.optional(v.string()), // "pending" | "delivered" | "failed" | "skipped_no_contact"
+    externalDispatchedAt: v.optional(v.number()),
+    externalDispatchAttempts: v.optional(v.number()),
+    externalMessageId: v.optional(v.string()),
+    externalDispatchError: v.optional(v.string()),
   })
     .index("by_userId", ["userId"])
     .index("by_status", ["status"])
     .index("by_attemptId", ["attemptId"])
-    .index("by_triageId", ["triageId"]),
+    .index("by_triageId", ["triageId"])
+    .index("by_deliveryStatus", ["deliveryStatus"]),
 
   emotionLogs: defineTable({
     userId: v.string(),
@@ -231,6 +252,12 @@ export default defineSchema({
     postIntensity: v.optional(v.number()),
     selectedEmotions: v.optional(v.array(v.string())),
     strongestEmotion: v.optional(v.string()),
+    postEmotion: v.optional(v.string()),
+    deltaIntensity: v.optional(v.number()),
+    branchTaken: v.optional(v.string()), // "improved" | "unchanged" | "worse"
+    completedAt: v.optional(v.number()),
+    sourceType: v.optional(v.string()),
+    meditationTitle: v.optional(v.string()),
     createdAt: v.number(),
   })
     .index("by_userId", ["userId"])
@@ -354,9 +381,13 @@ export default defineSchema({
     sourceType: v.optional(v.string()), // "self_initiated" | "cbt_crisis" | "screening" | "triage"
     attemptId: v.optional(v.id("screeningAttempts")),
     triageId: v.optional(v.id("triages")),
+    deliveryStatus: v.optional(v.string()), // "notified" | "no_active_staff" | "delivery_failed"
+    notifiedStaffCount: v.optional(v.number()),
+    deduplicated: v.optional(v.boolean()),
   })
     .index("by_user_id", ["user_id"])
-    .index("by_timestamp", ["timestamp"]),
+    .index("by_timestamp", ["timestamp"])
+    .index("by_deliveryStatus", ["deliveryStatus"]),
 
   followUps: defineTable({
     userId: v.string(),
@@ -784,6 +815,17 @@ export default defineSchema({
     .index("by_userId_and_category", ["userId", "category"])
     .index("by_userId_and_key", ["userId", "key"])
     .index("by_userId_and_active", ["userId", "active"]),
+
+  pushTokens: defineTable({
+    userId: v.string(),
+    token: v.string(),
+    platform: v.string(), // "android" | "ios" | "web"
+    deviceId: v.optional(v.string()),
+    updatedAt: v.number(),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_token", ["token"])
+    .index("by_userId_and_token", ["userId", "token"]),
 });
 
 

@@ -96,6 +96,10 @@ export const recordPostIntensity = mutation({
   args: {
     logId: v.id("emotionLogs"),
     postIntensity: v.number(),
+    postEmotion: v.optional(v.string()),
+    deltaIntensity: v.optional(v.number()),
+    branchTaken: v.optional(v.string()),
+    meditationTitle: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
@@ -113,12 +117,19 @@ export const recordPostIntensity = mutation({
     if (!record) throw new Error("Emotion log not found.");
     if (record.userId !== userId) throw new Error("Unauthorized: Cannot update another user's emotion log.");
 
-    // Only patch if not already set (prevent double-recording)
+    // Only patch if not already set (prevent double-recording / idempotent)
     if (record.postIntensity !== undefined) {
-      return args.logId; // idempotent — already recorded
+      return args.logId;
     }
 
-    await ctx.db.patch(args.logId, { postIntensity: args.postIntensity });
+    await ctx.db.patch(args.logId, {
+      postIntensity: args.postIntensity,
+      ...(args.postEmotion !== undefined ? { postEmotion: args.postEmotion } : {}),
+      ...(args.deltaIntensity !== undefined ? { deltaIntensity: args.deltaIntensity } : {}),
+      ...(args.branchTaken !== undefined ? { branchTaken: args.branchTaken } : {}),
+      ...(args.meditationTitle !== undefined ? { meditationTitle: args.meditationTitle } : {}),
+      completedAt: Date.now(),
+    });
     return args.logId;
   },
 });

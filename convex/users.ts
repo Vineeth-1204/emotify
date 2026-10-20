@@ -5,7 +5,7 @@ import type { Id } from "./_generated/dataModel";
 import { signJwt, verifyPassword, hashPassword, generateTemporaryPassword, readUnverifiedSessionId } from "./authHelpers";
 import { internal } from "./_generated/api";
 import { logAuditEvent } from "./audit";
-import { endAssignmentsForDeletedUser } from "./counsellorAssignments";
+import { endAssignmentsForDeletedUser, endAssignmentsForDeactivatedUser } from "./counsellorAssignments";
 import { assertCanAccessStudent, requireAdmin, getAuthenticatedUser } from "./authz";
 import {
   getCompanionDisplayName,
@@ -548,6 +548,11 @@ export const toggleUserStatus = mutation({
     const admin = await checkAdmin(ctx);
     if (!admin) throw new Error("Unauthorized");
 
+    // Server-side status validation
+    if (args.status !== "active" && args.status !== "inactive") {
+      throw new Error("Invalid user status. Allowed statuses are 'active' or 'inactive'.");
+    }
+
     const user = await ctx.db.get(args.userId);
     if (!user) throw new Error("User not found");
 
@@ -561,7 +566,7 @@ export const toggleUserStatus = mutation({
       updated_at: Date.now(),
     });
 
-    // If deactivated, delete all active sessions immediately to log them out
+    // If deactivated, delete all active sessions immediately and safely offboard assignments
     if (args.status === "inactive") {
       const userSessions = await ctx.db
         .query("sessions")
@@ -570,7 +575,23 @@ export const toggleUserStatus = mutation({
       for (const session of userSessions) {
         await ctx.db.delete(session._id);
       }
+
+      await logAuditEvent(
+        ctx,
+        String(admin._id),
+        "user_deactivated",
+        `User ${args.userId} (role: ${user.role}) status changed to inactive. Active sessions terminated.`
+      );
+    } else {
+      await logAuditEvent(
+        ctx,
+        String(admin._id),
+        "user_reactivated",
+        `User ${args.userId} (role: ${user.role}) status changed to active.`
+      );
     }
+
+    return { success: true };
   },
 });
 
@@ -587,6 +608,14 @@ export const editUser = mutation({
     const admin = await checkAdmin(ctx);
     if (!admin) throw new Error("Unauthorized");
 
+    // Server-side status validation
+    if (args.status !== "active" && args.status !== "inactive") {
+      throw new Error("Invalid user status. Allowed statuses are 'active' or 'inactive'.");
+    }
+
+    const user = await ctx.db.get(args.userId);
+    if (!user) throw new Error("User not found");
+
     const existing = await ctx.db
       .query("users")
       .withIndex("by_mobile_number", (q) => q.eq("mobile_number", args.mobile_number))
@@ -596,6 +625,8 @@ export const editUser = mutation({
       throw new Error("Mobile number is registered to another user.");
     }
 
+    const statusChangedToInactive = args.status === "inactive" && user.status !== "inactive";
+
     await ctx.db.patch(args.userId, {
       full_name: args.full_name,
       mobile_number: args.mobile_number,
@@ -603,6 +634,25 @@ export const editUser = mutation({
       status: args.status,
       updated_at: Date.now(),
     });
+
+    if (statusChangedToInactive) {
+      const userSessions = await ctx.db
+        .query("sessions")
+        .withIndex("by_userId", (q) => q.eq("userId", args.userId))
+        .collect();
+      for (const session of userSessions) {
+        await ctx.db.delete(session._id);
+      }
+
+      await logAuditEvent(
+        ctx,
+        String(admin._id),
+        "user_deactivated",
+        `User ${args.userId} (role: ${user.role}) edited to inactive. Active sessions terminated.`
+      );
+    }
+
+    return { success: true };
   },
 });
 

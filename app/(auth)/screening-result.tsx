@@ -82,6 +82,7 @@ function ScreeningResult() {
           <View style={styles.card} accessibilityLabel={t("screening.result.loading")}>
             <ActivityIndicator color={Colors.primary} />
             <Text style={styles.statusText}>{t("screening.result.loading")}</Text>
+            <SafetyFooter onPress={() => Linking.openURL(HELPLINE_DIAL_URL)} />
           </View>
         )}
 
@@ -90,6 +91,7 @@ function ScreeningResult() {
             <Ionicons name={state.kind === "offline" ? "cloud-offline-outline" : "information-circle-outline"} size={24} color={Colors.textSecondary} />
             <Text style={styles.statusText}>{t(state.kind === "offline" ? "screening.result.offline" : "screening.result.missing")}</Text>
             <Button title={t(ACTION_LABEL_KEYS.home)} onPress={goHome} variant="outline" size="lg" style={styles.fullButton} />
+            <SafetyFooter onPress={() => Linking.openURL(HELPLINE_DIAL_URL)} />
           </View>
         )}
 
@@ -99,14 +101,145 @@ function ScreeningResult() {
   );
 }
 
+function SafetyFooter({ onPress }: { onPress: () => void }) {
+  const { t } = useLanguage();
+  return (
+    <TouchableOpacity onPress={onPress} accessibilityRole="link" style={styles.footer}>
+      <Ionicons name="call-outline" size={16} color={Colors.textSecondary} />
+      <Text style={styles.footerText}>{t("screening.result.safetyFooter", CRISIS_PARAMS)}</Text>
+    </TouchableOpacity>
+  );
+}
+
 function OutcomeCard({ view, onAction }: { view: ScreeningOutcomeView; onAction: (a: ScreeningAction) => void }) {
   const { t } = useLanguage();
+  const router = useRouter();
+  const [safetyStep, setSafetyStep] = React.useState<"initial" | "calm_bridge" | "declined" | "helpline_options">("initial");
+
   const label = (action: ScreeningAction) => {
     if (action === "counsellor") return t(counsellorLabelKey(view.outcome));
     if (action === "call_emergency") return t(ACTION_LABEL_KEYS.call_emergency, { number: CRISIS_RESOURCES.emergencyNumber });
     if (action === "call_helpline") return t(ACTION_LABEL_KEYS.call_helpline, { helplineName: CRISIS_RESOURCES.helplineName, number: CRISIS_RESOURCES.helplineNumber });
     return t(ACTION_LABEL_KEYS[action]);
   };
+
+  if (view.outcome === "immediate_safety") {
+    return (
+      <View style={styles.card}>
+        <Text style={styles.heading} accessibilityRole="header">
+          {t("screening.result.trustedAdult.heading")}
+        </Text>
+
+        {safetyStep === "initial" && (
+          <>
+            <Text style={styles.body}>
+              {t("screening.result.trustedAdult.question")}
+            </Text>
+            <View style={styles.actions}>
+              <Button
+                title={t("screening.result.trustedAdult.yesButton")}
+                onPress={() => setSafetyStep("calm_bridge")}
+                variant="primary"
+                size="lg"
+                style={styles.fullButton}
+              />
+              <Button
+                title={t("screening.result.trustedAdult.needHelpButton")}
+                onPress={() => setSafetyStep("helpline_options")}
+                variant="outline"
+                size="lg"
+                style={styles.fullButton}
+              />
+            </View>
+          </>
+        )}
+
+        {safetyStep === "calm_bridge" && (
+          <>
+            <Text style={styles.body}>
+              {t("screening.result.trustedAdult.acknowledgedYes")}
+            </Text>
+            <Text style={[styles.body, { marginTop: Theme.spacing.xs }]}>
+              {t("screening.result.trustedAdult.calmBridge")}
+            </Text>
+            <View style={styles.actions}>
+              <Button
+                title={t("screening.result.trustedAdult.calmBridgeYes")}
+                onPress={() => router.replace("/(auth)/tools/emotion-map" as any)}
+                variant="primary"
+                size="lg"
+                style={styles.fullButton}
+              />
+              <Button
+                title={t("screening.result.trustedAdult.calmBridgeNo")}
+                onPress={() => setSafetyStep("declined")}
+                variant="outline"
+                size="lg"
+                style={styles.fullButton}
+              />
+            </View>
+          </>
+        )}
+
+        {safetyStep === "helpline_options" && (
+          <>
+            <Text style={styles.body}>
+              {t("screening.result.trustedAdult.acknowledgedNeedHelp")}
+            </Text>
+            <View style={styles.actions}>
+              <Button
+                title={label("call_helpline")}
+                onPress={() => onAction("call_helpline")}
+                variant="primary"
+                size="lg"
+                style={styles.fullButton}
+              />
+              <Button
+                title={label("counsellor")}
+                onPress={() => onAction("counsellor")}
+                variant="outline"
+                size="lg"
+                style={styles.fullButton}
+              />
+              <Button
+                title={t("screening.result.trustedAdult.calmBridgeYes")}
+                onPress={() => router.replace("/(auth)/tools/emotion-map" as any)}
+                variant="outline"
+                size="lg"
+                style={styles.fullButton}
+              />
+            </View>
+          </>
+        )}
+
+        {safetyStep === "declined" && (
+          <>
+            <Text style={styles.body}>
+              {t("screening.result.trustedAdult.declined")}
+            </Text>
+            <View style={styles.actions}>
+              <Button
+                title={t(ACTION_LABEL_KEYS.home)}
+                onPress={() => onAction("home")}
+                variant="primary"
+                size="lg"
+                style={styles.fullButton}
+              />
+              <Button
+                title={t(ACTION_LABEL_KEYS.tools)}
+                onPress={() => onAction("tools")}
+                variant="outline"
+                size="lg"
+                style={styles.fullButton}
+              />
+            </View>
+          </>
+        )}
+
+        <SafetyFooter onPress={() => onAction("call_helpline")} />
+      </View>
+    );
+  }
 
   return (
     <View style={styles.card}>
@@ -123,10 +256,7 @@ function OutcomeCard({ view, onAction }: { view: ScreeningOutcomeView; onAction:
       </View>
 
       {view.showSafetyFooter && (
-        <TouchableOpacity onPress={() => onAction("call_helpline")} accessibilityRole="link" style={styles.footer}>
-          <Ionicons name="call-outline" size={16} color={Colors.textSecondary} />
-          <Text style={styles.footerText}>{t("screening.result.safetyFooter", CRISIS_PARAMS)}</Text>
-        </TouchableOpacity>
+        <SafetyFooter onPress={() => onAction("call_helpline")} />
       )}
     </View>
   );
@@ -157,6 +287,7 @@ function ResultFallback() {
           size="lg"
           style={styles.fullButton}
         />
+        <SafetyFooter onPress={() => Linking.openURL(HELPLINE_DIAL_URL)} />
       </View>
     </View>
   );

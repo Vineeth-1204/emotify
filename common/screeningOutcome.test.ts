@@ -143,4 +143,37 @@ describe("screen wiring", () => {
     expect(tabsLayout).not.toContain(">Safety Priority<");
     expect(tabsLayout).not.toMatch(/emergencyTitle, \{ color: safetyColors\.error/);
   });
+
+  test("Phase B2: every non-ready and fallback state keeps crisis resources accessible and actionable", () => {
+    const updatedResultScreen = read("app/(auth)/screening-result.tsx");
+    const updatedScreeningScreen = read("app/(auth)/screening.tsx");
+
+    // Reusable SafetyFooter is defined and linked to the canonical helpline URL
+    expect(updatedResultScreen).toContain("function SafetyFooter");
+    expect(updatedResultScreen).toContain("Linking.openURL(HELPLINE_DIAL_URL)");
+
+    // 1. Loading state contains SafetyFooter
+    const loadingBlock = updatedResultScreen.slice(
+      updatedResultScreen.indexOf('state.kind === "loading"'),
+      updatedResultScreen.indexOf('state.kind === "offline"')
+    );
+    expect(loadingBlock).toContain("<SafetyFooter");
+
+    // 2. Offline / Missing states contain SafetyFooter
+    const offlineBlock = updatedResultScreen.slice(
+      updatedResultScreen.indexOf('state.kind === "offline"'),
+      updatedResultScreen.indexOf("<OutcomeCard")
+    );
+    expect(offlineBlock).toContain("<SafetyFooter");
+
+    // 3. ResultFallback error boundary contains SafetyFooter
+    const fallbackBlock = updatedResultScreen.slice(updatedResultScreen.indexOf("function ResultFallback"));
+    expect(fallbackBlock).toContain("<SafetyFooter");
+
+    // 4. Screening submission error and waiting states in screening.tsx provide crisis helpline access
+    expect(updatedScreeningScreen).toContain("HELPLINE_DIAL_URL");
+    const submitErrorBlock = updatedScreeningScreen.slice(updatedScreeningScreen.indexOf("{submitError && ("));
+    expect(submitErrorBlock).toContain("Linking.openURL(HELPLINE_DIAL_URL)");
+  });
 });
+

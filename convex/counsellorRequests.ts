@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import type { Id } from "./_generated/dataModel";
 import { mutation, query } from "./functions";
 import { checkRateLimit } from "./rateLimiter";
 import { requireCounselorOrAdmin, getAuthenticatedUser, assertCanAccessStudent, getStaffRecipientsForStudent } from "./authz";
@@ -14,8 +15,9 @@ export const create = mutation({
     sourceType: v.optional(v.string()),
     attemptId: v.optional(v.id("screeningAttempts")),
     triageId: v.optional(v.id("triages")),
+    returnOutcome: v.optional(v.boolean()),
   },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Id<"counsellorRequests">> => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated: Login required.");
 
@@ -77,6 +79,15 @@ export const create = mutation({
       const activeReq = existing.find((r) => activeStatuses.has(r.status || "pending"));
       if (activeReq) {
         // Return existing active request ID, do not create duplicate record or send duplicate notification
+        if (args.returnOutcome) {
+          return {
+            success: true,
+            requestId: activeReq._id,
+            deduplicated: true,
+            notifiedStaffCount: activeReq.notifiedStaffCount ?? 0,
+            deliveryStatus: (activeReq.deliveryStatus ?? "already_active") as "already_active" | "notified" | "no_active_staff",
+          } as unknown as Id<"counsellorRequests">;
+        }
         return activeReq._id;
       }
     }
@@ -85,6 +96,10 @@ export const create = mutation({
     // triage on the server so provenance is unchanged.
     const triageId =
       args.triageId ?? (args.sourceType === "emergency_modal" && !isStaff ? await latestTriageIdFor(ctx, Array.from(searchIds)) : undefined);
+
+    // Determine recipients according to assignment rules
+    const allStaff = await getStaffRecipientsForStudent(ctx, effectiveUserId);
+    const deliveryStatus = allStaff.length > 0 ? "notified" : "no_active_staff";
 
     const requestId = await ctx.db.insert("counsellorRequests", {
       user_id: effectiveUserId,
@@ -95,11 +110,12 @@ export const create = mutation({
       sourceType: args.sourceType || "self_initiated",
       attemptId: args.attemptId,
       triageId,
+      deliveryStatus,
+      notifiedStaffCount: allStaff.length,
+      deduplicated: false,
       updatedAt: Date.now(),
     });
 
-    // Notify admins and the student's assigned counsellor (all counsellors if unassigned)
-    const allStaff = await getStaffRecipientsForStudent(ctx, effectiveUserId);
     const studentName = caller?.full_name || "A student";
 
     for (const staff of allStaff) {
@@ -113,6 +129,20 @@ export const create = mutation({
         archived: false,
         createdAt: Date.now(),
       });
+    }
+
+    if (allStaff.length === 0) {
+      console.warn(`[COUNSELLOR REQUEST NO ACTIVE STAFF] requestId=${requestId} userId=${effectiveUserId}`);
+    }
+
+    if (args.returnOutcome) {
+      return {
+        success: true,
+        requestId,
+        deduplicated: false,
+        notifiedStaffCount: allStaff.length,
+        deliveryStatus: deliveryStatus as "notified" | "no_active_staff",
+      } as unknown as Id<"counsellorRequests">;
     }
 
     return requestId;

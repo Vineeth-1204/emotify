@@ -276,6 +276,18 @@
         "body": "We're concerned for your safety. If you're in danger now, please call emergency services immediately.",
         "bodyHelpline": "You don't have to go through this alone. You can also call {{helplineName}} on {{helplineNumber}} to talk to someone, at any time."
       },
+      "trustedAdult": {
+        "heading": "We're here with you",
+        "question": "Thank you for being honest with us — that's really brave. Sometimes big feelings can feel really hard to carry. A caring adult will reach out to talk with you very soon. Right now, is there a grown-up nearby you trust — like a parent, teacher, or family member?",
+        "yesButton": "Yes, I can talk to someone",
+        "needHelpButton": "I need help finding someone",
+        "acknowledgedYes": "That's really good to know. You don't have to carry big feelings on your own.",
+        "acknowledgedNeedHelp": "We're here to help you connect with someone caring right now. You can talk to a counsellor or call the helpline at any time.",
+        "calmBridge": "While we figure out the next step together, would you like to try a calm activity right now?",
+        "calmBridgeYes": "Yes, let's try something",
+        "calmBridgeNo": "Not right now",
+        "declined": "That's totally okay. The calm tools will be here whenever you're ready — no rush at all. 🌿"
+      },
       "actions": {
         "home": "Go to my wellbeing space",
         "tools": "Explore support options",

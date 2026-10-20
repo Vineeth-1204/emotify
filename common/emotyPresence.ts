@@ -94,7 +94,10 @@ export const EMOTY_LINES = {
 const HOME_ACTION_MOOD: Record<EmotyNextActionType, EmotyMood> = {
   checkin: "greeting",
   emotion_followup: "listening",
+  calm_tool: "listening",
+  reframe: "encouraging",
   goal_suggestion: "encouraging",
+  appointment_reminder: "greeting",
   all_caught_up: "greeting",
 };
 

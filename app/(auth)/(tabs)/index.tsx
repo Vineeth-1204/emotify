@@ -10,7 +10,7 @@ import {
   getDailyCheckinNextStep,
   getEmotionMapPrimaryForDailyMood,
 } from "@/common/phase6EmotionEntry";
-import { getCurrentEmotyAction } from "@/common/homeEmotyAction";
+import { getEmotyNextStep, EMOTY_STEP_ROUTES, type EmotyNextActionType } from "@/common/homeEmotyAction";
 import { getEmotyPresence, type CheckinMood } from "@/common/emotyPresence";
 import { EmotyPresence } from "@/components/avatar/EmotyPresence";
 import { useThemeColors, useStyles } from "@/context/MoodThemeContext";
@@ -326,15 +326,34 @@ export default function DashboardScreen() {
     return latestDateStr === todayDateStr;
   }, [recentEmotions, todayDateStr]);
 
-  const currentEmotyAction = React.useMemo(() => {
-    return getCurrentEmotyAction({
+  // Emoty's guide: server signals (exercise done today, recent reframes, upcoming appointment,
+  // "Not now" choices) feed the same one-suggestion-at-a-time rules (common/homeEmotyAction.ts).
+  const guideSignals = useQuery(
+    api.emotyGuide.getMyGuideSignals,
+    isReady ? { dateStr: todayDateStr, tzOffsetMinutes: new Date().getTimezoneOffset() } : "skip"
+  );
+  const dismissNextStep = useMutation(api.emotyGuide.dismissNextStep);
+  const [dismissedToday, setDismissedToday] = React.useState<string[]>([]);
+  const putOffStep = React.useCallback(
+    (action: EmotyNextActionType) => {
+      setDismissedToday((prev) => (prev.includes(action) ? prev : [...prev, action]));
+      dismissNextStep({ action, dateStr: todayDateStr }).catch((err) => console.warn("Could not save Not now:", err?.message || err));
+    },
+    [dismissNextStep, todayDateStr]
+  );
+
+  const currentEmotyStep = React.useMemo(() => {
+    return getEmotyNextStep({
       hasCheckedInToday,
       hasLoggedEmotionToday,
       dismissedEmotionFollowup,
       suggestedGoalStatus: suggestedGoal?.status,
       dismissedGoalFollowup,
+      guide: guideSignals ? { ...guideSignals, dismissed: [...guideSignals.dismissed, ...dismissedToday] } : null,
+      safetyElevated: !!safetyStatus?.crisis || !!safetyStatus?.elevatedSupport,
     });
-  }, [hasCheckedInToday, hasLoggedEmotionToday, dismissedEmotionFollowup, suggestedGoal, dismissedGoalFollowup]);
+  }, [hasCheckedInToday, hasLoggedEmotionToday, dismissedEmotionFollowup, suggestedGoal, dismissedGoalFollowup, guideSignals, dismissedToday, safetyStatus]);
+  const currentEmotyAction = currentEmotyStep.action;
 
   const updateWellness = useMutation(api.wellness.updateProfile);
 
@@ -466,6 +485,13 @@ export default function DashboardScreen() {
     };
 
   const isSevere = !!safetyStatus?.elevatedSupport;
+
+  const guideButtonLabel =
+    currentEmotyAction === "calm_tool"
+      ? t(currentEmotyStep.tool === "grounding" ? "emotyGuide.groundingButton" : "emotyGuide.breathingButton")
+      : currentEmotyAction === "reframe"
+      ? t("emotyGuide.reframeButton")
+      : t("emotyGuide.appointmentButton");
 
   const homePresence = getEmotyPresence({
     scene: "home",
@@ -743,6 +769,12 @@ export default function DashboardScreen() {
                     ? `${getGreeting()}, ${alias}. Take a moment to check in with how you're feeling today.`
                     : currentEmotyAction === "emotion_followup"
                     ? emotionFollowupCopy
+                    : currentEmotyAction === "calm_tool"
+                    ? t(currentEmotyStep.tool === "grounding" ? "emotyGuide.groundingCopy" : "emotyGuide.breathingCopy")
+                    : currentEmotyAction === "reframe"
+                    ? t("emotyGuide.reframeCopy")
+                    : currentEmotyAction === "appointment_reminder"
+                    ? t(guideSignals?.appointmentSoon === "today" ? "emotyGuide.appointmentTodayCopy" : "emotyGuide.appointmentTomorrowCopy")
                     : currentEmotyAction === "goal_suggestion"
                     ? t("home.goalSuggestedCopy", { companionName: avatarName })
                     : "You're all caught up for today! Feel free to rest, or explore any tool below whenever you like."}
@@ -767,7 +799,10 @@ export default function DashboardScreen() {
                     <TouchableOpacity
                       style={styles.emotyActionBtnSecondary}
                       activeOpacity={0.7}
-                      onPress={() => setDismissedEmotionFollowup(true)}
+                      onPress={() => {
+                        setDismissedEmotionFollowup(true);
+                        putOffStep("emotion_followup");
+                      }}
                       accessibilityRole="button"
                       accessibilityLabel="Maybe later"
                     >
@@ -806,13 +841,52 @@ export default function DashboardScreen() {
                       <TouchableOpacity
                         style={styles.emotyActionBtnSecondary}
                         activeOpacity={0.7}
-                        onPress={() => setDismissedGoalFollowup(true)}
+                        onPress={() => {
+                          setDismissedGoalFollowup(true);
+                          putOffStep("goal_suggestion");
+                        }}
                         accessibilityRole="button"
                         accessibilityLabel="Not now"
                       >
                         <Text style={[styles.emotyActionBtnTextSecondary, { color: colors.textSecondary }]}>Not now</Text>
                       </TouchableOpacity>
                     </View>
+                  </View>
+                )}
+
+                {(currentEmotyAction === "calm_tool" || currentEmotyAction === "reframe" || currentEmotyAction === "appointment_reminder") && (
+                  <View style={styles.emotyContextualActionRow}>
+                    <TouchableOpacity
+                      style={[styles.emotyActionBtnPrimary, { backgroundColor: colors.primary }]}
+                      activeOpacity={0.85}
+                      onPress={() =>
+                        router.push(
+                          (currentEmotyAction === "calm_tool"
+                            ? EMOTY_STEP_ROUTES[currentEmotyStep.tool ?? "breathing"]
+                            : currentEmotyAction === "reframe"
+                            ? EMOTY_STEP_ROUTES.reframe
+                            : EMOTY_STEP_ROUTES.appointments) as any
+                        )
+                      }
+                      accessibilityRole="button"
+                      accessibilityLabel={guideButtonLabel}
+                    >
+                      <Ionicons
+                        name={currentEmotyAction === "appointment_reminder" ? "calendar" : currentEmotyAction === "reframe" ? "bulb" : "leaf"}
+                        size={13}
+                        color="#FFFFFF"
+                      />
+                      <Text style={styles.emotyActionBtnTextPrimary}>{guideButtonLabel}</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.emotyActionBtnSecondary}
+                      activeOpacity={0.7}
+                      onPress={() => putOffStep(currentEmotyAction)}
+                      accessibilityRole="button"
+                      accessibilityLabel={t("emotyGuide.notNow")}
+                    >
+                      <Text style={[styles.emotyActionBtnTextSecondary, { color: colors.textSecondary }]}>{t("emotyGuide.notNow")}</Text>
+                    </TouchableOpacity>
                   </View>
                 )}
 

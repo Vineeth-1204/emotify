@@ -885,6 +885,16 @@ export default defineSchema({
     .index("by_userId_and_key", ["userId", "key"])
     .index("by_userId_and_active", ["userId", "active"]),
 
+  /** "Not now" on one of Emoty's Home suggestions: hidden for the rest of that local day. */
+  emotyGuideDismissals: defineTable({
+    userId: v.string(),
+    dateStr: v.string(), // "YYYY-MM-DD" (student's local day)
+    action: v.string(), // one of EMOTY_DISMISSIBLE_ACTIONS
+    createdAt: v.number(),
+  })
+    .index("by_userId_and_dateStr", ["userId", "dateStr"])
+    .index("by_userId", ["userId"]),
+
   pushTokens: defineTable({
     userId: v.string(),
     token: v.string(),

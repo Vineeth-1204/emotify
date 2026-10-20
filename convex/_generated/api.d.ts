@@ -33,6 +33,7 @@ import type * as emotyAvatar from "../emotyAvatar.js";
 import type * as emotyContext from "../emotyContext.js";
 import type * as emotyContract from "../emotyContract.js";
 import type * as emotyFallback from "../emotyFallback.js";
+import type * as emotyGuide from "../emotyGuide.js";
 import type * as emotyIntent from "../emotyIntent.js";
 import type * as emotyMemory from "../emotyMemory.js";
 import type * as emotyRateLimiter from "../emotyRateLimiter.js";
@@ -100,6 +101,7 @@ declare const fullApi: ApiFromModules<{
   emotyContext: typeof emotyContext;
   emotyContract: typeof emotyContract;
   emotyFallback: typeof emotyFallback;
+  emotyGuide: typeof emotyGuide;
   emotyIntent: typeof emotyIntent;
   emotyMemory: typeof emotyMemory;
   emotyRateLimiter: typeof emotyRateLimiter;

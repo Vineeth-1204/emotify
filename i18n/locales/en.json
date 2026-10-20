@@ -424,5 +424,17 @@
       "hoursAgo": "{{count}} h ago",
       "daysAgo": "{{count}} d ago"
     }
+  },
+  "emotyGuide": {
+    "breathingCopy": "Thanks for checking in. Want to take two slow minutes to breathe with me?",
+    "breathingButton": "Breathe with me",
+    "groundingCopy": "That sounds like a lot to carry. A short grounding exercise can help you feel a little steadier. Want to try it together?",
+    "groundingButton": "Try grounding",
+    "reframeCopy": "The last few days sound like they've been tough. Want to look at one thought that's been on your mind, together?",
+    "reframeButton": "Let's look at it",
+    "appointmentTodayCopy": "You have a session with your counsellor today. I'm glad you're making time for yourself.",
+    "appointmentTomorrowCopy": "You have a session with your counsellor tomorrow. You can check the details any time.",
+    "appointmentButton": "View appointment",
+    "notNow": "Not now"
   }
 }

@@ -128,8 +128,9 @@ export default function EveningGratitudeScreen() {
           <View style={styles.completedCard}>
             <LinearGradient
               colors={["#1E1B4B", "#2E1065", "#0F172A"]}
-              style={styles.cardGradient}
-            >
+              style={StyleSheet.absoluteFillObject}
+            />
+            <View style={styles.cardContent}>
               <View style={styles.emotyCenter}>
                 <EmotyAvatar state="calm" size={72} />
               </View>
@@ -161,7 +162,7 @@ export default function EveningGratitudeScreen() {
                   {EVENING_GRATITUDE_COPY.closing}
                 </Text>
               </View>
-            </LinearGradient>
+            </View>
           </View>
 
           <TouchableOpacity
@@ -436,13 +437,15 @@ const styles = StyleSheet.create({
     width: "100%",
     borderRadius: 24,
     overflow: "hidden",
+    position: "relative",
     marginBottom: 24,
     borderWidth: 1,
     borderColor: "#334155",
   },
-  cardGradient: {
+  cardContent: {
     padding: 24,
     alignItems: "center",
+    width: "100%",
   },
   emotyCenter: {
     marginBottom: 16,

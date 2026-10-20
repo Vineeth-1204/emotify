@@ -129,7 +129,9 @@ export default function MorningAffirmationScreen() {
       (isCustomMode
         ? customText
         : MORNING_AFFIRMATIONS.find((a) => a.id === selectedId)?.text) ||
-      "";
+      status.recommendedAffirmation?.text ||
+      status.todayAffirmation?.text ||
+      MORNING_AFFIRMATIONS[0].text;
 
     return (
       <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -152,39 +154,42 @@ export default function MorningAffirmationScreen() {
           ]}
           showsVerticalScrollIndicator={false}
         >
-          <View style={styles.completedCard}>
-            <LinearGradient
-              colors={["#FEF3C7", "#FFFBEB", "#FFFFFF"]}
-              style={styles.cardGradient}
-            >
-              <View style={styles.emotyCenter}>
-                <EmotyAvatar state="happy" size={72} />
-              </View>
+          <View style={styles.completedCardWrapper}>
+            <View style={styles.completedCard}>
+              <LinearGradient
+                colors={["#FEF3C7", "#FFFBEB", "#FFFFFF"]}
+                style={StyleSheet.absoluteFillObject}
+              />
+              <View style={styles.cardContent}>
+                <View style={styles.emotyCenter}>
+                  <EmotyAvatar state="happy" size={72} />
+                </View>
 
-              <View style={styles.badgeRow}>
-                <View style={styles.completedBadge}>
-                  <Ionicons name="checkmark-circle" size={16} color="#059669" />
-                  <Text style={styles.completedBadgeText}>Intention Set for Today</Text>
+                <View style={styles.badgeRow}>
+                  <View style={styles.completedBadge}>
+                    <Ionicons name="checkmark-circle" size={16} color="#059669" />
+                    <Text style={styles.completedBadgeText}>Intention Set for Today</Text>
+                  </View>
+                </View>
+
+                <Text style={styles.quoteMark}>“</Text>
+                <Text style={styles.affirmationDisplay}>{savedText}</Text>
+                <Text style={styles.quoteMarkEnd}>”</Text>
+
+                <View style={styles.closingBox}>
+                  <Text style={styles.closingText}>
+                    {MORNING_ROUTINE_COPY.closing}
+                  </Text>
+                </View>
+
+                <View style={styles.calmPointNotice}>
+                  <Ionicons name="sparkles" size={16} color="#D97706" />
+                  <Text style={styles.calmPointText}>
+                    Emotion check-in synced for {todayStr}
+                  </Text>
                 </View>
               </View>
-
-              <Text style={styles.quoteMark}>“</Text>
-              <Text style={styles.affirmationDisplay}>{savedText}</Text>
-              <Text style={styles.quoteMarkEnd}>”</Text>
-
-              <View style={styles.closingBox}>
-                <Text style={styles.closingText}>
-                  {MORNING_ROUTINE_COPY.closing}
-                </Text>
-              </View>
-
-              <View style={styles.calmPointNotice}>
-                <Ionicons name="sparkles" size={16} color="#D97706" />
-                <Text style={styles.calmPointText}>
-                  Emotion check-in synced for {todayStr}
-                </Text>
-              </View>
-            </LinearGradient>
+            </View>
           </View>
 
           <TouchableOpacity
@@ -583,10 +588,10 @@ const styles = StyleSheet.create({
     padding: 20,
     alignItems: "center",
   },
-  completedCard: {
+  completedCardWrapper: {
     width: "100%",
     borderRadius: 24,
-    overflow: "hidden",
+    backgroundColor: "#FEF3C7",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.08,
@@ -594,9 +599,16 @@ const styles = StyleSheet.create({
     elevation: 4,
     marginBottom: 24,
   },
-  cardGradient: {
+  completedCard: {
+    width: "100%",
+    borderRadius: 24,
+    overflow: "hidden",
+    position: "relative",
+  },
+  cardContent: {
     padding: 24,
     alignItems: "center",
+    width: "100%",
   },
   emotyCenter: {
     marginBottom: 16,

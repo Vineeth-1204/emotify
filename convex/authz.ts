@@ -44,26 +44,26 @@ export async function requireAuthenticated(
 }
 
 /**
- * Require Admin role. Throws "Unauthorized" if caller is not an admin.
+ * Require Admin role. Throws "Unauthorized" if caller is not an active admin.
  */
 export async function requireAdmin(
   ctx: { auth: { getUserIdentity: () => Promise<any> }; db: any }
 ): Promise<AuthenticatedUser> {
   const { user } = await requireAuthenticated(ctx);
-  if (!user || user.role !== "admin") {
+  if (!user || user.role !== "admin" || user.status === "inactive") {
     throw new Error("Unauthorized: Administrative access required.");
   }
   return user;
 }
 
 /**
- * Require Counselor or Admin role. Throws "Unauthorized" if caller is a student.
+ * Require Counselor or Admin role. Throws "Unauthorized" if caller is a student or inactive.
  */
 export async function requireCounselorOrAdmin(
   ctx: { auth: { getUserIdentity: () => Promise<any> }; db: any }
 ): Promise<AuthenticatedUser> {
   const { user } = await requireAuthenticated(ctx);
-  if (!user || (user.role !== "admin" && user.role !== "counsellor")) {
+  if (!user || (user.role !== "admin" && user.role !== "counsellor") || user.status === "inactive") {
     throw new Error("Unauthorized: Counselor or Admin access required.");
   }
   return user;
@@ -93,10 +93,16 @@ export async function assertCanAccessStudent(
   const user = await getAuthenticatedUser(ctx);
 
   if (user && user.role === "admin") {
+    if (user.status === "inactive") {
+      throw new Error("Unauthorized: Inactive admin cannot access student records.");
+    }
     return;
   }
 
   if (user && user.role === "counsellor") {
+    if (user.status === "inactive") {
+      throw new Error("Unauthorized: Inactive counsellor cannot access student records.");
+    }
     const student = await resolveStudentUser(ctx, targetUserId);
     if (student && (await isAssignedCounsellor(ctx, user._id, student._id))) {
       return;
@@ -152,7 +158,7 @@ export async function getStaffScope(
   ctx: { auth: { getUserIdentity: () => Promise<any> }; db: any }
 ): Promise<StaffScope | null> {
   const caller = await getAuthenticatedUser(ctx);
-  if (!caller || (caller.role !== "admin" && caller.role !== "counsellor")) return null;
+  if (!caller || (caller.role !== "admin" && caller.role !== "counsellor") || caller.status === "inactive") return null;
   if (caller.role === "admin") return { studentIds: null, studentKeys: null, caller };
 
   const assignments = await ctx.db
@@ -193,11 +199,56 @@ export async function getStaffRecipientsForStudent(ctx: { db: any }, studentKey:
       .collect();
     for (const a of assignments) {
       const c = await ctx.db.get(a.counsellorId);
-      if (c) counsellors.push(c);
+      if (c && c.status !== "inactive") counsellors.push(c);
     }
   }
+  // Unassigned, or the assigned counsellor's account is deactivated: alert every active
+  // counsellor so a safety notification is never left with admins only.
   if (counsellors.length === 0) {
     counsellors = await ctx.db.query("users").withIndex("by_role", (q: any) => q.eq("role", "counsellor")).collect();
   }
   return [...admins, ...counsellors].filter((u) => u.status !== "inactive");
+}
+
+/**
+ * The signed-in student and every key their records may be stored under (canonical id and
+ * legacy clerkId). Null for anonymous or non-student callers. Self-service student endpoints
+ * take no student argument and use this, so they can only ever read the caller's own data.
+ */
+export async function getSelfStudent(
+  ctx: { auth: { getUserIdentity: () => Promise<any> }; db: any }
+): Promise<{ user: AuthenticatedUser; keys: string[] } | null> {
+  const user = await getAuthenticatedUser(ctx);
+  if (!user || !isStudentRole(user.role)) return null;
+  return { user, keys: [String(user._id), ...(user.clerkId ? [user.clerkId] : [])] };
+}
+
+/**
+ * Students have role "patient". Accounts created before roles were stored have no role and are
+ * students too: login already issues them a "patient" token, and they must keep the crisis gate.
+ * An explicit staff role, or any other explicit role, is never treated as a student.
+ */
+export function isStudentRole(role: string | undefined | null): boolean {
+  return role === "patient" || role === "student" || role === undefined || role === null || role === "";
+}
+
+/**
+ * Legacy-client compatibility. App builds released before the data-minimization change call
+ * some staff clinical reads (triage.getLatest, screening.getLatest, screening.getAll) for the
+ * signed-in student's own record, and crash if those throw. For a student caller asking about
+ * their own record this returns the student, so the read can answer with a minimal legacy view;
+ * a student naming anyone else is refused; staff and anonymous callers get null and continue
+ * to the unchanged staff-only path. Remove with the compatibility layer (see
+ * docs/RELEASE_READINESS_REMEDIATION_REPORT.md).
+ */
+export async function legacySelfStudent(
+  ctx: { auth: { getUserIdentity: () => Promise<any> }; db: any },
+  targetUserId: string | undefined
+): Promise<{ user: AuthenticatedUser; keys: string[] } | null> {
+  const self = await getSelfStudent(ctx);
+  if (!self) return null;
+  if (targetUserId && !self.keys.includes(targetUserId)) {
+    throw new Error("Unauthorized: Students can access ONLY their own clinical data.");
+  }
+  return self;
 }

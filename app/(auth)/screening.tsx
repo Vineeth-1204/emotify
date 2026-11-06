@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from "react";
-import { View, StyleSheet, ActivityIndicator, Text, ScrollView, TouchableOpacity } from "react-native";
+import React, { useState, useEffect, useRef } from "react";
+import { View, StyleSheet, ActivityIndicator, Text, ScrollView, TouchableOpacity, Linking } from "react-native";
 import { useRouter } from "expo-router";
 import { useAppAuth } from "@/utils/auth";
-import { useMutation, useQuery } from "convex/react";
+import { useMutation, useQuery, useConvexConnectionState } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Colors } from "@/constants/Colors";
 import { Theme } from "@/constants/Theme";
@@ -10,7 +10,13 @@ import { Questionnaire } from "@/components/screening/Questionnaire";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import * as SecureStore from "expo-secure-store";
+import * as Crypto from "expo-crypto";
+import { getOrCreateSubmissionKey, clearSubmissionKey } from "@/common/screeningSubmissionKey";
 import { useLanguage } from "@/context/LanguageContext";
+import { useAvatar } from "@/context/AvatarContext";
+import { getEmotyPresence } from "@/common/emotyPresence";
+import { EmotyPresence } from "@/components/avatar/EmotyPresence";
+import { CRISIS_RESOURCES, HELPLINE_DIAL_URL } from "@/common/crisisResources";
 import {
   PHQ9_QUESTIONS,
   PHQ9_OPTIONS,
@@ -18,6 +24,9 @@ import {
   GAD7_QUESTIONS,
   GAD7_OPTIONS,
   GAD7_INSTRUCTION,
+  PSS10_QUESTIONS,
+  PSS10_OPTIONS,
+  PSS10_INSTRUCTION,
   PQ16_QUESTIONS,
   PQ16_OPTIONS,
   PQ16_INSTRUCTION,
@@ -25,6 +34,7 @@ import {
 import {
   scorePHQ9,
   scoreGAD7,
+  scorePSS10,
   scorePQ16,
 } from "@/utils/scoring";
 
@@ -48,6 +58,15 @@ const INSTRUMENTS = [
     scoring: scoreGAD7,
   },
   {
+    id: "pss10",
+    title: "Stress & Coping Check",
+    desc: "Reflect on feelings and thoughts regarding stressful events in the last month.",
+    questions: PSS10_QUESTIONS,
+    options: PSS10_OPTIONS,
+    instruction: PSS10_INSTRUCTION,
+    scoring: scorePSS10,
+  },
+  {
     id: "pq16",
     title: "Perception & Thoughts Check",
     desc: "Reflect on sensory experiences, unusual thoughts, and perceptions.",
@@ -66,20 +85,24 @@ export default function ScreeningScreen() {
   const router = useRouter();
   const { user } = useAppAuth();
   const { t } = useLanguage();
+  const { isSafetyActive } = useAvatar();
   const [selectedInstrument, setSelectedInstrument] = useState<string | null>(null);
   const [screeningStartTime] = useState<number>(() => Date.now());
   const [answers, setAnswers] = useState<ScreeningState>({
     phq9: new Array(PHQ9_QUESTIONS.length).fill(null),
     gad7: new Array(GAD7_QUESTIONS.length).fill(null),
+    pss10: new Array(PSS10_QUESTIONS.length).fill(null),
     pq16: new Array(PQ16_QUESTIONS.length).fill(null),
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState(false);
+  // Synchronous guard: a second tap before React re-renders must not submit twice.
+  const submittingRef = useRef(false);
+  const connection = useConvexConnectionState();
 
-  const latestTriage = useQuery(api.triage.getLatest, user?.id ? {
-    userId: user.id,
-  } : "skip");
+  const safetyStatus = useQuery(api.triage.getMySafetyStatus, user?.id ? {} : "skip");
 
-  const isForceRetest = latestTriage?.level === "force_retest";
+  const isForceRetest = !!safetyStatus?.forceRetest;
 
   // Load persisted progress on mount/user change
   useEffect(() => {
@@ -113,6 +136,8 @@ export default function ScreeningScreen() {
 
   async function persistAnswers(nextAnswers: ScreeningState) {
     if (!user?.id) return;
+    // Different answers are a different submission: drop any pending idempotency key.
+    await clearSubmissionKey(SecureStore, user.id);
     try {
       const key = `${SCREENING_STORE_KEY}_${user.id}`;
       await SecureStore.setItemAsync(key, JSON.stringify(nextAnswers));
@@ -124,7 +149,9 @@ export default function ScreeningScreen() {
   const submitScreeningAttempt = useMutation(api.screening.submitScreeningAttempt);
 
   async function finishScreening() {
-    if (!user) return;
+    if (!user || submittingRef.current) return;
+    submittingRef.current = true;
+    setSubmitError(false);
     setIsSubmitting(true);
 
     try {
@@ -144,28 +171,44 @@ export default function ScreeningScreen() {
         pq16Responses[`pq16_q${idx + 1}`] = val;
       });
 
-      // 2. Authoritative server-side scoring, triage, alerts, follow-up and completion (one transaction)
+      const pss10Responses: Record<string, number> = {};
+      (answers.pss10 as number[]).forEach((val, idx) => {
+        pss10Responses[`pss10_q${idx + 1}`] = val;
+      });
+
+      // 2. Idempotency key for this submission: reused on every retry (including after an app
+      //    restart), so a submission the server already committed is never recorded twice.
+      const submissionKey = await getOrCreateSubmissionKey(SecureStore, user.id, () => Crypto.randomUUID());
+
+      // 3. Authoritative server-side scoring, triage, alerts, follow-up and completion (one transaction)
       await submitScreeningAttempt({
         userId: user.id,
         startedAt: screeningStartTime,
+        submissionKey,
         responses: {
           phq9: phq9Responses,
           gad7: gad7Responses,
           pq16: pq16Responses,
+          pss10: pss10Responses,
         },
       });
 
-      // 3. Delete cached draft progress
+      // 4. Confirmed: delete the draft and its key. The next check-in is a new submission.
       try {
         const key = `${SCREENING_STORE_KEY}_${user.id}`;
         await SecureStore.deleteItemAsync(key);
       } catch (e) {}
+      await clearSubmissionKey(SecureStore, user.id);
 
-      // 4. Navigate to main tabs
-      router.replace("/(auth)/(tabs)");
+      // 5. Show the calm results summary. Alerts and notifications were already created by the
+      //    mutation above; the results screen only reads the student's presentation outcome.
+      router.replace("/(auth)/screening-result" as any);
     } catch (error) {
       console.error("Failed to submit screening attempt", error);
+      // Answers stay in state and in the saved draft, so the student can simply try again.
+      submittingRef.current = false;
       setIsSubmitting(false);
+      setSubmitError(true);
     }
   }
 
@@ -184,8 +227,31 @@ export default function ScreeningScreen() {
   if (isSubmitting) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={Colors.primary} />
-        <Text style={styles.loadingText}>Analyzing your responses...</Text>
+        <EmotyPresence
+          presence={getEmotyPresence({ scene: "screening_submitting", safetyActive: isSafetyActive })}
+          layout="stacked"
+          size="lg"
+        />
+        <ActivityIndicator size="small" color={Colors.primary} style={{ marginTop: 16 }} />
+        {!connection.isWebSocketConnected && (connection.hasEverConnected || connection.connectionRetries > 0) && (
+          <View style={{ alignItems: "center", paddingHorizontal: 24, marginTop: 12 }}>
+            <Text style={styles.waitingText} accessibilityLiveRegion="polite">{t("screening.submit.waiting")}</Text>
+            <TouchableOpacity
+              onPress={() => Linking.openURL(HELPLINE_DIAL_URL)}
+              accessibilityRole="link"
+              style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 16 }}
+            >
+              <Ionicons name="call-outline" size={14} color={Colors.textSecondary} />
+              <Text style={{ fontFamily: Theme.fontFamily.medium, fontSize: 13, color: Colors.textSecondary, textAlign: "center" }}>
+                {t("screening.result.safetyFooter", {
+                  helplineName: CRISIS_RESOURCES.helplineName,
+                  helplineNumber: CRISIS_RESOURCES.helplineNumber,
+                  emergencyNumber: CRISIS_RESOURCES.emergencyNumber,
+                })}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
     );
   }
@@ -247,6 +313,16 @@ export default function ScreeningScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        <EmotyPresence
+          presence={getEmotyPresence({
+            scene: "screening_intro",
+            answered: INSTRUMENTS.reduce((sum, inst) => sum + getProgress(inst.id, inst.questions.length).answered, 0),
+            total: INSTRUMENTS.reduce((sum, inst) => sum + inst.questions.length, 0),
+            forcedRetest: isForceRetest,
+            safetyActive: isSafetyActive,
+          })}
+          style={{ marginBottom: 16 }}
+        />
         <View style={styles.cardsContainer}>
           {INSTRUMENTS.map((inst) => {
             const { answered, percent } = getProgress(inst.id, inst.questions.length);
@@ -314,12 +390,32 @@ export default function ScreeningScreen() {
       </ScrollView>
 
       <View style={styles.footer}>
+        {submitError && (
+          <View style={styles.submitError} accessibilityLiveRegion="polite" accessibilityRole="alert">
+            <Ionicons name="information-circle-outline" size={20} color={Colors.textSecondary} />
+            <Text style={styles.submitErrorText}>{t("screening.submit.error")}</Text>
+            <TouchableOpacity
+              onPress={() => Linking.openURL(HELPLINE_DIAL_URL)}
+              accessibilityRole="link"
+              style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 6 }}
+            >
+              <Ionicons name="call-outline" size={14} color={Colors.textSecondary} />
+              <Text style={{ fontFamily: Theme.fontFamily.medium, fontSize: 13, color: Colors.textSecondary }}>
+                {t("screening.result.safetyFooter", {
+                  helplineName: CRISIS_RESOURCES.helplineName,
+                  helplineNumber: CRISIS_RESOURCES.helplineNumber,
+                  emergencyNumber: CRISIS_RESOURCES.emergencyNumber,
+                })}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
         <TouchableOpacity
           style={[styles.submitButton, !allCompleted && styles.submitButtonDisabled]}
           onPress={() => finishScreening()}
           disabled={!allCompleted}
         >
-          <Text style={styles.submitButtonText}>{t("common.submit")}</Text>
+          <Text style={styles.submitButtonText}>{submitError ? t("screening.submit.retry") : t("common.submit")}</Text>
           <Ionicons name="arrow-forward" size={20} color={Colors.white} />
         </TouchableOpacity>
       </View>
@@ -337,12 +433,6 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.background,
     justifyContent: "center",
     alignItems: "center",
-  },
-  loadingText: {
-    fontFamily: Theme.fontFamily.medium,
-    fontSize: Theme.fontSize.md,
-    color: Colors.textSecondary,
-    marginTop: Theme.spacing.md,
   },
   header: {
     paddingHorizontal: Theme.spacing.xl,
@@ -485,6 +575,28 @@ const styles = StyleSheet.create({
     fontFamily: Theme.fontFamily.bold,
     fontSize: 16,
     color: Colors.white,
+  },
+  waitingText: {
+    marginTop: 16,
+    marginHorizontal: Theme.spacing.xl,
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#64748B',
+    textAlign: 'center',
+  },
+  submitError: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    marginBottom: 12,
+  },
+  submitErrorText: {
+    flex: 1,
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#475569',
   },
   forcedBanner: {
     backgroundColor: '#FEF2F2',

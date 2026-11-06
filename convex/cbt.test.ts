@@ -190,8 +190,10 @@ describe("CBT Therapy Module State Machine", () => {
     expect(sessionState!.riskFlags).toContain("suicide");
 
     // Verify counselor alert was created
-    const alerts = await t.query(api.dashboard.getAlerts);
-    expect(alerts.some(a => a.userId === uid_patient_distressed_xyz && a.type === "suicideRisk")).toBe(true);
+    // (stored alert; the dashboard alert list is staff-only, so the student sees none of it)
+    expect(await t.query(api.dashboard.getAlerts)).toEqual([]);
+    const alerts: any[] = await t.run(async (ctx: any) => ctx.db.query("alerts").collect());
+    expect(alerts.some((a: any) => a.userId === uid_patient_distressed_xyz && a.type === "suicideRisk")).toBe(true);
 
     // Verify crisis goal overrides are recommended instead of normal behavioral activation
     const safetyGoals = await t.action(api.cbt.recommendGoalAction, { sessionId });

@@ -22,6 +22,14 @@ export default function CaseloadAssignment({ studentId }: { studentId: Id<"users
 
   const handleChange = async (value: string) => {
     if (value === currentId) return;
+    // Reassigning or removing takes access away from the current counsellor: confirm first.
+    if (currentId) {
+      const next = (counsellors || []).find((c) => String(c._id) === value);
+      const message = value
+        ? `Reassign this student from ${assignment?.counsellorName} to ${next?.full_name ?? "the selected counsellor"}? ${assignment?.counsellorName} will lose access to their records. No history is deleted.`
+        : `Remove ${assignment?.counsellorName} as this student's counsellor? No counsellor will be able to open their records until they are assigned again.`;
+      if (!window.confirm(message)) return;
+    }
     setSaving(true);
     setError("");
     try {
@@ -50,6 +58,9 @@ export default function CaseloadAssignment({ studentId }: { studentId: Id<"users
           style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid var(--input-border)", background: "#ffffff", color: "var(--text-primary)", fontSize: "0.85rem" }}
         >
           <option value="">Unassigned (all counsellors are alerted)</option>
+          {assignment && !assignment.counsellorActive && (
+            <option value={currentId} disabled>{assignment.counsellorName} (inactive)</option>
+          )}
           {(counsellors || []).map((c) => (
             <option key={c._id} value={String(c._id)}>
               {c.full_name} · {c.caseloadSize} student{c.caseloadSize === 1 ? "" : "s"}
@@ -60,6 +71,9 @@ export default function CaseloadAssignment({ studentId }: { studentId: Id<"users
         <span style={{ color: "var(--text-primary)" }}>
           {assignment === undefined ? "…" : assignment ? assignment.counsellorName : "Unassigned"}
         </span>
+      )}
+      {assignment && !assignment.counsellorActive && (
+        <span className="badge badge-orange">{isAdmin ? "Counsellor account inactive · choose a new counsellor" : "Counsellor account inactive"}</span>
       )}
       {isAdmin && counsellors && counsellors.length === 0 && (
         <span>No counsellor accounts yet. Create one from Students → Add User.</span>

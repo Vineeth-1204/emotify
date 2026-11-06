@@ -3,6 +3,7 @@ import { convexTest } from "convex-test";
 import { expect, test, describe } from "vitest";
 import { api, internal } from "./_generated/api";
 import schema from "./schema";
+import { readStoredEmotyPreferences } from "../common/companionName";
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -300,7 +301,7 @@ describe("P14 Step 2: P0 Critical Vulnerability Remediation Suite", () => {
       expect(studentDoc?.emergencyContactPhone).toBe("9811223344");
     });
 
-    test("SEC-P0-13: Consent and Mitra preferences persist correctly for authenticated owner", async () => {
+    test("SEC-P0-13: Consent and Emoty preferences persist correctly for authenticated owner", async () => {
       const { authedA, studentAId, t } = await setupSecurityEnvironment();
       const ts = 1710000000000;
 
@@ -312,7 +313,7 @@ describe("P14 Step 2: P0 Critical Vulnerability Remediation Suite", () => {
         department: "CS",
         consentVersion: "2.1",
         consentTimestamp: ts,
-        mitraPreferences: {
+        emotyPreferences: {
           name: "Sathi",
           avatarGender: "male",
         },
@@ -323,8 +324,8 @@ describe("P14 Step 2: P0 Critical Vulnerability Remediation Suite", () => {
       });
       expect(studentDoc?.consentVersion).toBe("2.1");
       expect(studentDoc?.consentTimestamp).toBe(ts);
-      expect(studentDoc?.mitraPreferences?.name).toBe("Sathi");
-      expect(studentDoc?.mitraPreferences?.avatarGender).toBe("male");
+      expect(readStoredEmotyPreferences(studentDoc)?.name).toBe("Sathi");
+      expect(readStoredEmotyPreferences(studentDoc)?.avatarGender).toBe("male");
     });
 
     test("SEC-P0-13b: Staff (Admin) can complete onboarding for student with args.userId", async () => {

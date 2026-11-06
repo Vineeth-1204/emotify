@@ -1,18 +1,93 @@
 import { v } from "convex/values";
+import { internalMutation } from "./_generated/server";
 import { mutation, query } from "./functions";
-import type { Id } from "./_generated/dataModel";
+import { internal } from "./_generated/api";
+import type { Doc, Id } from "./_generated/dataModel";
 import { checkRateLimit } from "./rateLimiter";
-import { assertCanAccessStudent } from "./authz";
+import { assertCanAccessStudent, requireCounselorOrAdmin, getSelfStudent, getAuthenticatedUser, legacySelfStudent } from "./authz";
 import { insertSafetyAlert } from "./alerts";
 import { followUpIntervalMs } from "./followUps";
 import {
   scorePHQ9Responses,
   scoreGAD7Responses,
   scorePQ16Responses,
-  scoreWSASResponses,
-  scoreReQoL10Responses,
+  scorePSS10Responses,
   evaluateClinicalTriage,
+  type InstrumentValidationResult,
 } from "./clinicalScoring";
+import { outcomeForTriageLevel } from "../common/screeningOutcome";
+
+/**
+ * WSAS and ReQoL-10 are not part of Emotify. Earlier versions wrote placeholder
+ * entries for them into screening attempts; strip those from anything returned.
+ */
+function withoutRetiredInstruments<T extends Doc<"screeningAttempts">>(attempt: T): T {
+  const { wsas: _v1, reqol10: _v2, ...instrumentVersions } = attempt.instrumentVersions;
+  const { wsas: _r1, reqol10: _r2, ...responses } = attempt.responses;
+  const { wsas: _s1, reqol10: _s2, ...results } = attempt.results;
+  return { ...attempt, instrumentVersions, responses, results };
+}
+
+function withoutRetiredScreeningTotals<T extends Doc<"screenings">>(screening: T): T {
+  const { wsas_total: _w, reqol10_total: _r, ...rest } = screening;
+  return rest as T;
+}
+
+/**
+ * One-off maintenance: delete stored WSAS / ReQoL-10 placeholder data written by
+ * earlier versions. Run with `npx convex run screening:purgeRetiredInstrumentData '{}'`;
+ * it reschedules itself until both tables are clean. Afterwards the legacy schema
+ * fields can be removed.
+ */
+export const purgeRetiredInstrumentData = internalMutation({
+  args: {
+    table: v.optional(v.union(v.literal("screeningAttempts"), v.literal("screenings"))),
+    cursor: v.optional(v.union(v.string(), v.null())),
+  },
+  handler: async (ctx, args) => {
+    const table = args.table ?? "screeningAttempts";
+    let cleaned = 0;
+    let isDone: boolean;
+    let continueCursor: string;
+
+    if (table === "screeningAttempts") {
+      const page = await ctx.db.query("screeningAttempts").paginate({ cursor: args.cursor ?? null, numItems: 200 });
+      for (const attempt of page.page) {
+        const hasRetired =
+          attempt.instrumentVersions.wsas !== undefined ||
+          attempt.instrumentVersions.reqol10 !== undefined ||
+          attempt.responses.wsas !== undefined ||
+          attempt.responses.reqol10 !== undefined ||
+          attempt.results.wsas !== undefined ||
+          attempt.results.reqol10 !== undefined;
+        if (!hasRetired) continue;
+        const clean = withoutRetiredInstruments(attempt);
+        await ctx.db.patch(attempt._id, {
+          instrumentVersions: clean.instrumentVersions,
+          responses: clean.responses,
+          results: clean.results,
+        });
+        cleaned++;
+      }
+      ({ isDone, continueCursor } = page);
+    } else {
+      const page = await ctx.db.query("screenings").paginate({ cursor: args.cursor ?? null, numItems: 200 });
+      for (const screening of page.page) {
+        if (screening.wsas_total === undefined && screening.reqol10_total === undefined) continue;
+        await ctx.db.patch(screening._id, { wsas_total: undefined, reqol10_total: undefined });
+        cleaned++;
+      }
+      ({ isDone, continueCursor } = page);
+    }
+
+    if (!isDone) {
+      await ctx.scheduler.runAfter(0, internal.screening.purgeRetiredInstrumentData, { table, cursor: continueCursor });
+    } else if (table === "screeningAttempts") {
+      await ctx.scheduler.runAfter(0, internal.screening.purgeRetiredInstrumentData, { table: "screenings", cursor: null });
+    }
+    return { table, cleaned, done: isDone && table === "screenings" };
+  },
+});
 
 /**
  * Authoritative Server-Side Screening Attempt Submission.
@@ -28,10 +103,14 @@ export const submitScreeningAttempt = mutation({
     responses: v.object({
       phq9: v.record(v.string(), v.number()),
       gad7: v.record(v.string(), v.number()),
-      pq16: v.record(v.string(), v.number()),
-      wsas: v.optional(v.record(v.string(), v.number())),
-      reqol10: v.optional(v.record(v.string(), v.number())),
+      pq16: v.optional(v.record(v.string(), v.number())),
+      pss10: v.optional(v.record(v.string(), v.number())),
     }),
+    /**
+     * Idempotency key: a random id the client creates once per logical submission and reuses
+     * for every retry of it. Optional only so older app builds keep working (without dedupe).
+     */
+    submissionKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
@@ -46,6 +125,37 @@ export const submitScreeningAttempt = mutation({
       await assertCanAccessStudent(ctx, args.userId);
     }
     const userId = (args.userId && args.userId !== authSubject) ? args.userId : authSubject;
+    const caller = await getAuthenticatedUser(ctx);
+    const isStaffCaller = !!caller && (caller.role === "admin" || caller.role === "counsellor");
+
+    // Idempotency: the same key for the same student returns the original result and writes
+    // nothing. The lookup and the later insert of the key row run in this one transaction, so
+    // concurrent duplicates conflict and Convex re-runs the loser, which then sees the row.
+    let fingerprint: string | undefined;
+    if (args.submissionKey !== undefined) {
+      if (!SUBMISSION_KEY_RE.test(args.submissionKey)) {
+        throw new Error("Invalid submission key.");
+      }
+      const cleanResponses: Record<string, Record<string, number>> = {
+        phq9: args.responses.phq9,
+        gad7: args.responses.gad7,
+        ...(args.responses.pq16 ? { pq16: args.responses.pq16 } : {}),
+        ...(args.responses.pss10 ? { pss10: args.responses.pss10 } : {}),
+      };
+      fingerprint = await responsesFingerprint(cleanResponses);
+      const existing = await ctx.db
+        .query("screeningSubmissions")
+        .withIndex("by_user_and_key", (q) => q.eq("userId", userId).eq("key", args.submissionKey!))
+        .first();
+      if (existing) {
+        if (existing.fingerprint !== fingerprint) {
+          throw new Error("This submission was already recorded with different answers. Start a new check-in instead.");
+        }
+        const attempt = await ctx.db.get(existing.attemptId);
+        if (!attempt) throw new Error("The original submission is no longer available.");
+        return submissionResponse(isStaffCaller, attempt, existing.followUpId, true);
+      }
+    }
 
     await checkRateLimit(ctx, userId, "journal_write", 5, 60000);
 
@@ -60,13 +170,33 @@ export const submitScreeningAttempt = mutation({
       throw new Error(gad7Result.error || "GAD-7 screening must be administered with all 7 items answered.");
     }
 
-    const pq16Result = scorePQ16Responses(args.responses.pq16);
-    if (!pq16Result.administered || pq16Result.error) {
-      throw new Error(pq16Result.error || "PQ-16 screening must be administered with all 16 items answered.");
+    let pq16Result: InstrumentValidationResult;
+    if (args.responses.pq16 !== undefined) {
+      pq16Result = scorePQ16Responses(args.responses.pq16);
+      if (!pq16Result.administered || pq16Result.error) {
+        throw new Error(pq16Result.error || "PQ-16 screening must be administered with all 16 items answered.");
+      }
+    } else {
+      pq16Result = {
+        administered: false,
+        score: 0,
+        maxScore: 16,
+        severity: "Not Administered",
+        level: "minimal",
+      };
     }
 
-    const wsasResult = scoreWSASResponses(args.responses.wsas);
-    const reqol10Result = scoreReQoL10Responses(args.responses.reqol10);
+    let pss10Result: InstrumentValidationResult | undefined;
+    if (args.responses.pss10 !== undefined) {
+      pss10Result = scorePSS10Responses(args.responses.pss10);
+      if (!pss10Result.administered || pss10Result.error) {
+        throw new Error(pss10Result.error || "PSS-10 screening must be administered with all 10 items answered.");
+      }
+    }
+
+    if (args.responses.pq16 === undefined && args.responses.pss10 === undefined) {
+      throw new Error("Screening requires either PSS-10 or PQ-16 to be administered.");
+    }
 
     // 2. Authoritative Clinical Triage Evaluation
     const triage = evaluateClinicalTriage({
@@ -75,6 +205,8 @@ export const submitScreeningAttempt = mutation({
       gad7Score: gad7Result.score,
       pq16Score: pq16Result.score,
       pq16Administered: pq16Result.administered,
+      pss10Score: pss10Result?.score ?? 0,
+      pss10Administered: pss10Result?.administered ?? false,
     });
 
     const now = Date.now();
@@ -173,16 +305,14 @@ export const submitScreeningAttempt = mutation({
       instrumentVersions: {
         phq9: "PHQ-9.v1",
         gad7: "GAD-7.v1",
-        pq16: "PQ-16.v1",
-        wsas: "WSAS.v1",
-        reqol10: "ReQoL-10.v1",
+        pq16: pq16Result.administered ? "PQ-16.v1" : "Not Administered",
+        ...(pss10Result?.administered ? { pss10: "PSS-10.v1" } : {}),
       },
       responses: {
         phq9: args.responses.phq9,
         gad7: args.responses.gad7,
-        pq16: args.responses.pq16,
-        wsas: args.responses.wsas,
-        reqol10: args.responses.reqol10,
+        ...(args.responses.pq16 ? { pq16: args.responses.pq16 } : {}),
+        ...(args.responses.pss10 ? { pss10: args.responses.pss10 } : {}),
       },
       results: {
         phq9: {
@@ -202,26 +332,23 @@ export const submitScreeningAttempt = mutation({
           level: gad7Result.level,
         },
         pq16: {
-          administered: true,
+          administered: pq16Result.administered,
           score: pq16Result.score,
           maxScore: pq16Result.maxScore,
           severity: pq16Result.severity,
           level: pq16Result.level,
         },
-        wsas: {
-          administered: wsasResult.administered,
-          score: wsasResult.score,
-          maxScore: wsasResult.maxScore,
-          severity: wsasResult.severity,
-          level: wsasResult.level,
-        },
-        reqol10: {
-          administered: reqol10Result.administered,
-          score: reqol10Result.score,
-          maxScore: reqol10Result.maxScore,
-          severity: reqol10Result.severity,
-          level: reqol10Result.level,
-        },
+        ...(pss10Result?.administered
+          ? {
+              pss10: {
+                administered: true,
+                score: pss10Result.score,
+                maxScore: pss10Result.maxScore,
+                severity: pss10Result.severity,
+                level: pss10Result.level,
+              },
+            }
+          : {}),
       },
       triageLevel: triage.level,
       suicideFlag: triage.suicideFlag,
@@ -258,6 +385,19 @@ export const submitScreeningAttempt = mutation({
       createdAt: now,
     });
 
+    // 9b. Record the idempotency key in the same transaction as the clinical records.
+    if (args.submissionKey !== undefined && fingerprint) {
+      await ctx.db.insert("screeningSubmissions", {
+        userId,
+        key: args.submissionKey,
+        fingerprint,
+        attemptId,
+        triageId,
+        followUpId,
+        createdAt: now,
+      });
+    }
+
     // 10. Mark the student's screening as complete in the same transaction.
     const screenedUserId = ctx.db.normalizeId("users", userId);
     if (screenedUserId) {
@@ -268,30 +408,58 @@ export const submitScreeningAttempt = mutation({
     // All readers (dashboard.ts, PatientDetail.tsx via getAll, wellness.ts, triage.ts, insights.ts)
     // now query authoritative screeningAttempts. Historical screenings records remain intact for fallback.
 
-    return {
-      attemptId,
-      attemptType,
-      screeningId: undefined,
-      triageId,
-      followUpId,
-      triageLevel: triage.level,
-      suicideFlag: triage.suicideFlag,
-      psychosisFlag: triage.psychosisFlag,
-      results: {
-        phq9: phq9Result,
-        gad7: gad7Result,
-        pq16: pq16Result,
-        wsas: wsasResult,
-        reqol10: reqol10Result,
-      },
-    };
+    const attempt = (await ctx.db.get(attemptId))!;
+    return submissionResponse(isStaffCaller, attempt, followUpId, false);
   },
 });
+
+/** Submission keys: client-generated random ids (e.g. UUIDs). */
+const SUBMISSION_KEY_RE = /^[A-Za-z0-9_-]{16,128}$/;
+
+/** SHA-256 of the responses in canonical (sorted-key) form, so equal answers hash equally. */
+async function responsesFingerprint(responses: Record<string, Record<string, number>>): Promise<string> {
+  const canonical = JSON.stringify(
+    Object.keys(responses)
+      .sort()
+      .map((instrument) => [instrument, Object.keys(responses[instrument]).sort().map((item) => [item, responses[instrument][item]])])
+  );
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical));
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * What submitScreeningAttempt returns.
+ *  - Students get only what the app uses: the calm presentation outcome and whether this was a
+ *    replay of an already-recorded submission. No ids, scores, triage level or flags.
+ *  - Staff submitting for a student keep the full response (unchanged contract).
+ */
+function submissionResponse(isStaffCaller: boolean, attempt: Doc<"screeningAttempts">, followUpId: Id<"followUps">, replayed: boolean) {
+  const outcome = outcomeForTriageLevel(attempt.triageLevel) ?? "support";
+  if (!isStaffCaller) {
+    return { status: "submitted" as const, outcome, replayed };
+  }
+  return {
+    status: "submitted" as const,
+    outcome,
+    replayed,
+    attemptId: attempt._id,
+    attemptType: attempt.attemptType,
+    screeningId: undefined,
+    triageId: attempt.triageId,
+    followUpId,
+    triageLevel: attempt.triageLevel,
+    suicideFlag: attempt.suicideFlag,
+    psychosisFlag: attempt.psychosisFlag,
+    results: attempt.results,
+  };
+}
 
 /** Get latest completed screening attempt with full item responses & validated scores */
 export const getLatestAttempt = query({
   args: { userId: v.optional(v.string()) },
   handler: async (ctx, args) => {
+    // Staff-only clinical read: students use the minimal self-service endpoints instead.
+    await requireCounselorOrAdmin(ctx);
     const identity = await ctx.auth.getUserIdentity();
     const targetUserId = args.userId || identity?.subject;
     if (!targetUserId) return null;
@@ -304,7 +472,7 @@ export const getLatestAttempt = query({
       .filter((q) => q.eq(q.field("status"), "completed"))
       .first();
 
-    return attempt ?? null;
+    return attempt ? withoutRetiredInstruments(attempt) : null;
   },
 });
 
@@ -312,6 +480,8 @@ export const getLatestAttempt = query({
 export const getLatestRawAttempt = query({
   args: { userId: v.optional(v.string()) },
   handler: async (ctx, args) => {
+    // Staff-only clinical read: students use the minimal self-service endpoints instead.
+    await requireCounselorOrAdmin(ctx);
     const identity = await ctx.auth.getUserIdentity();
     const targetUserId = args.userId || identity?.subject;
     if (!targetUserId) return null;
@@ -323,7 +493,7 @@ export const getLatestRawAttempt = query({
       .order("desc")
       .take(1);
 
-    return attempts[0] ?? null;
+    return attempts[0] ? withoutRetiredInstruments(attempts[0]) : null;
   },
 });
 
@@ -338,6 +508,8 @@ export const getScreeningHistory = query({
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    // Staff-only clinical read: students use the minimal self-service endpoints instead.
+    await requireCounselorOrAdmin(ctx);
     const identity = await ctx.auth.getUserIdentity();
     const targetUserId = args.userId || identity?.subject;
     if (!targetUserId) return [];
@@ -345,11 +517,12 @@ export const getScreeningHistory = query({
 
     const effectiveLimit = Math.min(Math.max(args.limit ?? 20, 1), 20);
 
-    return await ctx.db
+    const attempts = await ctx.db
       .query("screeningAttempts")
       .withIndex("by_userId", (q) => q.eq("userId", targetUserId))
       .order("desc")
       .take(effectiveLimit);
+    return attempts.map(withoutRetiredInstruments);
   },
 });
 
@@ -357,16 +530,19 @@ export const getScreeningHistory = query({
 export const getAllAttempts = query({
   args: { userId: v.optional(v.string()) },
   handler: async (ctx, args) => {
+    // Staff-only clinical read: students use the minimal self-service endpoints instead.
+    await requireCounselorOrAdmin(ctx);
     const identity = await ctx.auth.getUserIdentity();
     const targetUserId = args.userId || identity?.subject;
     if (!targetUserId) return [];
     await assertCanAccessStudent(ctx, targetUserId);
 
-    return await ctx.db
+    const attempts = await ctx.db
       .query("screeningAttempts")
       .withIndex("by_userId", (q) => q.eq("userId", targetUserId))
       .order("desc")
       .take(20);
+    return attempts.map(withoutRetiredInstruments);
   },
 });
 
@@ -375,10 +551,12 @@ export const getAllAttempts = query({
 export const getAttemptById = query({
   args: { attemptId: v.id("screeningAttempts") },
   handler: async (ctx, args) => {
+    // Staff-only clinical read: students use the minimal self-service endpoints instead.
+    await requireCounselorOrAdmin(ctx);
     const attempt = await ctx.db.get(args.attemptId);
     if (!attempt) return null;
     await assertCanAccessStudent(ctx, attempt.userId);
-    return attempt;
+    return withoutRetiredInstruments(attempt);
   },
 });
 
@@ -386,6 +564,18 @@ export const getAttemptById = query({
 export const getLatest = query({
   args: { userId: v.optional(v.string()) },
   handler: async (ctx, args) => {
+    // Legacy-client compatibility: older app builds read their own latest totals here for the
+    // Home wellbeing cards. They get only those two totals (already shown on Home and in the
+    // student's export); no ids, flags or item answers. New builds use getMyWellbeingIndicators.
+    const legacy = await legacySelfStudent(ctx, args.userId);
+    if (legacy) {
+      console.log("[legacy-client] screening.getLatest");
+      const totals = latestTotals(await ownScreeningHistory(ctx, legacy.keys));
+      return totals ? { phq9_total: totals.phq9, gad7_total: totals.gad7 } : null;
+    }
+
+    // Staff-only clinical read: students use the minimal self-service endpoints instead.
+    await requireCounselorOrAdmin(ctx);
     const identity = await ctx.auth.getUserIdentity();
     let targetUserId = args.userId || identity?.subject;
     if (!targetUserId) return null;
@@ -421,8 +611,6 @@ export const getLatest = query({
           phq9_total: attempt.results?.phq9?.score ?? 0,
           gad7_total: attempt.results?.gad7?.score ?? 0,
           pq16_total: attempt.results?.pq16?.score ?? 0,
-          wsas_total: attempt.results?.wsas?.administered ? attempt.results.wsas.score : undefined,
-          reqol10_total: attempt.results?.reqol10?.administered ? attempt.results.reqol10.score : undefined,
           phq9_item9_flag: attempt.results?.phq9?.item9Flag ?? false,
           phq9_item9_score: attempt.results?.phq9?.item9Score ?? 0,
           createdAt: attempt.completedAt || attempt.startedAt,
@@ -440,7 +628,7 @@ export const getLatest = query({
         .order("desc")
         .take(1);
 
-      if (screenings.length > 0) return screenings[0];
+      if (screenings.length > 0) return withoutRetiredScreeningTotals(screenings[0]);
     }
 
     return null;
@@ -451,6 +639,22 @@ export const getLatest = query({
 export const getAll = query({
   args: { userId: v.optional(v.string()) },
   handler: async (ctx, args) => {
+    // Legacy-client compatibility: older app builds export the student's own history from here
+    // (Profile > Export). They get exactly the exportMyScreenings rows under the old field names.
+    const legacy = await legacySelfStudent(ctx, args.userId);
+    if (legacy) {
+      console.log("[legacy-client] screening.getAll");
+      return ownExportRows(await ownScreeningHistory(ctx, legacy.keys)).map((r) => ({
+        phq9_total: r.phq9Total,
+        gad7_total: r.gad7Total,
+        pq16_total: r.pq16Total,
+        phq9_item9_score: r.phq9Item9,
+        createdAt: r.completedAt,
+      }));
+    }
+
+    // Staff-only clinical read: students use the minimal self-service endpoints instead.
+    await requireCounselorOrAdmin(ctx);
     const identity = await ctx.auth.getUserIdentity();
     let targetUserId = args.userId || identity?.subject;
     if (!targetUserId) return [];
@@ -497,8 +701,6 @@ export const getAll = query({
           phq9_total: a.results?.phq9?.score ?? 0,
           gad7_total: a.results?.gad7?.score ?? 0,
           pq16_total: a.results?.pq16?.score ?? 0,
-          wsas_total: a.results?.wsas?.administered ? a.results.wsas.score : undefined,
-          reqol10_total: a.results?.reqol10?.administered ? a.results.reqol10.score : undefined,
           phq9_item9_flag: a.results?.phq9?.item9Flag ?? false,
           phq9_item9_score: a.results?.phq9?.item9Score ?? 0,
           createdAt: a.completedAt || a.startedAt,
@@ -526,7 +728,7 @@ export const getAll = query({
       return true;
     });
 
-    return deduplicated.sort((a, b) => b.createdAt - a.createdAt);
+    return deduplicated.sort((a, b) => b.createdAt - a.createdAt).map(withoutRetiredScreeningTotals);
   },
 });
 
@@ -534,6 +736,8 @@ export const getAll = query({
 export const getAttemptWithTriage = query({
   args: { attemptId: v.id("screeningAttempts") },
   handler: async (ctx, args) => {
+    // Staff-only clinical read: students use the minimal self-service endpoints instead.
+    await requireCounselorOrAdmin(ctx);
     const attempt = await ctx.db.get(args.attemptId);
     if (!attempt) return null;
 
@@ -550,7 +754,7 @@ export const getAttemptWithTriage = query({
         .first();
     }
 
-    return { attempt, triage };
+    return { attempt: withoutRetiredInstruments(attempt), triage };
   },
 });
 
@@ -558,6 +762,8 @@ export const getAttemptWithTriage = query({
 export const getAttemptAlerts = query({
   args: { attemptId: v.id("screeningAttempts") },
   handler: async (ctx, args) => {
+    // Staff-only clinical read: students use the minimal self-service endpoints instead.
+    await requireCounselorOrAdmin(ctx);
     const attempt = await ctx.db.get(args.attemptId);
     if (!attempt) return [];
 
@@ -569,3 +775,133 @@ export const getAttemptAlerts = query({
       .collect();
   },
 });
+
+/**
+ * Student: presentation outcome of my most recent completed screening, for the results
+ * screen. Identity comes only from the session (no arguments), so a student can only see
+ * their own. Returns no scores, ids, triage labels or alert details: only the outcome
+ * category chosen by common/screeningOutcome from the stored, server-computed triage level.
+ * Read-only: it cannot change triage, alerts or notifications.
+ */
+export const getMyResultSummary = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity?.subject) return { status: "unauthenticated" as const };
+
+    const keys = new Set<string>([identity.subject]);
+    const userId = ctx.db.normalizeId("users", identity.subject);
+    const user = userId ? await ctx.db.get(userId) : null;
+    if (user?.clerkId) keys.add(user.clerkId);
+
+    let latest: Doc<"screeningAttempts"> | null = null;
+    for (const key of keys) {
+      const attempt = await ctx.db
+        .query("screeningAttempts")
+        .withIndex("by_userId", (q) => q.eq("userId", key))
+        .order("desc")
+        .filter((q) => q.eq(q.field("status"), "completed"))
+        .first();
+      if (attempt && (!latest || attempt._creationTime > latest._creationTime)) latest = attempt;
+    }
+
+    const outcome = outcomeForTriageLevel(latest?.triageLevel);
+    if (!latest || !outcome) return { status: "none" as const };
+    return { status: "ready" as const, outcome, completedAt: latest.completedAt ?? latest._creationTime };
+  },
+});
+
+/** The caller's own completed attempts (newest first) and legacy screenings, for self-service reads. */
+async function ownScreeningHistory(ctx: any, keys: string[]) {
+  const attempts: Doc<"screeningAttempts">[] = [];
+  const legacy: Doc<"screenings">[] = [];
+  for (const key of keys) {
+    attempts.push(
+      ...(await ctx.db.query("screeningAttempts").withIndex("by_userId", (q: any) => q.eq("userId", key)).collect()).filter(
+        (a: Doc<"screeningAttempts">) => a.status === "completed"
+      )
+    );
+    legacy.push(...(await ctx.db.query("screenings").withIndex("by_userId", (q: any) => q.eq("userId", key)).collect()));
+  }
+  attempts.sort((a, b) => (b.completedAt || b.startedAt) - (a.completedAt || a.startedAt));
+  legacy.sort((a, b) => b.createdAt - a.createdAt);
+  return { attempts, legacy };
+}
+
+const balancePercent = (score: number, max: number) => Math.max(0, Math.min(100, Math.round(((max - score) / max) * 100)));
+
+/**
+ * Student: the two Home wellbeing indicators (percentage, badge and colour bands; higher is
+ * better), derived on the server from the latest completed check-in. Replaces reading raw totals, flags and ids
+ * through screening.getLatest. Null when the student has not completed a check-in.
+ */
+export const getMyWellbeingIndicators = query({
+  args: {},
+  handler: async (ctx) => {
+    const self = await getSelfStudent(ctx);
+    if (!self) return null;
+    const totals = latestTotals(await ownScreeningHistory(ctx, self.keys));
+    if (!totals) return null;
+    const { phq9, gad7 } = totals;
+    // Same bands and colours the Home cards used when they read raw totals.
+    return {
+      emotionalBalance: {
+        percent: balancePercent(phq9, 27),
+        badge: phq9 <= 4 ? "optimal" : phq9 <= 9 ? "good" : phq9 <= 14 ? "balanced" : "needsCare",
+        badgeTone: phq9 >= 10 ? "error" : "success",
+        barTone: phq9 <= 9 ? "success" : phq9 <= 14 ? "warning" : "error",
+      },
+      mindCalmness: {
+        percent: balancePercent(gad7, 21),
+        badge: gad7 <= 4 ? "serene" : gad7 <= 9 ? "calm" : gad7 <= 14 ? "mildTension" : "needsCare",
+        badgeTone: gad7 >= 10 ? "error" : "success",
+        barTone: gad7 <= 7 ? "success" : gad7 <= 12 ? "warning" : "error",
+      },
+    } as const;
+  },
+});
+
+/**
+ * Student: personal data export of my own questionnaire totals (Profile > Export). The student's
+ * own answers are theirs to export; triage levels, flags, alert data and internal ids are not
+ * included.
+ */
+export const exportMyScreenings = query({
+  args: {},
+  handler: async (ctx) => {
+    const self = await getSelfStudent(ctx);
+    if (!self) return [];
+    return ownExportRows(await ownScreeningHistory(ctx, self.keys));
+  },
+});
+
+type OwnScreeningHistory = Awaited<ReturnType<typeof ownScreeningHistory>>;
+
+/** Latest PHQ-9 and GAD-7 totals: newest completed attempt, else newest legacy screening. */
+function latestTotals({ attempts, legacy }: OwnScreeningHistory): { phq9: number; gad7: number } | null {
+  const latest = attempts[0];
+  const phq9 = latest ? latest.results?.phq9?.score : legacy[0]?.phq9_total;
+  const gad7 = latest ? latest.results?.gad7?.score : legacy[0]?.gad7_total;
+  if (typeof phq9 !== "number" || typeof gad7 !== "number") return null;
+  return { phq9, gad7 };
+}
+
+/** The student's own export rows: totals and their own item-9 answer, no triage, flags or ids. */
+function ownExportRows({ attempts, legacy }: OwnScreeningHistory) {
+  if (attempts.length > 0) {
+    return attempts.map((a) => ({
+      completedAt: a.completedAt || a.startedAt,
+      phq9Total: a.results?.phq9?.score ?? 0,
+      gad7Total: a.results?.gad7?.score ?? 0,
+      pq16Total: a.results?.pq16?.score ?? 0,
+      phq9Item9: a.results?.phq9?.item9Score ?? 0,
+    }));
+  }
+  return legacy.map((l) => ({
+    completedAt: l.createdAt,
+    phq9Total: l.phq9_total,
+    gad7Total: l.gad7_total,
+    pq16Total: l.pq16_total,
+    phq9Item9: l.phq9_item9_score ?? 0,
+  }));
+}

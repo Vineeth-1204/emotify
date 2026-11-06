@@ -11,7 +11,7 @@ import { type EmotySafetyState } from "./emotyContext";
 
 export type AppRoute =
   | "/(auth)/tools/emotion-map"
-  | "/(auth)/tools/mitra-goal"
+  | "/(auth)/tools/emoty-goal"
   | "/(auth)/tools/microgoals"
   | "/(auth)/tools/breathing"
   | "/(auth)/tools/grounding"
@@ -55,14 +55,14 @@ export const ACTION_ROUTE_MAP: Record<EmotyActionType, ResolvedActionRoute> = {
   },
   show_today_goal: {
     actionType: "show_today_goal",
-    route: "/(auth)/tools/mitra-goal",
+    route: "/(auth)/tools/emoty-goal",
     kind: "navigation",
     title: "Today's Goal",
     description: "View the student's active daily micro-goal or daily challenge.",
   },
   start_today_goal: {
     actionType: "start_today_goal",
-    route: "/(auth)/tools/mitra-goal",
+    route: "/(auth)/tools/emoty-goal",
     kind: "navigation",
     title: "Start Goal",
     description: "Launch the active micro-goal execution flow.",

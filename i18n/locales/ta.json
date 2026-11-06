@@ -151,6 +151,7 @@
     "gender_non-binary": "பைனரி அல்லாதவர்",
     "gender_other": "மற்றவை",
     "gender_prefer-not-to-say": "கூற விரும்பவில்லை",
+    "emergencyContact": "அவசர தொடர்பு",
     "emergencyContactLabel": "அவசரகால தொடர்பு பெயர்",
     "emergencyPhoneLabel": "அவசரகால தொடர்பு தொலைபேசி",
     "saveProfile": "மாற்றங்களைச் சேமி",
@@ -217,7 +218,13 @@
     "microgoalsTag": "பழக்கங்கள்",
     "appointmentsTitle": "ஆலோசகர் சந்திப்பு",
     "appointmentsDesc": "மருத்துவ அமர்வுகள் மற்றும் கோரிக்கைகளை நிர்வகிக்கவும்.",
-    "appointmentsTag": "ஆலோசனை"
+    "appointmentsTag": "ஆலோசனை",
+    "morningAffirmationTitle": "காலை உறுதிமொழி",
+    "morningAffirmationDesc": "இன்றைய நாளுக்கான நேர்மறையான எண்ணத்தை அமைத்துக் கொள்ளுங்கள்.",
+    "morningAffirmationTag": "வழக்கம்",
+    "eveningGratitudeTitle": "மாலை நன்றியுணர்வு",
+    "eveningGratitudeDesc": "இன்றைய நாளின் சிறிய நல்ல தருணங்களை நினைவுகூருங்கள்.",
+    "eveningGratitudeTag": "வழக்கம்"
   },
   "screening": {
     "title": "நல்வாழ்வு பரிசோதனை",

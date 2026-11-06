@@ -4,6 +4,7 @@ import { expect, test, describe, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import schema from "./schema";
 import { assignAllPatientsToCounsellors } from "../test-utils/identity";
+import { latestSubmission, staffViewer } from "../test-utils/screening";
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -51,14 +52,15 @@ const ZERO_PQ16 = Object.fromEntries(Array.from({ length: 16 }, (_, i) => [Strin
 
 describe("Top-10 #2: exploitable endpoints closed", () => {
   test("processTriage is not callable, so a student cannot downgrade a suicide flag", async () => {
-    const { asA, studentA } = await setup();
-    const attempt = await asA.mutation(api.screening.submitScreeningAttempt, {
+    const { t, asA, asAdmin, studentA } = await setup();
+    await asA.mutation(api.screening.submitScreeningAttempt, {
       responses: {
         phq9: { "1": 0, "2": 0, "3": 0, "4": 0, "5": 0, "6": 0, "7": 0, "8": 0, "9": 3 },
         gad7: { "1": 0, "2": 0, "3": 0, "4": 0, "5": 0, "6": 0, "7": 0 },
         pq16: ZERO_PQ16,
       },
     });
+    const attempt = await latestSubmission(t, studentA);
     expect(attempt.triageLevel).toBe("suicide_flag");
 
     await expect(
@@ -70,8 +72,12 @@ describe("Top-10 #2: exploitable endpoints closed", () => {
       })
     ).rejects.toThrow();
 
-    const latest = await asA.query(api.triage.getLatest, { userId: studentA });
+    // The stored triage (read as staff; the clinical read is staff-only) is still the suicide flag
+    const latest = await asAdmin.query(api.triage.getLatest, { userId: studentA });
     expect(latest?.level).toBe("suicide_flag");
+    // ...and the student's own safety status still reports the crisis
+    const safety = await asA.query(api.triage.getMySafetyStatus, {});
+    expect(safety?.crisis).toBe(true);
   });
 
   test("patients.getPatients no longer exists (it leaked password hashes and biometric tokens)", async () => {
@@ -134,7 +140,9 @@ describe("Top-10 #8: companion helpers are server-only, TTS requires login", () 
       ["emotyRateLimiter", "checkAndAcquireRateLimit"],
       ["emotyRateLimiter", "releaseRateLimit"],
       ["emotyTelemetry", "recordTelemetry"],
-      ["alerts", "createAlert"],
+      // The alert creator. The public `alerts.createAlert` name is a write-nothing legacy-client
+      // shim; legacy_client_compat.test.ts proves it cannot create alerts or notifications.
+      ["alerts", "createIndependentAlert"],
       ["alerts", "createSafetyAlertWithDeduplication"],
       ["emotyContext", "getAuthoritativeEmotyContext"],
     ];
@@ -453,14 +461,15 @@ describe("Top-10 #4: safety alerts notify staff and record their source", () => 
   }
 
   test("screening suicide flag notifies every counsellor and admin and links the attempt", async () => {
-    const { t, asA, counselor, admin } = await setup();
-    const res = await asA.mutation(api.screening.submitScreeningAttempt, {
+    const { t, asA, studentA, counselor, admin } = await setup();
+    await asA.mutation(api.screening.submitScreeningAttempt, {
       responses: {
         phq9: { "1": 0, "2": 0, "3": 0, "4": 0, "5": 0, "6": 0, "7": 0, "8": 0, "9": 1 },
         gad7: { "1": 0, "2": 0, "3": 0, "4": 0, "5": 0, "6": 0, "7": 0 },
         pq16: ZERO_PQ16,
       },
     });
+    const res = await latestSubmission(t, studentA);
     const alerts = await t.run(async (ctx) => ctx.db.query("alerts").collect());
     expect(alerts).toHaveLength(1);
     expect(alerts[0].source).toBe("screening");
@@ -582,13 +591,15 @@ describe("Top-10 #9: complete deletion and atomic screening follow-up", () => {
   test("submitting a screening schedules its review follow-up and marks screening complete in one step", async () => {
     const { t, asA, studentA } = await setup();
     const before = Date.now();
-    const res: any = await asA.mutation(api.screening.submitScreeningAttempt, {
+    await asA.mutation(api.screening.submitScreeningAttempt, {
       responses: {
         phq9: { "1": 2, "2": 2, "3": 2, "4": 2, "5": 2, "6": 2, "7": 2, "8": 2, "9": 0 },
         gad7: { "1": 0, "2": 0, "3": 0, "4": 0, "5": 0, "6": 0, "7": 0 },
         pq16: ZERO_PQ16,
       },
     });
+    const res = await latestSubmission(t, studentA);
+    expect(res.followUpId).toBeDefined();
     expect(res.triageLevel).toBe("severe");
     const fu: any = await t.run(async (ctx) => ctx.db.get(res.followUpId));
     expect(fu.sourceType).toBe("screening");
@@ -605,13 +616,14 @@ describe("Top-10 #9: complete deletion and atomic screening follow-up", () => {
 
   test("scheduleFollowUp is staff-only and uses the stored triage level, not the client's", async () => {
     const { t, asA, asCounselor, studentA } = await setup();
-    const res: any = await asA.mutation(api.screening.submitScreeningAttempt, {
+    await asA.mutation(api.screening.submitScreeningAttempt, {
       responses: {
         phq9: { "1": 0, "2": 0, "3": 0, "4": 0, "5": 0, "6": 0, "7": 0, "8": 0, "9": 2 },
         gad7: { "1": 0, "2": 0, "3": 0, "4": 0, "5": 0, "6": 0, "7": 0 },
         pq16: ZERO_PQ16,
       },
     });
+    const res = await latestSubmission(t, studentA);
     await expect(asA.mutation(api.followUps.scheduleFollowUp, { level: "mild" })).rejects.toThrow(/Staff access/);
     await assignAllPatientsToCounsellors(t);
 
@@ -746,5 +758,87 @@ describe("Top-10 #10: counsellor caseload scoping", () => {
         role: "superuser" as any,
       })
     ).rejects.toThrow();
+  });
+});
+
+describe("Retired instruments: WSAS and ReQoL-10 are not part of Emotify", () => {
+  test("legacy placeholder data is never returned and the one-off purge removes it", async () => {
+    vi.useFakeTimers();
+    try {
+      const t = convexTest(schema, modules);
+      let studentId = "";
+      await t.run(async (ctx) => {
+        studentId = await ctx.db.insert("users", { full_name: "Legacy", role: "patient", status: "active" });
+        for (let i = 0; i < 3; i++) {
+          await ctx.db.insert("screeningAttempts", {
+            userId: studentId,
+            status: "completed",
+            startedAt: i,
+            completedAt: i,
+            instrumentVersions: { phq9: "PHQ-9.v1", gad7: "GAD-7.v1", pq16: "PQ-16.v1", wsas: "WSAS.v1", reqol10: "ReQoL-10.v1" },
+            responses: { wsas: { "1": 8 } },
+            results: {
+              phq9: { administered: true, score: 0, maxScore: 27, severity: "x", level: "minimal", item9Score: 0, item9Flag: false },
+              gad7: { administered: true, score: 0, maxScore: 21, severity: "x", level: "minimal" },
+              pq16: { administered: true, score: 0, maxScore: 16, severity: "x", level: "low" },
+              wsas: { administered: false, score: 0, maxScore: 40, severity: "Not Administered", level: "minimal" },
+              reqol10: { administered: false, score: 0, maxScore: 40, severity: "Not Administered", level: "minimal" },
+            },
+            triageLevel: "mild",
+            suicideFlag: false,
+            psychosisFlag: false,
+          });
+        }
+        await ctx.db.insert("screenings", {
+          userId: "legacy-clerk",
+          phq9_total: 1, gad7_total: 1, pq16_total: 0, wsas_total: 10, reqol10_total: 20,
+          phq9_item9_flag: false, phq9_item9_score: 0, createdAt: 1,
+        });
+      });
+
+      // The clinical history is a staff-only read
+      const staff = await staffViewer(t);
+      const history: any[] = await staff.query(api.screening.getScreeningHistory, { userId: studentId });
+      expect(history).toHaveLength(3);
+      for (const a of history) {
+        expect(Object.keys(a.results).sort()).toEqual(["gad7", "phq9", "pq16"]);
+        expect(a.responses.wsas).toBeUndefined();
+      }
+      // The student's own export carries no retired-instrument data either
+      const asStudent = t.withIdentity({ subject: studentId });
+      const exported: any[] = await asStudent.query(api.screening.exportMyScreenings, {});
+      expect(exported).toHaveLength(3);
+      for (const row of exported) {
+        expect(Object.keys(row).join(" ").toLowerCase()).not.toMatch(/wsas|reqol/);
+      }
+
+      const first = await t.mutation(internal.screening.purgeRetiredInstrumentData, {});
+      expect(first.cleaned).toBe(3);
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+      const stored = await t.run(async (ctx) => ({
+        attempts: await ctx.db.query("screeningAttempts").collect(),
+        screenings: await ctx.db.query("screenings").collect(),
+      }));
+      for (const a of stored.attempts) {
+        expect(a.instrumentVersions.wsas).toBeUndefined();
+        expect(a.instrumentVersions.reqol10).toBeUndefined();
+        expect(a.responses.wsas).toBeUndefined();
+        expect(a.results.wsas).toBeUndefined();
+        expect(a.results.reqol10).toBeUndefined();
+        expect(a.results.phq9.administered).toBe(true);
+      }
+      expect(stored.screenings[0].wsas_total).toBeUndefined();
+      expect(stored.screenings[0].reqol10_total).toBeUndefined();
+      expect(stored.screenings[0].phq9_total).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("the purge is internal-only", async () => {
+    const screening: any = await import("./screening");
+    expect(screening.purgeRetiredInstrumentData.isInternal).toBe(true);
+    expect(screening.purgeRetiredInstrumentData.isPublic).toBeFalsy();
   });
 });

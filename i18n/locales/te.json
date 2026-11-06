@@ -151,6 +151,7 @@
     "gender_non-binary": "నాన్-బైనరీ",
     "gender_other": "ఇతర",
     "gender_prefer-not-to-say": "చెప్పడానికి ఇష్టపడలేదు",
+    "emergencyContact": "అత్యవసర సంప్రదింపు",
     "emergencyContactLabel": "అత్యవసర సంప్రదింపు పేరు",
     "emergencyPhoneLabel": "అత్యవసర సంప్రదింపు ఫోన్",
     "saveProfile": "మార్పులను భద్రపరచు",
@@ -217,7 +218,13 @@
     "microgoalsTag": "అలవాట్లు",
     "appointmentsTitle": "కౌన్సిలర్ సంప్రదింపు",
     "appointmentsDesc": "వైద్య సెషన్లు మరియు అభ్యర్థనలను నిర్వహించండి.",
-    "appointmentsTag": "సంప్రదింపు"
+    "appointmentsTag": "సంప్రదింపు",
+    "morningAffirmationTitle": "ఉదయపు సంకల్పం",
+    "morningAffirmationDesc": "ఈ రోజు కోసం ఒక స్పష్టమైన ఆలోచన లేదా సంకల్పం ఏర్పరచుకోండి.",
+    "morningAffirmationTag": "దినచర్య",
+    "eveningGratitudeTitle": "సాయంత్రపు కృతజ్ఞత",
+    "eveningGratitudeDesc": "రోజును ముగించే ముందు చిన్న మంచి క్షణాలను గుర్తుచేసుకోండి.",
+    "eveningGratitudeTag": "దినచర్య"
   },
   "screening": {
     "title": "ఆరోగ్య పరీక్షలు",

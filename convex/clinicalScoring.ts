@@ -5,12 +5,13 @@
  * - Authoritative scoring is executed on the server.
  * - Does NOT trust client-submitted aggregate scores.
  * - Strictly preserves validated clinical questions, options, and thresholds.
- * - Marks missing instruments (WSAS, ReQoL-10) as PENDING_APPROVED_CONTENT without inventing clinical text.
+ * - Emotify administers PHQ-9, GAD-7 and PQ-16 only. WSAS and ReQoL-10 are not part of
+ *   the product and have no scoring path.
  */
 
-export type InstrumentId = "phq9" | "gad7" | "pq16" | "wsas" | "reqol10";
+export type InstrumentId = "phq9" | "gad7" | "pq16" | "pss10";
 
-export type InstrumentStatus = "active" | "pending_approved_content";
+export type InstrumentStatus = "active";
 
 export interface ClinicalSeverity {
   severity: string;
@@ -274,134 +275,79 @@ export function scorePQ16Responses(responses?: Record<string, number>): Instrume
   };
 }
 
-// ─── WSAS (Work and Social Adjustment Scale - 5 items) ───
-// Awaiting verified approved text. Configured as PENDING_APPROVED_CONTENT.
-export const WSAS_CONFIG = {
-  id: "wsas" as const,
-  title: "Work and Social Adjustment Scale (WSAS)",
-  studentTitle: "Daily Functioning Check",
-  questionCount: 5,
-  minOptionValue: 0,
-  maxOptionValue: 8,
-  maxScore: 40,
-  status: "pending_approved_content" as InstrumentStatus,
-};
-
-export function getWSASSeverity(score: number): ClinicalSeverity {
-  if (score >= 21) {
-    return { severity: "Severe Functional Impairment", level: "severe", summary: "Significant disruption to work and social activities" };
-  }
-  if (score >= 10) {
-    return { severity: "Significant Functional Impairment", level: "moderate", summary: "Moderate functional impairment" };
-  }
-  return { severity: "Low or No Impairment", level: "minimal", summary: "Low or subclinical impairment" };
-}
-
-export function scoreWSASResponses(responses?: Record<string, number>): InstrumentValidationResult {
-  if (!responses || Object.keys(responses).length === 0) {
-    return {
-      administered: false,
-      score: 0,
-      maxScore: WSAS_CONFIG.maxScore,
-      severity: "Not Administered (Pending Approved Content)",
-      level: "minimal",
-    };
-  }
-
-  // If approved content is pending, validate provided structure
-  const answeredKeys = Object.keys(responses);
-  if (answeredKeys.length !== WSAS_CONFIG.questionCount) {
-    return {
-      administered: false,
-      score: 0,
-      maxScore: WSAS_CONFIG.maxScore,
-      severity: "Incomplete",
-      level: "minimal",
-      error: `WSAS requires all ${WSAS_CONFIG.questionCount} questions to be answered.`,
-    };
-  }
-
-  let total = 0;
-  for (let i = 1; i <= WSAS_CONFIG.questionCount; i++) {
-    const val = getItemValue(responses, "wsas", i);
-    if (val === undefined || typeof val !== "number" || val < 0 || val > 8) {
-      return {
-        administered: false,
-        score: 0,
-        maxScore: WSAS_CONFIG.maxScore,
-        severity: "Invalid Responses",
-        level: "minimal",
-        error: `Invalid response for WSAS Question ${i}: must be between 0 and 8.`,
-      };
-    }
-    total += val;
-  }
-
-  const { severity, level } = getWSASSeverity(total);
-  return { administered: true, score: total, maxScore: WSAS_CONFIG.maxScore, severity, level };
-}
-
-// ─── ReQoL-10 (Recovering Quality of Life - 10 items) ───
-// Awaiting verified approved text. Configured as PENDING_APPROVED_CONTENT.
-export const REQOL10_CONFIG = {
-  id: "reqol10" as const,
-  title: "Recovering Quality of Life (ReQoL-10)",
-  studentTitle: "Quality of Life Check",
+// ─── PSS-10 (Perceived Stress Scale - 10 items) ───
+export const PSS10_CONFIG = {
+  id: "pss10" as const,
+  title: "Perceived Stress Scale (PSS-10)",
+  studentTitle: "Stress & Coping Check",
   questionCount: 10,
   minOptionValue: 0,
   maxOptionValue: 4,
   maxScore: 40,
-  status: "pending_approved_content" as InstrumentStatus,
+  reverseItems: [4, 5, 7, 8] as const,
+  status: "active" as InstrumentStatus,
 };
 
-export function getReQoL10Severity(score: number): ClinicalSeverity {
-  if (score < 24) {
-    return { severity: "Below Population Norm", level: "moderate", summary: "Quality of life score below standard clinical benchmark" };
+export function getPSS10Severity(score: number): ClinicalSeverity {
+  if (score >= 27) {
+    return { severity: "High Perceived Stress", level: "severe", summary: "High perceived stress symptoms" };
   }
-  return { severity: "Within Population Norm", level: "minimal", summary: "Good quality of life benchmark" };
+  if (score >= 14) {
+    return { severity: "Moderate Stress", level: "moderate", summary: "Moderate stress symptoms" };
+  }
+  return { severity: "Low Stress", level: "minimal", summary: "Low stress symptoms" };
 }
 
-export function scoreReQoL10Responses(responses?: Record<string, number>): InstrumentValidationResult {
+export function scorePSS10Responses(responses?: Record<string, number>): InstrumentValidationResult {
   if (!responses || Object.keys(responses).length === 0) {
     return {
       administered: false,
       score: 0,
-      maxScore: REQOL10_CONFIG.maxScore,
-      severity: "Not Administered (Pending Approved Content)",
+      maxScore: PSS10_CONFIG.maxScore,
+      severity: "Not Administered",
       level: "minimal",
     };
   }
 
   const answeredKeys = Object.keys(responses);
-  if (answeredKeys.length !== REQOL10_CONFIG.questionCount) {
+  if (answeredKeys.length !== PSS10_CONFIG.questionCount) {
     return {
       administered: false,
       score: 0,
-      maxScore: REQOL10_CONFIG.maxScore,
+      maxScore: PSS10_CONFIG.maxScore,
       severity: "Incomplete",
       level: "minimal",
-      error: `ReQoL-10 requires all ${REQOL10_CONFIG.questionCount} questions to be answered.`,
+      error: `PSS-10 requires all ${PSS10_CONFIG.questionCount} questions to be answered (received ${answeredKeys.length}).`,
     };
   }
 
+  const reverseSet = new Set<number>([4, 5, 7, 8]);
   let total = 0;
-  for (let i = 1; i <= REQOL10_CONFIG.questionCount; i++) {
-    const val = responses[String(i)];
-    if (val === undefined || typeof val !== "number" || val < 0 || val > 4) {
+  for (let i = 1; i <= PSS10_CONFIG.questionCount; i++) {
+    const val = getItemValue(responses, "pss10", i);
+    if (val === undefined || typeof val !== "number" || val < 0 || val > 4 || !Number.isInteger(val)) {
       return {
         administered: false,
         score: 0,
-        maxScore: REQOL10_CONFIG.maxScore,
+        maxScore: PSS10_CONFIG.maxScore,
         severity: "Invalid Responses",
         level: "minimal",
-        error: `Invalid response for ReQoL-10 Question ${i}: must be between 0 and 4.`,
+        error: `Invalid response for PSS-10 Question ${i}: must be an integer between 0 and 4.`,
       };
     }
-    total += val;
+    const itemScore = reverseSet.has(i) ? 4 - val : val;
+    total += itemScore;
   }
 
-  const { severity, level } = getReQoL10Severity(total);
-  return { administered: true, score: total, maxScore: REQOL10_CONFIG.maxScore, severity, level };
+  const { severity, level } = getPSS10Severity(total);
+
+  return {
+    administered: true,
+    score: total,
+    maxScore: PSS10_CONFIG.maxScore,
+    severity,
+    level,
+  };
 }
 
 // ─── Core Triage Classification ───
@@ -419,6 +365,8 @@ export function evaluateClinicalTriage(scores: {
   gad7Score: number;
   pq16Score: number;
   pq16Administered?: boolean;
+  pss10Score?: number;
+  pss10Administered?: boolean;
 }): AssessmentTriageResult {
   // Priority 1: Suicide Risk via Item 9
   if (scores.item9Score > 0) {
@@ -443,8 +391,12 @@ export function evaluateClinicalTriage(scores: {
     };
   }
 
-  // Priority 3: Severe Depression or Anxiety
-  if (scores.phq9Score >= 15 || scores.gad7Score >= 15) {
+  // Priority 3: Severe Depression, Anxiety, or High Stress
+  if (
+    scores.phq9Score >= 15 ||
+    scores.gad7Score >= 15 ||
+    (scores.pss10Administered && (scores.pss10Score ?? 0) >= 27)
+  ) {
     return {
       level: "severe",
       suicideFlag: false,
@@ -454,10 +406,11 @@ export function evaluateClinicalTriage(scores: {
     };
   }
 
-  // Priority 4: Moderate Depression or Anxiety
+  // Priority 4: Moderate Depression, Anxiety, or Stress
   if (
     (scores.phq9Score >= 10 && scores.phq9Score <= 14) ||
-    (scores.gad7Score >= 10 && scores.gad7Score <= 14)
+    (scores.gad7Score >= 10 && scores.gad7Score <= 14) ||
+    (scores.pss10Administered && (scores.pss10Score ?? 0) >= 14 && (scores.pss10Score ?? 0) <= 26)
   ) {
     return {
       level: "moderate",

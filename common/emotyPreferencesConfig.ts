@@ -35,7 +35,7 @@ export const CATEGORY_METADATA: Record<
   communication_preference: {
     label: "Communication Style",
     icon: "chatbubble-ellipses-outline",
-    description: "How Mitra talks and communicates with you",
+    description: "How Emoty talks and communicates with you",
   },
   support_preference: {
     label: "Support Preferences",
@@ -55,7 +55,7 @@ export const CATEGORY_METADATA: Record<
   chosen_name: {
     label: "Chosen Name",
     icon: "person-outline",
-    description: "The name or nickname Mitra addresses you by",
+    description: "The name or nickname Emoty addresses you by",
   },
 };
 
@@ -125,7 +125,7 @@ export const PREFERENCE_PRESETS: PreferencePresetItem[] = [
     value: "listening_mode",
     categoryLabel: "Support Preferences",
     label: "Active listening mode",
-    description: "Prefers Mitra to listen first without rushing to solutions",
+    description: "Prefers Emoty to listen first without rushing to solutions",
   },
 
   // Routine

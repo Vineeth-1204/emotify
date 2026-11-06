@@ -40,12 +40,30 @@ export default defineSchema({
     biometricEnabled: v.optional(v.boolean()),
     lastLoginAt: v.optional(v.number()),
     temp_password: v.optional(v.string()), // Transient plain-text password shown to admin after reset, cleared after viewing
+    // Emoty companion preferences. Historical field name kept so stored documents need no
+    // migration; access it only via readStoredEmotyPreferences / storedEmotyPreferencesPatch.
     mitraPreferences: v.optional(
       v.object({
         name: v.string(),
         avatarGender: v.string(), // "female" | "male"
         avatarVariant: v.optional(v.string()),
         updatedAt: v.optional(v.number()),
+      })
+    ),
+    // Configurable student notification preferences
+    notificationPreferences: v.optional(
+      v.object({
+        engagementEnabled: v.optional(v.boolean()),
+        quietHoursStart: v.optional(v.number()),
+        quietHoursEnd: v.optional(v.number()),
+        maxPerDay: v.optional(v.number()),
+        minSpacingHours: v.optional(v.number()),
+        timezone: v.optional(v.string()),
+        morningReminderTime: v.optional(v.string()), // "07:00"
+        eveningReminderTime: v.optional(v.string()), // "20:30"
+        morningReminderEnabled: v.optional(v.boolean()),
+        eveningReminderEnabled: v.optional(v.boolean()),
+        microGoalReminderEnabled: v.optional(v.boolean()),
       })
     ),
   })
@@ -90,10 +108,34 @@ export default defineSchema({
     attended: v.optional(v.string()), // "yes" | "no"
     isFeedbackCompleted: v.optional(v.boolean()),
     counsellorRequestId: v.optional(v.id("counsellorRequests")),
+
+    // Counsellor workflow (all optional: older rows predate them).
+    // The counsellor the appointment is with. Set from the student's active assignment; moved to
+    // the new counsellor on reassignment; cleared when the student is unassigned (admin queue).
+    counsellorId: v.optional(v.id("users")),
+    // Client idempotency key for a student's request (retries return the same appointment).
+    requestKey: v.optional(v.string()),
+    // Normalised "YYYY-MM-DD HH:mm" (24h) of date+time, for conflict and duplicate checks.
+    slotKey: v.optional(v.string()),
+    statusHistory: v.optional(
+      v.array(
+        v.object({
+          status: v.string(),
+          at: v.number(),
+          actorRole: v.string(), // "student" | "counsellor" | "admin" | "system"
+          event: v.optional(v.string()), // "requested" | "confirmed" | "reschedule_proposed" | "reassigned" | ...
+        })
+      )
+    ),
+    updatedAt: v.optional(v.number()),
   })
     .index("by_userId", ["userId"])
     .index("by_startTime", ["startTime"])
-    .index("by_counsellorRequestId", ["counsellorRequestId"]),
+    .index("by_counsellorRequestId", ["counsellorRequestId"])
+    .index("by_counsellorId", ["counsellorId"])
+    .index("by_counsellor_and_slot", ["counsellorId", "slotKey"])
+    .index("by_userId_and_requestKey", ["userId", "requestKey"])
+    .index("by_status", ["status"]),
 
 
   screenings: defineTable({
@@ -101,6 +143,9 @@ export default defineSchema({
     phq9_total: v.number(),
     gad7_total: v.number(),
     pq16_total: v.number(),
+    pss10_total: v.optional(v.number()),
+    // RETIRED (WSAS / ReQoL-10 are not part of Emotify): never written; kept optional only so
+    // documents from earlier versions validate until screening:purgeRetiredInstrumentData has run.
     wsas_total: v.optional(v.number()),
     reqol10_total: v.optional(v.number()),
     phq9_item9_flag: v.boolean(),
@@ -119,6 +164,8 @@ export default defineSchema({
       phq9: v.string(),
       gad7: v.string(),
       pq16: v.string(),
+      pss10: v.optional(v.string()),
+      // RETIRED: see screenings.wsas_total.
       wsas: v.optional(v.string()),
       reqol10: v.optional(v.string()),
     }),
@@ -126,6 +173,8 @@ export default defineSchema({
       phq9: v.optional(v.record(v.string(), v.number())),
       gad7: v.optional(v.record(v.string(), v.number())),
       pq16: v.optional(v.record(v.string(), v.number())),
+      pss10: v.optional(v.record(v.string(), v.number())),
+      // RETIRED: see screenings.wsas_total.
       wsas: v.optional(v.record(v.string(), v.number())),
       reqol10: v.optional(v.record(v.string(), v.number())),
     }),
@@ -153,6 +202,16 @@ export default defineSchema({
         severity: v.string(),
         level: v.string(),
       }),
+      pss10: v.optional(
+        v.object({
+          administered: v.boolean(),
+          score: v.number(),
+          maxScore: v.number(),
+          severity: v.string(),
+          level: v.string(),
+        })
+      ),
+      // RETIRED: see screenings.wsas_total.
       wsas: v.optional(
         v.object({
           administered: v.boolean(),
@@ -209,11 +268,20 @@ export default defineSchema({
     sourceId: v.optional(v.string()), // e.g. companion messageId or cbtSessions._id
     studentDismissedAt: v.optional(v.number()), // last time the student closed the emergency screen
     studentDismissCount: v.optional(v.number()),
+    deliveryStatus: v.optional(v.string()), // "delivered" | "no_active_staff" | "delivery_failed"
+    deliveryFailureCount: v.optional(v.number()),
+    notifiedStaffCount: v.optional(v.number()),
+    externalDispatchStatus: v.optional(v.string()), // "pending" | "delivered" | "failed" | "skipped_no_contact"
+    externalDispatchedAt: v.optional(v.number()),
+    externalDispatchAttempts: v.optional(v.number()),
+    externalMessageId: v.optional(v.string()),
+    externalDispatchError: v.optional(v.string()),
   })
     .index("by_userId", ["userId"])
     .index("by_status", ["status"])
     .index("by_attemptId", ["attemptId"])
-    .index("by_triageId", ["triageId"]),
+    .index("by_triageId", ["triageId"])
+    .index("by_deliveryStatus", ["deliveryStatus"]),
 
   emotionLogs: defineTable({
     userId: v.string(),
@@ -224,6 +292,12 @@ export default defineSchema({
     postIntensity: v.optional(v.number()),
     selectedEmotions: v.optional(v.array(v.string())),
     strongestEmotion: v.optional(v.string()),
+    postEmotion: v.optional(v.string()),
+    deltaIntensity: v.optional(v.number()),
+    branchTaken: v.optional(v.string()), // "improved" | "unchanged" | "worse"
+    completedAt: v.optional(v.number()),
+    sourceType: v.optional(v.string()),
+    meditationTitle: v.optional(v.string()),
     createdAt: v.number(),
   })
     .index("by_userId", ["userId"])
@@ -277,6 +351,14 @@ export default defineSchema({
     sourceType: v.optional(v.string()), // "cbt" | "self_initiated" | "routine" | "screening"
     attemptId: v.optional(v.id("screeningAttempts")),
     triageId: v.optional(v.id("triages")),
+    slot: v.optional(v.string()), // "must_do" | "feel_better" | "grow_stronger"
+    symptomCategory: v.optional(v.string()),
+    intensityGroup: v.optional(v.string()), // "light_some" | "intense_overwhelming"
+    preIntensity: v.optional(v.number()),
+    postIntensity: v.optional(v.number()),
+    intensityDrop: v.optional(v.number()),
+    dialogueMessage: v.optional(v.string()),
+    nudgeSentAt: v.optional(v.number()),
   }).index("by_userId", ["userId"]),
 
   points: defineTable({
@@ -347,9 +429,13 @@ export default defineSchema({
     sourceType: v.optional(v.string()), // "self_initiated" | "cbt_crisis" | "screening" | "triage"
     attemptId: v.optional(v.id("screeningAttempts")),
     triageId: v.optional(v.id("triages")),
+    deliveryStatus: v.optional(v.string()), // "notified" | "no_active_staff" | "delivery_failed"
+    notifiedStaffCount: v.optional(v.number()),
+    deduplicated: v.optional(v.boolean()),
   })
     .index("by_user_id", ["user_id"])
-    .index("by_timestamp", ["timestamp"]),
+    .index("by_timestamp", ["timestamp"])
+    .index("by_deliveryStatus", ["deliveryStatus"]),
 
   followUps: defineTable({
     userId: v.string(),
@@ -575,6 +661,11 @@ export default defineSchema({
     riskFlags: v.optional(v.array(v.string())),
     sessionStatus: v.string(), // "active" | "completed" | "safety_mode" | "support_mode" | "paused"
     currentStep: v.string(), // "understanding" | "clarification" | "guided_discovery" | "reflection" | "balanced_thought" | "belief" | "emotion_after" | "recovery_coach" | "completed" | "safety_mode" | "support_mode"
+    beliefBefore: v.optional(v.number()),
+    thinkingPatternId: v.optional(v.string()), // "TP01" - "TP15"
+    supportModeActivity: v.optional(v.string()),
+    supportModeNote: v.optional(v.string()),
+    autonomyChoiceMade: v.optional(v.boolean()),
   })
     .index("by_userId", ["userId"])
     .index("by_userId_and_timestamp", ["userId", "timestamp"])
@@ -594,13 +685,23 @@ export default defineSchema({
     email: v.string(),
     phone: v.string(),
     role: v.string(), // "counsellor" | "senior_psychiatrist" | "lead"
+    specialization: v.optional(v.string()),
     availability: v.array(v.string()),
     maxWorkload: v.number(),
     currentWorkload: v.optional(v.number()),
     rating: v.number(),
     status: v.string(), // "active" | "inactive" | "on_leave"
     createdAt: v.number(),
-  }).index("by_status", ["status"]),
+    // Student visibility of the institutional contact fields above. Each is approved
+    // separately by an admin; a missing value means NOT approved (never implies consent).
+    // Changing the stored value or the linked account clears the approval.
+    shareEmailWithStudents: v.optional(v.boolean()),
+    sharePhoneWithStudents: v.optional(v.boolean()),
+    contactApprovalUpdatedAt: v.optional(v.number()),
+    contactApprovalUpdatedBy: v.optional(v.id("users")),
+  })
+    .index("by_status", ["status"])
+    .index("by_userId", ["userId"]),
 
   clinicalTimelines: defineTable({
     userId: v.string(),
@@ -638,9 +739,25 @@ export default defineSchema({
     read: v.boolean(),
     archived: v.boolean(),
     createdAt: v.number(),
+    // Notification centre (all optional: older rows predate them).
+    readAt: v.optional(v.number()),
+    // Where tapping it leads: a destination key each client maps to its own allowlisted route
+    // ("appointments" | "notifications" | "alerts" | "assignments" | "requests" | "my_counsellor").
+    destination: v.optional(v.string()),
+    relatedId: v.optional(v.string()), // e.g. the appointment id, re-authorised on open
+    dedupeKey: v.optional(v.string()), // one notification per recipient per business event
+    // OS push delivery record (the in-app row is the record of truth; push is best effort).
+    pushStatus: v.optional(v.string()), // "queued" | "sent" | "provider_accepted" | "partially_failed" | "mock" | "no_tokens" | "skipped" | "failed"
+    pushTicketIds: v.optional(v.array(v.string())),
+    pushError: v.optional(v.string()),
+    pushUpdatedAt: v.optional(v.number()),
+    category: v.optional(v.string()), // "engagement" | "operational"
   })
     .index("by_recipientId", ["recipientId"])
-    .index("by_read", ["read"]),
+    .index("by_read", ["read"])
+    .index("by_recipient_and_created", ["recipientId", "createdAt"])
+    .index("by_recipient_and_read", ["recipientId", "read"])
+    .index("by_recipient_and_dedupe", ["recipientId", "dedupeKey"]),
 
   loginHistory: defineTable({
     userId: v.string(),
@@ -724,6 +841,18 @@ export default defineSchema({
 
   // Counsellor caseload: which counsellor is responsible for which student.
   // Counsellors can only access students with an active assignment; admins see everyone.
+  // Idempotency records for screening submissions: one row per (student, client submission key).
+  // Server-only (never returned to clients). Deleted with the student's account.
+  screeningSubmissions: defineTable({
+    userId: v.string(), // canonical student id the submission was recorded for
+    key: v.string(), // client-generated random key, reused on retries of the same submission
+    fingerprint: v.string(), // SHA-256 of the canonical responses: a key cannot be reused for other answers
+    attemptId: v.id("screeningAttempts"),
+    triageId: v.id("triages"),
+    followUpId: v.id("followUps"),
+    createdAt: v.number(),
+  }).index("by_user_and_key", ["userId", "key"]),
+
   counsellorAssignments: defineTable({
     counsellorId: v.id("users"),
     studentId: v.id("users"),
@@ -731,9 +860,14 @@ export default defineSchema({
     assignedAt: v.number(),
     active: v.boolean(),
     endedAt: v.optional(v.number()),
+    // Who ended the assignment and why ("reassigned" | "unassigned" | "student_deleted" | "counsellor_deleted").
+    // Inactive rows are the assignment history; the next row for the student holds the new counsellor.
+    endedBy: v.optional(v.id("users")),
+    endReason: v.optional(v.string()),
   })
     .index("by_counsellor_and_active", ["counsellorId", "active"])
-    .index("by_student_and_active", ["studentId", "active"]),
+    .index("by_student_and_active", ["studentId", "active"])
+    .index("by_active", ["active"]),
 
   // AI-3 Step 7: Dedicated Non-Sensitive Persistent Memory Table
   emotyMemories: defineTable({
@@ -751,6 +885,61 @@ export default defineSchema({
     .index("by_userId_and_category", ["userId", "category"])
     .index("by_userId_and_key", ["userId", "key"])
     .index("by_userId_and_active", ["userId", "active"]),
+
+  /** "Not now" on one of Emoty's Home suggestions: hidden for the rest of that local day. */
+  emotyGuideDismissals: defineTable({
+    userId: v.string(),
+    dateStr: v.string(), // "YYYY-MM-DD" (student's local day)
+    action: v.string(), // one of EMOTY_DISMISSIBLE_ACTIONS
+    createdAt: v.number(),
+  })
+    .index("by_userId_and_dateStr", ["userId", "dateStr"])
+    .index("by_userId", ["userId"]),
+
+  pushTokens: defineTable({
+    userId: v.string(),
+    token: v.string(),
+    platform: v.string(), // "android" | "ios" | "web"
+    deviceId: v.optional(v.string()),
+    updatedAt: v.number(),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_token", ["token"])
+    .index("by_userId_and_token", ["userId", "token"]),
+
+  positiveMemories: defineTable({
+    userId: v.string(),
+    bestPartOfDay: v.string(), // Positive_Event
+    strengthIdentified: v.string(),
+    gratitudeResponse: v.string(),
+    emotion: v.string(),
+    tomorrowGoal: v.string(),
+    createdAt: v.number(),
+    sessionId: v.optional(v.string()),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_userId_and_createdAt", ["userId", "createdAt"]),
+
+  morningAffirmations: defineTable({
+    userId: v.string(),
+    dateStr: v.string(), // "YYYY-MM-DD"
+    affirmationId: v.optional(v.string()), // e.g. "MORN_01" - "MORN_07"
+    affirmationText: v.string(),
+    isCustom: v.boolean(),
+    createdAt: v.number(),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_userId_and_dateStr", ["userId", "dateStr"]),
+
+  eveningGratitudes: defineTable({
+    userId: v.string(),
+    dateStr: v.string(), // "YYYY-MM-DD"
+    gratitudeEntries: v.array(v.string()),
+    branch: v.string(), // "minimal_mild" | "moderate_severe"
+    createdAt: v.number(),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_userId_and_dateStr", ["userId", "dateStr"]),
 });
 
 

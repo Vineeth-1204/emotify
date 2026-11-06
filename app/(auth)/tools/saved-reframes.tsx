@@ -35,12 +35,14 @@ export default function SavedReframesScreen() {
   const rawLogs = useQuery(api.reframes.getRecentLogs, {
     userId: user?.id ?? "",
   });
+  const positiveMemories = useQuery(api.positiveGrowth.getPositiveMemories, {});
 
   const updateLog = useMutation(api.reframes.updateLog);
   const removeLog = useMutation(api.reframes.removeLog);
   const toggleFavoriteLog = useMutation(api.reframes.toggleFavoriteLog);
+  const deletePositiveMemory = useMutation(api.positiveGrowth.deletePositiveMemory);
 
-  const [activeTab, setActiveTab] = useState<"all" | "favorites">("all");
+  const [activeTab, setActiveTab] = useState<"all" | "favorites" | "memories">("all");
   
   // Modal states
   const [selectedLog, setSelectedLog] = useState<any>(null);
@@ -174,6 +176,15 @@ export default function SavedReframesScreen() {
         >
           <Text style={[styles.tabText, activeTab === "favorites" && styles.tabTextActive]}>Favorites</Text>
         </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+            setActiveTab("memories");
+          }}
+          style={[styles.tabButton, activeTab === "memories" && styles.tabButtonActive]}
+        >
+          <Text style={[styles.tabText, activeTab === "memories" && styles.tabTextActive]}>Memory Vault</Text>
+        </TouchableOpacity>
       </View>
 
       {/* List */}
@@ -181,7 +192,72 @@ export default function SavedReframesScreen() {
         contentContainerStyle={[styles.listContainer, { paddingBottom: Math.max(20, insets.bottom + 20) }]}
         showsVerticalScrollIndicator={false}
       >
-        {displayedLogs.length === 0 ? (
+        {activeTab === "memories" ? (
+          (!positiveMemories || positiveMemories.length === 0) ? (
+            <View style={styles.emptyState}>
+              <Ionicons name="sparkles-outline" size={64} color="#16A34A" style={{ opacity: 0.5, marginBottom: 16 }} />
+              <Text style={styles.emptyTitle}>Your Memory Vault is Empty</Text>
+              <Text style={styles.emptySubtitle}>
+                Complete a Positive Growth reflection to save what went well, personal strengths, and moments of gratitude here.
+              </Text>
+            </View>
+          ) : (
+            positiveMemories.map((mem) => (
+              <View key={mem._id} style={[styles.glassCard, { borderColor: "#BBF7D0", backgroundColor: "rgba(255,255,255,0.85)" }]}>
+                <View style={styles.cardHeader}>
+                  <Text style={styles.cardDate}>{formatDate(mem.createdAt)}</Text>
+                  <View style={[styles.percentBadge, { backgroundColor: "#16A34A" }]}>
+                    <Text style={styles.badgeText}>{mem.emotion}</Text>
+                  </View>
+                </View>
+
+                <View style={{ gap: 8, marginVertical: 8 }}>
+                  <View>
+                    <Text style={{ fontFamily: Theme.fontFamily.bold, fontSize: 12, color: "#166534" }}>🌟 What Went Well</Text>
+                    <Text style={{ fontFamily: Theme.fontFamily.medium, fontSize: 13, color: Colors.text, marginTop: 2 }}>{mem.bestPartOfDay}</Text>
+                  </View>
+                  <View>
+                    <Text style={{ fontFamily: Theme.fontFamily.bold, fontSize: 12, color: "#166534" }}>💪 Strength Used</Text>
+                    <Text style={{ fontFamily: Theme.fontFamily.medium, fontSize: 13, color: Colors.text, marginTop: 2 }}>{mem.strengthIdentified}</Text>
+                  </View>
+                  <View>
+                    <Text style={{ fontFamily: Theme.fontFamily.bold, fontSize: 12, color: "#166534" }}>🙏 Grateful For</Text>
+                    <Text style={{ fontFamily: Theme.fontFamily.medium, fontSize: 13, color: Colors.text, marginTop: 2 }}>{mem.gratitudeResponse}</Text>
+                  </View>
+                  {mem.tomorrowGoal ? (
+                    <View>
+                      <Text style={{ fontFamily: Theme.fontFamily.bold, fontSize: 12, color: "#166534" }}>🎯 Tomorrow's Step</Text>
+                      <Text style={{ fontFamily: Theme.fontFamily.medium, fontSize: 13, color: Colors.text, marginTop: 2 }}>{mem.tomorrowGoal}</Text>
+                    </View>
+                  ) : null}
+                </View>
+
+                <View style={[styles.cardActions, { justifyContent: "flex-end" }]}>
+                  <TouchableOpacity
+                    onPress={() => {
+                      Alert.alert(
+                        "Delete Memory?",
+                        "Are you sure you want to remove this reflection from your Memory Vault?",
+                        [
+                          { text: "Cancel", style: "cancel" },
+                          {
+                            text: "Delete",
+                            style: "destructive",
+                            onPress: () => deletePositiveMemory({ id: mem._id }),
+                          },
+                        ]
+                      );
+                    }}
+                    style={styles.iconActionBtn}
+                  >
+                    <Ionicons name="trash-outline" size={18} color="#EF4444" />
+                    <Text style={[styles.actionBtnLabel, { color: "#EF4444" }]}>Delete</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ))
+          )
+        ) : displayedLogs.length === 0 ? (
           <View style={styles.emptyState}>
             <Ionicons name="leaf-outline" size={64} color={Colors.textMuted} style={{ opacity: 0.5, marginBottom: 16 }} />
             <Text style={styles.emptyTitle}>

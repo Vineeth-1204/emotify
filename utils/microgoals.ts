@@ -77,8 +77,6 @@ function seededShuffle<T>(arr: T[], seed: string): T[] {
 }
 
 export function generateMicroGoals(state: { 
-  wsas_total?: number; 
-  reqol10_total?: number; 
   triage_level: string;
   userId?: string;
   dateStr?: string;

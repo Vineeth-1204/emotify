@@ -4,14 +4,14 @@ import { expect, test, describe } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";
 import { testUserId } from "../test-utils/identity";
+import { latestSubmission, staffViewer } from "../test-utils/screening";
 import {
   scorePHQ9Responses,
   scoreGAD7Responses,
   scorePQ16Responses,
-  scoreWSASResponses,
-  scoreReQoL10Responses,
   evaluateClinicalTriage,
 } from "./clinicalScoring";
+import * as clinicalScoring from "./clinicalScoring";
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -76,7 +76,7 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
     });
     const uid_student_pq16_active = await testUserId(t, "student_pq16_active");
 
-    const attempt = await t.mutation(api.screening.submitScreeningAttempt, {
+    const submitted: any = await t.mutation(api.screening.submitScreeningAttempt, {
       userId: uid_student_pq16_active,
       responses: {
         phq9: makePHQ9Responses(),
@@ -84,6 +84,10 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
         pq16: makePQ16Responses(7), // 7 affirmative answers
       },
     });
+    // Students receive only a minimal outcome; the clinical record is read from the database.
+    expect(submitted.status).toBe("submitted");
+    expect(submitted.results).toBeUndefined();
+    const attempt = await latestSubmission(t, uid_student_pq16_active);
 
     expect(attempt.results.pq16.administered).toBe(true);
     expect(attempt.results.pq16.score).toBe(7);
@@ -93,7 +97,8 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
 
   // TEST 4: PQ-16 is no longer hardcoded to zero
   test("4. PQ-16 is no longer hardcoded to zero in database records", async () => {
-    const t = convexTest(schema, modules).withIdentity({
+    const base = convexTest(schema, modules);
+    const t = base.withIdentity({
       subject: "student_pq16_nonzero",
     });
     const uid_student_pq16_nonzero = await testUserId(t, "student_pq16_nonzero");
@@ -108,7 +113,8 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
     });
 
     // Check latest legacy screening mirror (consumed by counselor dashboard)
-    const latestScreening = await t.query(api.screening.getLatest, {
+    const staff = await staffViewer(base);
+    const latestScreening = await staff.query(api.screening.getLatest, {
       userId: uid_student_pq16_nonzero,
     });
 
@@ -119,7 +125,8 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
 
   // TEST 5: Item-level answers are persisted
   test("5. Item-level answers are persisted in screeningAttempts", async () => {
-    const t = convexTest(schema, modules).withIdentity({
+    const base = convexTest(schema, modules);
+    const t = base.withIdentity({
       subject: "student_item_level",
     });
     const uid_student_item_level = await testUserId(t, "student_item_level");
@@ -130,7 +137,7 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
     const gad7Resp = makeGAD7Responses(gad7Items);
     const pq16Resp = makePQ16Responses(2);
 
-    const submission = await t.mutation(api.screening.submitScreeningAttempt, {
+    await t.mutation(api.screening.submitScreeningAttempt, {
       userId: uid_student_item_level,
       responses: {
         phq9: phq9Resp,
@@ -138,8 +145,10 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
         pq16: pq16Resp,
       },
     });
+    const submission = await latestSubmission(t, uid_student_item_level);
 
-    const attempt = await t.query(api.screening.getAttemptById, {
+    const staff = await staffViewer(base);
+    const attempt = await staff.query(api.screening.getAttemptById, {
       attemptId: submission.attemptId,
     });
 
@@ -151,13 +160,14 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
 
   // TEST 6: Multiple screening attempts do not overwrite each other
   test("6. Multiple screening attempts do not overwrite previous records", async () => {
-    const t = convexTest(schema, modules).withIdentity({
+    const base = convexTest(schema, modules);
+    const t = base.withIdentity({
       subject: "student_multi_attempt",
     });
     const uid_student_multi_attempt = await testUserId(t, "student_multi_attempt");
 
     // Attempt 1: Low symptoms
-    const attempt1 = await t.mutation(api.screening.submitScreeningAttempt, {
+    await t.mutation(api.screening.submitScreeningAttempt, {
       userId: uid_student_multi_attempt,
       responses: {
         phq9: makePHQ9Responses([0, 0, 0, 0, 0, 0, 0, 0, 0]),
@@ -165,9 +175,10 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
         pq16: makePQ16Responses(0),
       },
     });
+    const attempt1 = await latestSubmission(t, uid_student_multi_attempt);
 
     // Attempt 2: Higher symptoms
-    const attempt2 = await t.mutation(api.screening.submitScreeningAttempt, {
+    await t.mutation(api.screening.submitScreeningAttempt, {
       userId: uid_student_multi_attempt,
       responses: {
         phq9: makePHQ9Responses([2, 2, 2, 2, 2, 1, 1, 1, 0]),
@@ -175,8 +186,11 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
         pq16: makePQ16Responses(1),
       },
     });
+    const attempt2 = await latestSubmission(t, uid_student_multi_attempt);
+    expect(attempt2.attemptId).not.toBe(attempt1.attemptId);
 
-    const allAttempts = await t.query(api.screening.getAllAttempts, {
+    const staff = await staffViewer(base);
+    const allAttempts = await staff.query(api.screening.getAllAttempts, {
       userId: uid_student_multi_attempt,
     });
 
@@ -265,7 +279,7 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
     // Answers sum to 18 (moderately severe depression)
     const responses = makePHQ9Responses([2, 2, 2, 2, 2, 2, 2, 2, 2]);
 
-    const attempt = await t.mutation(api.screening.submitScreeningAttempt, {
+    await t.mutation(api.screening.submitScreeningAttempt, {
       userId: uid_student_auth_calc,
       responses: {
         phq9: responses,
@@ -273,6 +287,7 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
         pq16: makePQ16Responses(0),
       },
     });
+    const attempt = await latestSubmission(t, uid_student_auth_calc);
 
     // Server authoritatively calculates total = 18 and moderately_severe band
     expect(attempt.results.phq9.score).toBe(18);
@@ -290,7 +305,7 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
     // Item 9 has score 2 (> 0)
     const responses = makePHQ9Responses([0, 0, 0, 0, 0, 0, 0, 0, 2]);
 
-    const attempt = await t.mutation(api.screening.submitScreeningAttempt, {
+    const submitted: any = await t.mutation(api.screening.submitScreeningAttempt, {
       userId: uid_student_item9_flag,
       responses: {
         phq9: responses,
@@ -298,6 +313,10 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
         pq16: makePQ16Responses(0),
       },
     });
+    // The student sees only the safety outcome; the flags live on the stored attempt.
+    expect(submitted.outcome).toBe("immediate_safety");
+    expect(submitted.suicideFlag).toBeUndefined();
+    const attempt = await latestSubmission(t, uid_student_item9_flag);
 
     expect(attempt.suicideFlag).toBe(true);
     expect(attempt.triageLevel).toBe("suicide_flag");
@@ -305,25 +324,42 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
     expect(attempt.results.phq9.item9Score).toBe(2);
   });
 
-  // TEST 11: Missing WSAS content is not presented as a completed questionnaire
-  test("11. Missing WSAS content is not presented as a completed questionnaire", () => {
-    const emptyResult = scoreWSASResponses(undefined);
-    expect(emptyResult.administered).toBe(false);
-    expect(emptyResult.score).toBe(0);
-    expect(emptyResult.severity).toBe("Not Administered (Pending Approved Content)");
+  // TEST 11: WSAS and ReQoL-10 are not part of Emotify and have no scoring path
+  test("11. WSAS and ReQoL-10 have no server-side scoring functions", () => {
+    const exported = Object.keys(clinicalScoring).join(" ").toLowerCase();
+    expect(exported).not.toMatch(/wsas|reqol/);
   });
 
-  // TEST 12: Missing ReQoL content is not presented as a completed questionnaire
-  test("12. Missing ReQoL-10 content is not presented as a completed questionnaire", () => {
-    const emptyResult = scoreReQoL10Responses(undefined);
-    expect(emptyResult.administered).toBe(false);
-    expect(emptyResult.score).toBe(0);
-    expect(emptyResult.severity).toBe("Not Administered (Pending Approved Content)");
+  // TEST 12: Submissions carrying WSAS / ReQoL-10 responses are rejected outright
+  test("12. Screening submission rejects WSAS and ReQoL-10 responses", async () => {
+    const t = convexTest(schema, modules).withIdentity({ subject: "student_retired_instruments" });
+    const uid = await testUserId(t, "student_retired_instruments");
+    const base = {
+      phq9: makePHQ9Responses([0, 0, 0, 0, 0, 0, 0, 0, 0]),
+      gad7: makeGAD7Responses([0, 0, 0, 0, 0, 0, 0]),
+      pq16: makePQ16Responses(0),
+    };
+    const wsas = { wsas_q1: 8, wsas_q2: 8, wsas_q3: 8, wsas_q4: 8, wsas_q5: 8 };
+    await expect(
+      t.mutation(api.screening.submitScreeningAttempt, { userId: uid, responses: { ...base, wsas } as any })
+    ).rejects.toThrow();
+    await expect(
+      t.mutation(api.screening.submitScreeningAttempt, { userId: uid, responses: { ...base, reqol10: { reqol10_q1: 4 } } as any })
+    ).rejects.toThrow();
+
+    await t.mutation(api.screening.submitScreeningAttempt, { userId: uid, responses: base });
+    const ok = await latestSubmission(t, uid);
+    expect(Object.keys(ok.results).sort()).toEqual(["gad7", "phq9", "pq16"]);
+    const stored = await t.run(async (ctx) => ctx.db.get(ok.attemptId));
+    expect(Object.keys((stored as any).instrumentVersions).sort()).toEqual(["gad7", "phq9", "pq16"]);
+    expect(Object.keys((stored as any).results).sort()).toEqual(["gad7", "phq9", "pq16"]);
+    expect(Object.keys((stored as any).responses).sort()).toEqual(["gad7", "phq9", "pq16"]);
   });
 
   // TEST 13: Existing legacy screening records remain readable
   test("13. Legacy screening records remain fully readable", async () => {
-    const t = convexTest(schema, modules).withIdentity({
+    const base = convexTest(schema, modules);
+    const t = base.withIdentity({
       subject: "student_legacy_read",
     });
     const uid_student_legacy_read = await testUserId(t, "student_legacy_read");
@@ -341,14 +377,15 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
       });
     });
 
-    const latest = await t.query(api.screening.getLatest, {
+    const staff = await staffViewer(base);
+    const latest = await staff.query(api.screening.getLatest, {
       userId: uid_student_legacy_read,
     });
     expect(latest).toBeDefined();
     expect(latest?.phq9_total).toBe(8);
     expect(latest?.gad7_total).toBe(6);
 
-    const all = await t.query(api.screening.getAll, {
+    const all = await staff.query(api.screening.getAll, {
       userId: uid_student_legacy_read,
     });
     expect(all).toHaveLength(1);
@@ -396,18 +433,20 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
       subject: studentId,
     });
 
-    const attempt = await authedT.mutation(api.screening.submitScreeningAttempt, {
+    await authedT.mutation(api.screening.submitScreeningAttempt, {
       responses: {
         phq9: makePHQ9Responses([1, 1, 1, 1, 1, 1, 1, 1, 0]),
         gad7: makeGAD7Responses([1, 1, 1, 1, 1, 1, 1]),
         pq16: makePQ16Responses(2),
       },
     });
+    const attempt = await latestSubmission(t, studentId);
 
     expect(attempt.attemptId).toBeDefined();
 
-    // Retrieve attempt directly and check identity fields
-    const savedAttempt = await authedT.query(api.screening.getAttemptById, {
+    // Retrieve attempt directly (as staff; the clinical read is staff-only) and check identity fields
+    const staff = await staffViewer(t);
+    const savedAttempt = await staff.query(api.screening.getAttemptById, {
       attemptId: attempt.attemptId,
     });
 
@@ -416,7 +455,7 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
     expect(savedAttempt?.patientId).toBe(expectedPatientId);
 
     // Also verify screening mirror contains canonical userId
-    const mirror = await authedT.query(api.screening.getLatest, {
+    const mirror = await staff.query(api.screening.getLatest, {
       userId: studentId,
     });
     expect(mirror).toBeDefined();
@@ -445,15 +484,17 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
     const userB = await t.withIdentity({ subject: regB.user!.id }).query(api.users.getByClerkId, { clerkId: regB.user!.id });
 
     const authedA = t.withIdentity({ subject: regA.user!.id });
-    const attemptA = await authedA.mutation(api.screening.submitScreeningAttempt, {
+    await authedA.mutation(api.screening.submitScreeningAttempt, {
       responses: {
         phq9: makePHQ9Responses(),
         gad7: makeGAD7Responses(),
         pq16: makePQ16Responses(0),
       },
     });
+    const attemptA = await latestSubmission(t, regA.user!.id);
 
-    const savedA = await authedA.query(api.screening.getAttemptById, {
+    const staff = await staffViewer(t);
+    const savedA = await staff.query(api.screening.getAttemptById, {
       attemptId: attemptA.attemptId,
     });
     expect(savedA?.userId).toBe(regA.user!.id);
@@ -463,15 +504,16 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
     // Test a user without patientId: ensure patientId is undefined (never guessed)
     const authedUnknown = t.withIdentity({ subject: "non_existent_user_id" });
     const uid_non_existent_user_id = await testUserId(authedUnknown, "non_existent_user_id");
-    const attemptUnknown = await authedUnknown.mutation(api.screening.submitScreeningAttempt, {
+    await authedUnknown.mutation(api.screening.submitScreeningAttempt, {
       responses: {
         phq9: makePHQ9Responses(),
         gad7: makeGAD7Responses(),
         pq16: makePQ16Responses(0),
       },
     });
+    const attemptUnknown = await latestSubmission(t, uid_non_existent_user_id);
 
-    const savedUnknown = await authedUnknown.query(api.screening.getAttemptById, {
+    const savedUnknown = await staff.query(api.screening.getAttemptById, {
       attemptId: attemptUnknown.attemptId,
     });
     expect(savedUnknown?.userId).toBe(uid_non_existent_user_id);
@@ -498,15 +540,17 @@ describe("Priority 3: Clinical Screening Architecture Suite", () => {
     });
 
     const authedT = t.withIdentity({ subject: studentId });
-    const attempt = await authedT.mutation(api.screening.submitScreeningAttempt, {
+    await authedT.mutation(api.screening.submitScreeningAttempt, {
       responses: {
         phq9: makePHQ9Responses(),
         gad7: makeGAD7Responses(),
         pq16: makePQ16Responses(0),
       },
     });
+    const attempt = await latestSubmission(t, studentId);
 
-    const saved = await authedT.query(api.screening.getAttemptById, {
+    const staff = await staffViewer(t);
+    const saved = await staff.query(api.screening.getAttemptById, {
       attemptId: attempt.attemptId,
     });
     expect(saved?.userId).toBe(studentId); // Canonical ID stored, NOT clerkId

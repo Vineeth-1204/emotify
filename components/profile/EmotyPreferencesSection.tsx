@@ -199,7 +199,7 @@ export const EmotyPreferencesSection: React.FC<EmotyPreferencesSectionProps> = (
             </View>
             <Text style={[styles.emptyTitle, { color: colors.text }]}>No saved preferences yet</Text>
             <Text style={[styles.emptyDesc, { color: colors.textSecondary }]}>
-              Customize how Mitra speaks, guides routines, or paces goals by adding your preferences below.
+              Customize how Emoty speaks, guides routines, or paces goals by adding your preferences below.
             </Text>
           </View>
         ) : (
@@ -314,9 +314,9 @@ export const EmotyPreferencesSection: React.FC<EmotyPreferencesSectionProps> = (
             {/* Modal Title & Close */}
             <View style={styles.modalHeader}>
               <View style={{ flex: 1 }}>
-                <Text style={[styles.modalTitle, { color: colors.text }]}>Personalize Mitra</Text>
+                <Text style={[styles.modalTitle, { color: colors.text }]}>Personalize Emoty</Text>
                 <Text style={[styles.modalSubtitle, { color: colors.textSecondary }]}>
-                  Choose how you prefer Mitra to support you.
+                  Choose how you prefer Emoty to support you.
                 </Text>
               </View>
               <TouchableOpacity

@@ -288,7 +288,7 @@ describe("P11 Step 5D: Targeted Security & Scalability Hardening", () => {
   // PRIORITY 1: STAFF ALERTS BOUNDED RETRIEVAL
   // ==========================================
   describe("Staff Alerts Hardening & Bounding", () => {
-    test("ALERTS-01: Staff retrieves expected alerts and students see only their own", async () => {
+    test("ALERTS-01: Staff retrieves expected alerts; students see none (alerts are a staff view)", async () => {
       const { t, studentAId, studentBId, authedA, authedCounselor } = await setupEnvironment();
 
       await t.run(async (ctx) => {
@@ -307,11 +307,9 @@ describe("P11 Step 5D: Targeted Security & Scalability Hardening", () => {
         });
       });
 
-      // Student A sees only their own alert
+      // Students get no alert rows at all (staff view), not even their own
       const studentAlerts = await authedA.query(api.dashboard.getAlerts, {});
-      expect(studentAlerts.length).toBe(1);
-      expect(studentAlerts[0].userId).toBe(studentAId);
-      expect(studentAlerts[0].patientName).toBe("Student Alpha");
+      expect(studentAlerts).toEqual([]);
 
       // Staff counselor sees both alerts
       const staffAlerts = await authedCounselor.query(api.dashboard.getAlerts, {});

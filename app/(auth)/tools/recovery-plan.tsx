@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Dimensions, Alert } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
+import { CHECKIN_POST_SESSION_HREF, isCheckinReturn } from "@/common/checkinReturn";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Colors } from "@/constants/Colors";
@@ -18,7 +19,9 @@ const { width } = Dimensions.get("window");
 export default function RecoveryPlanScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { sessionId } = useLocalSearchParams();
+  const { sessionId, returnTo } = useLocalSearchParams();
+  // Opened from a reframe the guided check-in started: hand back to its "How do you feel now?" step
+  const returnToCheckin = isCheckinReturn(returnTo);
 
   // Validate session ID
   const activeSessionId = Array.isArray(sessionId) ? sessionId[0] : sessionId;
@@ -169,10 +172,19 @@ export default function RecoveryPlanScreen() {
 
           {/* Action buttons */}
           <View style={styles.successActionContainer}>
+            {returnToCheckin && (
+              <Button
+                title="Continue"
+                onPress={() => router.replace(CHECKIN_POST_SESSION_HREF as any)}
+                style={[styles.actionBtn, { marginBottom: Theme.spacing.md }]}
+              />
+            )}
             <Button
               title="View My Checklist"
               onPress={() => router.replace("/(auth)/tools/microgoals")}
-              style={styles.actionBtn}
+              variant={returnToCheckin ? "outline" : undefined}
+              style={returnToCheckin ? styles.actionBtnOutline : styles.actionBtn}
+              textStyle={returnToCheckin ? { color: Colors.primary } : undefined}
             />
             <Button
               title="Return to Tools"
@@ -399,7 +411,9 @@ const styles = StyleSheet.create({
   },
   metaRow: {
     flexDirection: "row",
-    gap: 16,
+    flexWrap: "wrap",
+    columnGap: 16,
+    rowGap: 6,
     marginBottom: 12,
   },
   metaItem: {

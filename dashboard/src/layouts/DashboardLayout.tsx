@@ -6,10 +6,12 @@ import {
   Bell,
   BrainCircuit,
   CalendarDays,
+  Contact,
   FileText,
   Inbox,
   LayoutDashboard,
   LogOut,
+  UserCog,
   Users,
 } from "lucide-react";
 
@@ -35,6 +37,16 @@ export default function DashboardLayout() {
           <NavLink to="/patients" className={({ isActive }) => isActive ? "nav-item active" : "nav-item"}>
             <Users size={18} /> Students
           </NavLink>
+          {isAdmin && (
+            <NavLink to="/assignments" className={({ isActive }) => isActive ? "nav-item active" : "nav-item"}>
+              <UserCog size={18} /> Assignments
+            </NavLink>
+          )}
+          {isAdmin && (
+            <NavLink to="/counsellors" className={({ isActive }) => isActive ? "nav-item active" : "nav-item"}>
+              <Contact size={18} /> Counsellor directory
+            </NavLink>
+          )}
           <NavLink to="/alerts" className={({ isActive }) => isActive ? "nav-item active" : "nav-item"}>
             <AlertTriangle size={18} /> Alerts
           </NavLink>

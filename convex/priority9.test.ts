@@ -5,6 +5,7 @@ import { api } from "./_generated/api";
 import schema from "./schema";
 import type { Id } from "./_generated/dataModel";
 import { JPMR_STEPS, getJpmrStep } from "../components/jpmr/jpmrData";
+import { latestSubmission } from "../test-utils/screening";
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -215,13 +216,15 @@ describe("Priority 9 Step 2: JPMR Provenance Suite", () => {
     const now = Date.now();
 
     // Submit legitimate screening attempt
-    const sub = await student.mutation(api.screening.submitScreeningAttempt, {
+    const subResponse = await student.mutation(api.screening.submitScreeningAttempt, {
       responses: {
         phq9: makeAnswers(9, 1),
         gad7: makeAnswers(7, 1),
         pq16: makeAnswers(16, 0),
       },
     });
+    expect(subResponse).not.toHaveProperty("attemptId");
+    const sub = await latestSubmission(t, studentAId);
     expect(sub.attemptId).toBeDefined();
 
     // Create JPMR log carrying the screening attemptId
@@ -250,13 +253,15 @@ describe("Priority 9 Step 2: JPMR Provenance Suite", () => {
     const now = Date.now();
 
     // Submit legitimate screening attempt which creates triage
-    const sub = await student.mutation(api.screening.submitScreeningAttempt, {
+    const subResponse = await student.mutation(api.screening.submitScreeningAttempt, {
       responses: {
         phq9: makeAnswers(9, 2),
         gad7: makeAnswers(7, 2),
         pq16: makeAnswers(16, 0),
       },
     });
+    expect(subResponse).not.toHaveProperty("attemptId");
+    const sub = await latestSubmission(t, studentAId);
     expect(sub.triageId).toBeDefined();
 
     // Create JPMR log carrying the triageId
@@ -643,13 +648,15 @@ describe("Priority 9 Step 3: Resilient JPMR Media & Demonstration Suite", () => 
     const student = t.withIdentity({ subject: studentId });
     const now = Date.now();
 
-    const sub = await student.mutation(api.screening.submitScreeningAttempt, {
+    const subResponse = await student.mutation(api.screening.submitScreeningAttempt, {
       responses: {
         phq9: makeAnswers(9, 1),
         gad7: makeAnswers(7, 1),
         pq16: makeAnswers(16, 0),
       },
     });
+    expect(subResponse).not.toHaveProperty("attemptId");
+    const sub = await latestSubmission(t, studentId);
 
     const logId = await student.mutation(api.jpmrLogs.create, {
       completed: true,
@@ -662,6 +669,8 @@ describe("Priority 9 Step 3: Resilient JPMR Media & Demonstration Suite", () => 
       attemptId: sub.attemptId,
       triageId: sub.triageId,
     });
+    expect(sub.attemptId).toBeDefined();
+    expect(sub.triageId).toBeDefined();
 
     await t.run(async (ctx) => {
       const log = await ctx.db.get(logId);

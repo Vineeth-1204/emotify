@@ -32,13 +32,6 @@ export function interpretPQ16(total: number): SeverityResult {
   return { severity: "Low / Normal", level: "mild" };
 }
 
-/** Interpret WSAS total score (0-40) */
-export function interpretWSAS(total: number): SeverityResult {
-  if (total <= 9) return { severity: "Subclinical / Minimal Impairment", level: "mild" };
-  if (total <= 20) return { severity: "Significant Functional Impairment", level: "moderate" };
-  return { severity: "Severe Functional Impairment", level: "severe" };
-}
-
 /** Calculate PHQ-9 total and item 9 flag */
 export function scorePHQ9(answers: number[]): { total: number; item9Score: number; item9Flag: boolean; severity: string } {
   const total = answers.reduce((sum, val) => sum + val, 0);
@@ -54,9 +47,31 @@ export function scoreGAD7(answers: number[]): { total: number; severity: string 
   return { total, severity };
 }
 
+/** Interpret PSS-10 total score into clinical stress band */
+export function interpretPSS10(total: number): SeverityResult {
+  if (total <= 13) return { severity: "Low Stress", level: "mild" };
+  if (total <= 26) return { severity: "Moderate Stress", level: "moderate" };
+  return { severity: "High Perceived Stress", level: "severe" };
+}
+
 /** Calculate PQ-16 total (count of "Yes" endorsements) */
 export function scorePQ16(answers: number[]): { total: number; severity: string } {
   const total = answers.reduce((sum, val) => sum + val, 0);
   const { severity } = interpretPQ16(total);
   return { total, severity };
 }
+
+/**
+ * Calculate PSS-10 total score with reverse scoring for items 4, 5, 7, and 8.
+ * Scale: 0-4 per item. Reversed formula: (4 - answer).
+ */
+export function scorePSS10(answers: number[]): { total: number; severity: string } {
+  const reverseIndices = new Set([3, 4, 6, 7]); // 0-indexed corresponding to items 4, 5, 7, 8
+  const total = answers.reduce((sum, val, idx) => {
+    const itemScore = reverseIndices.has(idx) ? 4 - val : val;
+    return sum + itemScore;
+  }, 0);
+  const { severity } = interpretPSS10(total);
+  return { total, severity };
+}
+

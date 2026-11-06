@@ -1,55 +1,52 @@
 import { v } from "convex/values";
 import { mutation, query } from "./functions";
+import { internalMutation } from "./_generated/server";
+import { internal } from "./_generated/api";
 import { paginationOptsValidator } from "convex/server";
 import type { Id } from "./_generated/dataModel";
-import { assertCanAccessStudent, getAuthenticatedUser, getStaffScope, scopeIncludes, getStaffRecipientsForStudent } from "./authz";
+import type { MutationCtx } from "./_generated/server";
+import {
+  assertCanAccessStudent,
+  getAuthenticatedUser,
+  getStaffScope,
+  scopeIncludes,
+  isStudentRole,
+  requireCounselorOrAdmin,
+  type AuthenticatedUser,
+} from "./authz";
 import { sanitizePlainText } from "./sanitizer";
+import { logAuditEvent } from "./audit";
+import { createNotification, notifyEach, activeAdminIds, studentLabelFor } from "./notify";
+import {
+  OPEN_STATUSES,
+  TERMINAL_STATUSES,
+  CONFIRMED_STATUSES,
+  allowedActions,
+  appointmentSlotKey,
+  appointmentStatusLabel,
+  awaitingResponseFrom,
+  canTakeAction,
+  validateAppointmentSlot,
+  type AppointmentAction,
+} from "../common/appointmentStatus";
 
-const TERMINAL_STATUSES = new Set(["completed", "cancelled", "rejected"]);
+/**
+ * Appointments: student <-> their assigned counsellor (admins organisation-wide).
+ * Lifecycle and who may do what: common/appointmentStatus.ts (allowedActions is enforced here).
+ * Every transition checks the caller's role and the student's CURRENT assignment on the server,
+ * records status history, and notifies only the other party (see
+ * EMOTIFY_NOTIFICATION_EVENT_MATRIX.md). Function names and arguments are unchanged so the
+ * dashboard and older app builds keep working.
+ */
+
 const ALLOWED_TARGET_STATUSES = new Set(["accepted", "rejected", "completed", "cancelled"]);
+/** Open requests a student may have at once (protects counsellors from accidental floods). */
+export const MAX_OPEN_STUDENT_REQUESTS = 3;
+const REQUEST_KEY_RE = /^[A-Za-z0-9_-]{8,128}$/;
+const MAX_TEXT = 500;
+const HISTORY_LIMIT = 50;
 
-async function notifyStaff(
-  ctx: any,
-  studentKey: string,
-  type: string,
-  title: string,
-  message: string
-) {
-  // Admins plus the student's assigned counsellor (all counsellors if unassigned)
-  const recipients = await getStaffRecipientsForStudent(ctx, studentKey);
-  const now = Date.now();
-  for (const staff of recipients) {
-    await ctx.db.insert("notifications", {
-      recipientId: String(staff._id),
-      type,
-      title,
-      message,
-      priority: "medium",
-      read: false,
-      archived: false,
-      createdAt: now,
-    });
-  }
-}
-
-async function notifyStudent(
-  ctx: any,
-  studentUserId: Id<"users">,
-  type: string,
-  title: string,
-  message: string
-) {
-  await ctx.db.insert("notifications", {
-    recipientId: String(studentUserId),
-    type,
-    title,
-    message,
-    priority: "medium",
-    read: false,
-    archived: false,
-    createdAt: Date.now(),
-  });
-}
+type ActorRole = "student" | "counsellor" | "admin" | "system";
 
 async function validateCounsellorRequestProvenance(
   ctx: any,
@@ -72,6 +69,204 @@ async function validateCounsellorRequestProvenance(
   }
 
   return reqDoc;
+}
+
+/** Screening attempt and triage links must belong to the student the appointment is for. */
+async function validateClinicalProvenance(
+  ctx: any,
+  targetUserId: Id<"users">,
+  attemptId: Id<"screeningAttempts"> | undefined,
+  triageId: Id<"triages"> | undefined
+) {
+  if (!attemptId && !triageId) return;
+  const target = await ctx.db.get(targetUserId);
+  const keys = new Set<string>([String(targetUserId), ...(target?.clerkId ? [target.clerkId] : [])]);
+  if (attemptId) {
+    const attempt = await ctx.db.get(attemptId);
+    if (!attempt || !keys.has(attempt.userId)) {
+      throw new Error("Invalid provenance: Screening attempt does not belong to this student.");
+    }
+  }
+  if (triageId) {
+    const triage = await ctx.db.get(triageId);
+    if (!triage || !keys.has(triage.userId)) {
+      throw new Error("Invalid provenance: Triage record does not belong to this student.");
+    }
+  }
+}
+
+/** The student's currently assigned, active counsellor (null if unassigned or inactive). */
+export async function assignedCounsellorId(ctx: { db: any }, studentId: Id<"users">): Promise<Id<"users"> | null> {
+  const row = await ctx.db
+    .query("counsellorAssignments")
+    .withIndex("by_student_and_active", (q: any) => q.eq("studentId", studentId).eq("active", true))
+    .first();
+  if (!row) return null;
+  const counsellor = await ctx.db.get(row.counsellorId);
+  return counsellor && counsellor.status !== "inactive" ? row.counsellorId : null;
+}
+
+/** Staff responsible for an appointment: its counsellor if active, else every active admin. */
+async function staffRecipientsFor(ctx: { db: any }, appt: any): Promise<Id<"users">[]> {
+  const counsellorId = appt.counsellorId ?? (await assignedCounsellorId(ctx, appt.userId));
+  if (counsellorId) {
+    const c = await ctx.db.get(counsellorId);
+    if (c && c.status !== "inactive") return [counsellorId];
+  }
+  return await activeAdminIds(ctx);
+}
+
+interface Actor {
+  user: AuthenticatedUser;
+  side: "student" | "staff";
+  role: ActorRole;
+}
+
+/**
+ * Who is acting on this appointment, or throws. Staff need the student in their CURRENT caseload
+ * (admins: any student); a counsellor also needs the appointment to be with them when it names a
+ * counsellor. Students only act on their own appointments.
+ */
+async function actorFor(ctx: any, appt: any): Promise<Actor> {
+  const user = await getAuthenticatedUser(ctx);
+  if (!user) throw new Error("Unauthenticated");
+  if (user.role === "admin" || user.role === "counsellor") {
+    await assertCanAccessStudent(ctx, String(appt.userId));
+    if (user.role === "counsellor" && appt.counsellorId && appt.counsellorId !== user._id) {
+      throw new Error("Unauthorized: This appointment is with another counsellor.");
+    }
+    return { user, side: "staff", role: user.role };
+  }
+  if (isStudentRole(user.role) && appt.userId === user._id) {
+    return { user, side: "student", role: "student" };
+  }
+  throw new Error("Unauthorized: Cannot access or modify another user's appointment.");
+}
+
+function requireAction(appt: any, actor: Actor, action: AppointmentAction) {
+  if (canTakeAction(appt, actor.side, action)) return;
+  if ((action === "accept" || action === "decline") && (appt.status === "pending" || appt.status === "waiting")) {
+    throw new Error("Unauthorized: Receiver must accept/reject.");
+  }
+  if (action === "complete" && actor.side === "student") {
+    throw new Error("Unauthorized: Only your counsellor can mark an appointment completed.");
+  }
+  throw new Error(`Invalid transition: Cannot ${action.replace("_", " ")} an appointment in status ${appt.status}.`);
+}
+
+function historyEntry(status: string, actorRole: ActorRole, event: string) {
+  return { status, at: Date.now(), actorRole, event };
+}
+
+function withHistory(appt: any, entry: ReturnType<typeof historyEntry>) {
+  return [...(appt.statusHistory ?? []), entry].slice(-HISTORY_LIMIT);
+}
+
+/** Another confirmed appointment holds this counsellor's slot. */
+async function slotTaken(ctx: any, counsellorId: Id<"users"> | undefined, slotKey: string | null, excludeId?: Id<"appointments">) {
+  if (!counsellorId || !slotKey) return false;
+  const rows = await ctx.db
+    .query("appointments")
+    .withIndex("by_counsellor_and_slot", (q: any) => q.eq("counsellorId", counsellorId).eq("slotKey", slotKey))
+    .take(20);
+  return rows.some((r: any) => r._id !== excludeId && CONFIRMED_STATUSES.has(r.status));
+}
+
+const dateTime = (appt: any) => (appt.date && appt.time ? `${appt.date} at ${appt.time}` : "the scheduled time");
+
+/**
+ * Notifications for one appointment event. Only the other party is notified; text inside the
+ * app may include the date/time, lock-screen push copy never does (notify.PUSH_COPY).
+ * Dedupe: one notification per recipient per transition (history length makes the key unique).
+ */
+async function notifyAppointmentEvent(ctx: any, appt: any, event: string, by: ActorRole) {
+  const n = (appt.statusHistory?.length ?? 0) + 1;
+  const base = { destination: "appointments" as const, relatedId: String(appt._id) };
+  const key = (who: string) => `appt:${appt._id}:${event}:${n}:${who}`;
+  const toStudent = (type: string, title: string, message: string) =>
+    createNotification(ctx, { ...base, recipientId: appt.userId, type, title, message, dedupeKey: key("student") });
+  const toStaff = async (type: string, title: string, message: string) => {
+    const recipients = await staffRecipientsFor(ctx, appt);
+    await notifyEach(ctx, recipients, { ...base, type, title, message, dedupeKey: key("staff") });
+  };
+  const student = await studentLabelFor(ctx, String(appt.userId));
+  const fromStudent = by === "student";
+
+  switch (event) {
+    case "requested": {
+      const hasCounsellor = !!appt.counsellorId;
+      await toStudent(
+        "appointment_requested",
+        "Request sent",
+        hasCounsellor
+          ? `Your request for ${dateTime(appt)} has been sent to your counsellor.`
+          : `Your request for ${dateTime(appt)} has been sent to the care team, who will connect you with a counsellor.`
+      );
+      if (hasCounsellor) {
+        await toStaff("appointment_request_received", "New appointment request", `${student} requested an appointment on ${dateTime(appt)}.`);
+      } else {
+        await notifyEach(ctx, await activeAdminIds(ctx), {
+          ...base,
+          type: "appointment_needs_counsellor",
+          title: "Appointment request needs a counsellor",
+          message: `${student} requested an appointment on ${dateTime(appt)} but has no assigned counsellor.`,
+          priority: "high",
+          dedupeKey: key("admin"),
+        });
+      }
+      return;
+    }
+    case "proposed":
+      return toStudent("appointment_proposed", "New appointment suggested", `Your counsellor suggested an appointment on ${dateTime(appt)}. Open Appointments to reply.`);
+    case "confirmed":
+      return fromStudent
+        ? toStaff("appointment_updated", "Appointment confirmed", `${student} confirmed the appointment on ${dateTime(appt)}.`)
+        : toStudent("appointment_confirmed", "Appointment confirmed", `Your appointment on ${dateTime(appt)} is confirmed.`);
+    case "declined":
+      return fromStudent
+        ? toStaff("appointment_updated", "Appointment declined", `${student} declined the appointment on ${dateTime(appt)}.`)
+        : toStudent("appointment_declined", "Appointment declined", "Your counsellor could not make this time. You can request another time from Appointments.");
+    case "reschedule_proposed":
+      return fromStudent
+        ? toStaff("appointment_updated", "New time requested", `${student} asked to move the appointment to ${appt.rescheduleDate} at ${appt.rescheduleTime}.`)
+        : toStudent("appointment_reschedule_proposed", "New time suggested", `A new time has been suggested: ${appt.rescheduleDate} at ${appt.rescheduleTime}.`);
+    case "cancelled":
+      return fromStudent
+        ? toStaff("appointment_updated", "Appointment cancelled", `${student} cancelled the appointment on ${dateTime(appt)}.`)
+        : toStudent("appointment_cancelled", "Appointment cancelled", `Your appointment on ${dateTime(appt)} has been cancelled.`);
+    case "completed":
+      return toStudent("appointment_completed", "Appointment completed", "Your appointment has been marked completed. You can share feedback from Appointments.");
+    case "feedback":
+      return toStaff("appointment_feedback", "Session feedback received", `${student} shared feedback about the appointment on ${dateTime(appt)}.`);
+  }
+}
+
+/** Applies one transition: patch, history, provenance sync, notifications. */
+async function applyTransition(
+  ctx: any,
+  appt: any,
+  actor: Actor,
+  status: string,
+  event: string,
+  extra: Record<string, unknown> = {}
+) {
+  const now = Date.now();
+  const updated = { ...appt, ...extra, status };
+  await ctx.db.patch(appt._id, {
+    ...extra,
+    status,
+    updatedAt: now,
+    statusHistory: withHistory(appt, historyEntry(status, actor.role, event)),
+  });
+
+  // Provenance synchronization with counsellorRequests (avoid redundant write if status already matches)
+  if (appt.counsellorRequestId && (status === "accepted" || status === "completed")) {
+    const cr = await ctx.db.get(appt.counsellorRequestId);
+    const target = status === "accepted" ? "scheduled" : "completed";
+    if (cr && cr.status !== target) await ctx.db.patch(appt.counsellorRequestId, { status: target, updatedAt: now });
+  }
+
+  await notifyAppointmentEvent(ctx, updated, event, actor.role);
 }
 
 /** Create an appointment (Admin/Counselor) with conflict check and provenance */
@@ -107,6 +302,7 @@ export const createAppointment = mutation({
     if (args.counsellorRequestId) {
       await validateCounsellorRequestProvenance(ctx, args.counsellorRequestId, args.userId);
     }
+    await validateClinicalProvenance(ctx, args.userId, args.attemptId, args.triageId);
 
     // slot conflict validation - prevent double booking
     // Only search appointments starting up to 4 hours before the requested start time, up to the end time
@@ -130,6 +326,7 @@ export const createAppointment = mutation({
       throw new Error("Conflict: This slot is already booked by another appointment.");
     }
 
+    const counsellorId = caller.role === "counsellor" ? caller._id : (await assignedCounsellorId(ctx, args.userId)) ?? undefined;
     const appointmentId = await ctx.db.insert("appointments", {
       userId: args.userId,
       startTime: args.startTime,
@@ -140,7 +337,10 @@ export const createAppointment = mutation({
       attemptId: args.attemptId,
       triageId: args.triageId,
       counsellorRequestId: args.counsellorRequestId,
+      counsellorId,
       createdAt: Date.now(),
+      updatedAt: Date.now(),
+      statusHistory: [historyEntry("scheduled", caller.role as ActorRole, "scheduled")],
     });
 
     if (args.counsellorRequestId) {
@@ -150,19 +350,20 @@ export const createAppointment = mutation({
       });
     }
 
-    await notifyStudent(
-      ctx,
-      args.userId,
-      "appointment_scheduled",
-      "Appointment Scheduled",
-      "A session has been scheduled with a counselor."
-    );
+    await createNotification(ctx, {
+      recipientId: args.userId,
+      type: "appointment_confirmed",
+      title: "Appointment scheduled",
+      message: "A session has been scheduled with a counsellor.",
+      destination: "appointments",
+      relatedId: String(appointmentId),
+      dedupeKey: `appt:${appointmentId}:scheduled`,
+    });
 
     return appointmentId;
   },
 });
 
-/** List all appointments with patient details joined (Admin/Counselor) */
 export const listAllAppointments = query({
   args: {},
   handler: async (ctx) => {
@@ -216,91 +417,16 @@ export const getPatientAppointments = query({
       .take(50);
 
     // Sort by startTime ascending
-    return appointments.sort((a, b) => {
+    const sorted = appointments.sort((a, b) => {
       if (a.startTime === undefined || b.startTime === undefined) return 0;
       return a.startTime - b.startTime;
     });
+    return (await isStaffCaller(ctx)) ? sorted : sorted.map(withoutInternalLinks);
   },
 });
 
 /** Cancel an appointment (Staff or Student Owner) */
-export const cancelAppointment = mutation({
-  args: { appointmentId: v.id("appointments") },
-  handler: async (ctx, args) => {
-    const caller = await getAuthenticatedUser(ctx);
-    if (!caller) throw new Error("Unauthenticated");
 
-    const appt = await ctx.db.get(args.appointmentId);
-    if (!appt) throw new Error("Appointment not found");
-
-    if (TERMINAL_STATUSES.has(appt.status)) {
-      throw new Error(`Appointment is in a terminal state (${appt.status}) and cannot be modified.`);
-    }
-
-    const isStaff = caller.role === "admin" || caller.role === "counsellor";
-    const isStudentOwner =
-      caller._id === appt.userId ||
-      (caller.clerkId && caller.clerkId === (appt.userId as any));
-
-    if (!isStaff && !isStudentOwner) {
-      throw new Error("Unauthorized: Cannot cancel another user's appointment.");
-    }
-
-    // Counsellors may only act on students in their caseload
-
-    if (isStaff) await assertCanAccessStudent(ctx, String(appt.userId));
-
-    await ctx.db.patch(args.appointmentId, {
-      status: "cancelled",
-    });
-
-    if (isStaff) {
-      await notifyStudent(
-        ctx,
-        appt.userId,
-        "appointment_cancelled",
-        "Appointment Cancelled",
-        "Your appointment has been cancelled by the counselor."
-      );
-    } else {
-      await notifyStaff(
-        ctx,
-        String(appt.userId),
-        "appointment_cancelled",
-        "Appointment Cancelled by Student",
-        `${caller.full_name || "A student"} has cancelled their appointment.`
-      );
-    }
-
-    return { success: true };
-  },
-});
-
-/** Delete an appointment request completely (Admin or User who created it) */
-export const deleteAppointment = mutation({
-  args: { appointmentId: v.id("appointments") },
-  handler: async (ctx, args) => {
-    const caller = await getAuthenticatedUser(ctx);
-    if (!caller) throw new Error("Unauthenticated");
-
-    const appt = await ctx.db.get(args.appointmentId);
-    if (!appt) throw new Error("Appointment not found");
-
-    const isStudentOwner =
-      caller._id === appt.userId ||
-      (caller.clerkId && caller.clerkId === (appt.userId as any));
-
-    // Only Admin or the owning patient can delete
-    if (caller.role !== "admin" && !isStudentOwner) {
-      throw new Error("Unauthorized to delete this appointment.");
-    }
-
-    await ctx.db.delete(args.appointmentId);
-    return { success: true };
-  },
-});
-
-/** Update an appointment (Admin only) with conflict check */
 export const updateAppointment = mutation({
   args: {
     appointmentId: v.id("appointments"),
@@ -376,13 +502,37 @@ export const tempGetAppointments = query({
   }
 });
 
+
+
+
+async function isStaffCaller(ctx: any) {
+  const user = await getAuthenticatedUser(ctx);
+  return !!user && (user.role === "admin" || user.role === "counsellor");
+}
+
+/** A student's own appointment row without internal clinical links or workflow keys. */
+function withoutInternalLinks<T extends Record<string, any>>(a: T) {
+  const { attemptId: _a, triageId: _t, counsellorId: _c, requestKey: _k, slotKey: _s, ...rest } = a;
+  return { ...rest, statusLabel: appointmentStatusLabel(a as any, "student"), actions: allowedActions(a as any, "student") };
+}
+
 // --- Two-Way Appointment System Methods ---
 
+/**
+ * Create an appointment request.
+ *  - Student (createdBy "user"): only for themselves, addressed to their CURRENT assigned
+ *    counsellor (derived here; the client cannot choose a counsellor). With no counsellor the
+ *    request goes to the admin queue. Duplicate submissions (same requestKey, or the same open
+ *    slot) return the existing appointment; at most MAX_OPEN_STUDENT_REQUESTS open requests.
+ *  - Staff (createdBy "admin"): a counsellor for a student in their caseload, or an admin for any
+ *    student, proposes a time; the student answers it.
+ */
 export const createAppointmentRequest = mutation({
   args: {
     title: v.string(),
-    userId: v.id("users"), // Target patient (can be caller if created by user)
-    createdBy: v.string(), // "admin" | "user"
+    userId: v.id("users"), // Target patient (the caller themself when a student creates it)
+    // Kept for client compatibility; authority comes from the caller's role, and this must match it.
+    createdBy: v.union(v.literal("admin"), v.literal("user")),
     patientName: v.optional(v.string()), // required if admin creates
     date: v.string(), // YYYY-MM-DD
     time: v.string(), // 12-hour AM/PM
@@ -391,78 +541,106 @@ export const createAppointmentRequest = mutation({
     attemptId: v.optional(v.id("screeningAttempts")),
     triageId: v.optional(v.id("triages")),
     counsellorRequestId: v.optional(v.id("counsellorRequests")),
+    /** Client idempotency key: retries of the same request return the same appointment. */
+    requestKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const caller = await getAuthenticatedUser(ctx);
     if (!caller) throw new Error("Unauthenticated");
 
+    // Authority is derived from the authenticated role, never from the client's createdBy:
+    //  - staff (admin, or a counsellor for a student in their caseload) propose as "admin";
+    //  - a student requests only for their own account, as "user";
+    //  - any other caller, or a createdBy that does not match the caller's role, is refused.
     const isStaff = caller.role === "admin" || caller.role === "counsellor";
-
-    if (args.createdBy === "admin" && !isStaff) {
-      throw new Error("Unauthorized: Admin access required.");
-    }
-    if (args.createdBy === "admin") {
+    if (isStaff) {
+      if (args.createdBy !== "admin") {
+        throw new Error("Unauthorized: Staff propose appointments as staff (createdBy \"admin\").");
+      }
       await assertCanAccessStudent(ctx, String(args.userId));
-    }
-
-    if (args.createdBy === "user") {
-      const isSelf =
-        args.userId === caller._id ||
-        (caller.clerkId && (args.userId as any) === caller.clerkId);
-      if (!isSelf) {
+    } else if (isStudentRole(caller.role)) {
+      if (args.createdBy !== "user") {
+        throw new Error("Unauthorized: Admin access required.");
+      }
+      if (args.userId !== caller._id) {
         throw new Error("Unauthorized: Users can only create appointments for themselves.");
       }
+    } else {
+      throw new Error("Unauthorized: This account cannot create appointments.");
     }
+
+    if (args.requestKey !== undefined && !REQUEST_KEY_RE.test(args.requestKey)) {
+      throw new Error("Invalid request key.");
+    }
+    if (args.requestKey) {
+      const replay = await ctx.db
+        .query("appointments")
+        .withIndex("by_userId_and_requestKey", (q) => q.eq("userId", args.userId).eq("requestKey", args.requestKey))
+        .first();
+      if (replay) return replay._id;
+    }
+
+    const now = Date.now();
+    const slotError = validateAppointmentSlot(args.date, args.time, now);
+    if (slotError) throw new Error(slotError);
+    const slotKey = appointmentSlotKey(args.date, args.time)!;
+    const title = sanitizePlainText(args.title).slice(0, 120).trim();
+    if (!title) throw new Error("Please add a short title.");
 
     // Provenance validation
     if (args.counsellorRequestId) {
       await validateCounsellorRequestProvenance(ctx, args.counsellorRequestId, args.userId);
     }
+    await validateClinicalProvenance(ctx, args.userId, args.attemptId, args.triageId);
 
+    const counsellorId = caller.role === "counsellor" ? caller._id : (await assignedCounsellorId(ctx, args.userId)) ?? undefined;
+
+    if (!isStaff) {
+      const mine = await ctx.db.query("appointments").withIndex("by_userId", (q) => q.eq("userId", args.userId)).order("desc").take(200);
+      const duplicate = mine.find((a) => a.slotKey === slotKey && OPEN_STATUSES.has(a.status));
+      if (duplicate) return duplicate._id;
+      const openRequests = mine.filter((a) => a.createdBy === "user" && (a.status === "pending" || a.status === "waiting"));
+      if (openRequests.length >= MAX_OPEN_STUDENT_REQUESTS) {
+        throw new Error(`You already have ${MAX_OPEN_STUDENT_REQUESTS} requests waiting for a reply. Please wait for an answer or withdraw one first.`);
+      }
+    }
+    if (await slotTaken(ctx, counsellorId, slotKey)) {
+      throw new Error("That time is not available. Please choose another time.");
+    }
+
+    const role: ActorRole = isStaff ? (caller.role as ActorRole) : "student";
     const appointmentId = await ctx.db.insert("appointments", {
       userId: args.userId,
-      title: args.title,
+      title,
       createdBy: args.createdBy,
-      patientName: args.createdBy === "admin" ? args.patientName : (caller.full_name || "Student"),
-      date: args.date,
-      time: args.time,
-      reason: sanitizePlainText(args.reason),
+      patientName: isStaff ? args.patientName : (caller.full_name || "Student"),
+      date: args.date.trim(),
+      time: args.time.trim(),
+      reason: sanitizePlainText(args.reason).slice(0, MAX_TEXT),
       status: "pending",
-      sourceType: args.sourceType || (args.createdBy === "admin" ? "counselor" : "self_initiated"),
+      sourceType: args.sourceType || (isStaff ? "counselor" : "self_initiated"),
       attemptId: args.attemptId,
       triageId: args.triageId,
       counsellorRequestId: args.counsellorRequestId,
-      createdAt: Date.now(),
+      counsellorId,
+      requestKey: args.requestKey,
+      slotKey,
+      createdAt: now,
+      updatedAt: now,
+      statusHistory: [historyEntry("pending", role, isStaff ? "proposed" : "requested")],
     });
 
-    if (args.createdBy === "admin") {
-      if (args.counsellorRequestId) {
-        await ctx.db.patch(args.counsellorRequestId, {
-          status: "scheduled",
-          updatedAt: Date.now(),
-        });
-      }
-      await notifyStudent(
-        ctx,
-        args.userId,
-        "appointment_scheduled",
-        "Appointment Proposed",
-        `A counselor has proposed an appointment on ${args.date} at ${args.time}.`
-      );
-    } else {
-      await notifyStaff(
-        ctx,
-        String(args.userId),
-        "appointment_request",
-        "New Appointment Request",
-        `${caller.full_name || "A student"} requested an appointment on ${args.date} at ${args.time}.`
-      );
+    if (isStaff && args.counsellorRequestId) {
+      await ctx.db.patch(args.counsellorRequestId, { status: "scheduled", updatedAt: now });
     }
 
+    const created = await ctx.db.get(appointmentId);
+    await notifyAppointmentEvent(ctx, { ...created, statusHistory: [] }, isStaff ? "proposed" : "requested", role);
     return appointmentId;
   },
 });
 
+/** Accept, decline, cancel or (staff only) complete an appointment. */
 export const updateAppointmentStatus = mutation({
   args: {
     appointmentId: v.id("appointments"),
@@ -479,188 +657,56 @@ export const updateAppointmentStatus = mutation({
     if (TERMINAL_STATUSES.has(appt.status)) {
       throw new Error(`Appointment is in a terminal state (${appt.status}) and cannot be modified.`);
     }
-
     if (!ALLOWED_TARGET_STATUSES.has(args.status)) {
       throw new Error(`Invalid status transition: target status '${args.status}' is not recognized.`);
     }
 
-    // EMOT-PERF-02: Idempotent status update - avoid redundant write and duplicate notifications
+    const actor = await actorFor(ctx, appt);
+
+    // Idempotent status update - avoid redundant write and duplicate notifications
     if (appt.status === args.status) {
       return { success: true };
     }
 
-    const isCallerStaff = caller.role === "admin" || caller.role === "counsellor";
-    const isStudentOwner =
-      caller._id === appt.userId ||
-      (caller.clerkId && caller.clerkId === (appt.userId as any));
-
-    // Non-staff callers (students) may only interact with their own appointments
-    if (!isCallerStaff && !isStudentOwner) {
-      throw new Error("Unauthorized: Cannot access or modify another user's appointment.");
-    }
-    // Counsellors may only act on students in their caseload
-    if (isCallerStaff) await assertCanAccessStudent(ctx, String(appt.userId));
-
-    // State transition rules:
     if (args.status === "accepted") {
-      if (appt.status !== "pending" && appt.status !== "waiting") {
-        throw new Error(`Invalid transition: Cannot accept appointment from status ${appt.status}.`);
+      requireAction(appt, actor, "accept");
+      const extra: Record<string, unknown> = {};
+      let slotKey = appt.slotKey;
+      if (appt.status === "waiting" && appt.rescheduleTime && appt.rescheduleDate) {
+        slotKey = appointmentSlotKey(appt.rescheduleDate, appt.rescheduleTime) ?? undefined;
+        Object.assign(extra, { date: appt.rescheduleDate, time: appt.rescheduleTime, rescheduleDate: undefined, rescheduleTime: undefined, rescheduledBy: undefined, slotKey });
       }
-      if (appt.status === "pending") {
-        if (appt.createdBy === "user" && !isCallerStaff) {
-          throw new Error("Unauthorized: Receiver must accept/reject.");
-        }
-        if (appt.createdBy === "admin" && isCallerStaff) {
-          throw new Error("Unauthorized: Receiver must accept/reject.");
-        }
+      const counsellorId = appt.counsellorId ?? (await assignedCounsellorId(ctx, appt.userId)) ?? undefined;
+      if (await slotTaken(ctx, counsellorId, slotKey ?? null, appt._id)) {
+        throw new Error("That time is no longer available. Please propose another time.");
       }
-      if (appt.status === "waiting") {
-        if (appt.rescheduledBy === "user" && !isCallerStaff) {
-          throw new Error("Unauthorized: Receiver must accept/reject.");
-        }
-        if (appt.rescheduledBy === "admin" && isCallerStaff) {
-          throw new Error("Unauthorized: Receiver must accept/reject.");
-        }
-      }
+      if (counsellorId && !appt.counsellorId) extra.counsellorId = counsellorId;
+      await applyTransition(ctx, appt, actor, "accepted", "confirmed", extra);
     } else if (args.status === "rejected") {
-      if (appt.status !== "pending" && appt.status !== "waiting") {
-        throw new Error(`Invalid transition: Cannot reject appointment from status ${appt.status}.`);
-      }
+      requireAction(appt, actor, "decline");
       if (!args.rejectionReason || !args.rejectionReason.trim()) {
         throw new Error("Rejection reason is required.");
       }
-      if (appt.status === "pending") {
-        if (appt.createdBy === "user" && !isCallerStaff) {
-          throw new Error("Unauthorized: Receiver must accept/reject.");
-        }
-        if (appt.createdBy === "admin" && isCallerStaff) {
-          throw new Error("Unauthorized: Receiver must accept/reject.");
-        }
-      }
-      if (appt.status === "waiting") {
-        if (appt.rescheduledBy === "user" && !isCallerStaff) {
-          throw new Error("Unauthorized: Receiver must accept/reject.");
-        }
-        if (appt.rescheduledBy === "admin" && isCallerStaff) {
-          throw new Error("Unauthorized: Receiver must accept/reject.");
-        }
-      }
+      await applyTransition(ctx, appt, actor, "rejected", "declined", {
+        rejectionReason: sanitizePlainText(args.rejectionReason).slice(0, MAX_TEXT),
+      });
     } else if (args.status === "completed") {
-      if (appt.status !== "accepted" && appt.status !== "scheduled") {
-        throw new Error(`Invalid transition: Cannot complete appointment from status ${appt.status}.`);
-      }
-      if (!isCallerStaff && !isStudentOwner) {
-        throw new Error("Unauthorized: Cannot complete another user's appointment.");
-      }
-    } else if (args.status === "cancelled") {
-      if (!isCallerStaff && !isStudentOwner) {
-        throw new Error("Unauthorized: Cannot cancel another user's appointment.");
-      }
+      requireAction(appt, actor, "complete");
+      await applyTransition(ctx, appt, actor, "completed", "completed");
+    } else {
+      requireAction(appt, actor, "cancel");
+      await applyTransition(ctx, appt, actor, "cancelled", "cancelled");
     }
-
-    const patch: any = {
-      status: args.status,
-      rejectionReason: args.rejectionReason ? sanitizePlainText(args.rejectionReason) : undefined,
-    };
-
-    if (args.status === "accepted" && appt.status === "waiting" && appt.rescheduleTime && appt.rescheduleDate) {
-      patch.time = appt.rescheduleTime;
-      patch.date = appt.rescheduleDate;
-      patch.rescheduleTime = undefined;
-      patch.rescheduleDate = undefined;
-      patch.rescheduledBy = undefined;
-    }
-
-    await ctx.db.patch(args.appointmentId, patch);
-
-    // Provenance synchronization with counsellorRequests (avoid redundant write if status already matches)
-    if (appt.counsellorRequestId) {
-      const cr = await ctx.db.get(appt.counsellorRequestId);
-      if (cr) {
-        const targetCrStatus = args.status === "accepted" ? "scheduled" : args.status === "completed" ? "completed" : null;
-        if (targetCrStatus && cr.status !== targetCrStatus) {
-          await ctx.db.patch(appt.counsellorRequestId, {
-            status: targetCrStatus,
-            updatedAt: Date.now(),
-          });
-        }
-      }
-    }
-
-    // Notifications
-    if (args.status === "accepted") {
-      if (isCallerStaff) {
-        await notifyStudent(
-          ctx,
-          appt.userId,
-          "appointment_accepted",
-          "Appointment Accepted",
-          `Your appointment on ${appt.date || "scheduled date"} at ${appt.time || "scheduled time"} has been confirmed.`
-        );
-      } else {
-        await notifyStaff(
-          ctx,
-          String(appt.userId),
-          "appointment_accepted",
-          "Appointment Confirmed by Student",
-          `${caller.full_name || "Student"} confirmed the appointment on ${appt.date || "scheduled date"} at ${appt.time || "scheduled time"}.`
-        );
-      }
-    } else if (args.status === "rejected") {
-      if (isCallerStaff) {
-        await notifyStudent(
-          ctx,
-          appt.userId,
-          "appointment_rejected",
-          "Appointment Declined",
-          `Your appointment request was declined: ${args.rejectionReason}`
-        );
-      } else {
-        await notifyStaff(
-          ctx,
-          String(appt.userId),
-          "appointment_rejected",
-          "Appointment Declined by Student",
-          `${caller.full_name || "Student"} declined the appointment. Reason: ${args.rejectionReason}`
-        );
-      }
-    } else if (args.status === "completed") {
-      await notifyStudent(
-        ctx,
-        appt.userId,
-        "appointment_completed",
-        "Appointment Completed",
-        `Your consultation on ${appt.date || "recent session"} has been marked completed.`
-      );
-    } else if (args.status === "cancelled") {
-      if (isCallerStaff) {
-        await notifyStudent(
-          ctx,
-          appt.userId,
-          "appointment_cancelled",
-          "Appointment Cancelled",
-          "Your appointment has been cancelled by the counselor."
-        );
-      } else {
-        await notifyStaff(
-          ctx,
-          String(appt.userId),
-          "appointment_cancelled",
-          "Appointment Cancelled by Student",
-          `${caller.full_name || "A student"} has cancelled their appointment.`
-        );
-      }
-    }
-
     return { success: true };
   },
 });
 
+/** Propose a new time. Either party may; the other party then accepts or declines it. */
 export const requestReschedule = mutation({
   args: {
     appointmentId: v.id("appointments"),
     newTime: v.string(), // 12-hour AM/PM
-    newDate: v.string(), // YYYY-MM-DD (must be same day)
+    newDate: v.string(), // YYYY-MM-DD
   },
   handler: async (ctx, args) => {
     const caller = await getAuthenticatedUser(ctx);
@@ -673,82 +719,32 @@ export const requestReschedule = mutation({
       throw new Error(`Appointment is in a terminal state (${appt.status}) and cannot be modified.`);
     }
 
-    const isStaff = caller.role === "admin" || caller.role === "counsellor";
-    const isStudentOwner =
-      caller._id === appt.userId ||
-      (caller.clerkId && caller.clerkId === (appt.userId as any));
+    const actor = await actorFor(ctx, appt);
+    requireAction(appt, actor, "propose_time");
 
-    if (!isStaff && !isStudentOwner) {
-      throw new Error("Unauthorized: Cannot reschedule another user's appointment.");
+    const slotError = validateAppointmentSlot(args.newDate, args.newTime, Date.now());
+    if (slotError) throw new Error(slotError);
+    const newSlot = appointmentSlotKey(args.newDate, args.newTime);
+    const counsellorId = appt.counsellorId ?? (await assignedCounsellorId(ctx, appt.userId)) ?? undefined;
+    if (await slotTaken(ctx, counsellorId, newSlot, appt._id)) {
+      throw new Error("That time is not available. Please choose another time.");
     }
 
-    // Counsellors may only act on students in their caseload
-
-    if (isStaff) await assertCanAccessStudent(ctx, String(appt.userId));
-
-    if (appt.status !== "pending" && appt.status !== "accepted" && appt.status !== "scheduled" && appt.status !== "waiting") {
-      throw new Error(`Invalid transition: Cannot reschedule appointment in status ${appt.status}.`);
-    }
-
-    // Same-day validation
-    if (appt.date && args.newDate !== appt.date) {
-      await ctx.db.patch(args.appointmentId, {
-        status: "rejected",
-        rejectionReason: "Reschedule requests must be completed on the same day.",
-      });
-
-      if (isStaff) {
-        await notifyStudent(
-          ctx,
-          appt.userId,
-          "appointment_rejected",
-          "Reschedule Request Declined",
-          "Reschedule requests must be on the same day."
-        );
-      } else {
-        await notifyStaff(
-          ctx,
-          String(appt.userId),
-          "appointment_rejected",
-          "Reschedule Request Auto-Rejected",
-          "A reschedule request was auto-rejected because it was not on the same day."
-        );
-      }
-
-      return { success: false, reason: "Not same day. Auto-rejected." };
-    }
-
-    const rescheduledBy = isStaff ? "admin" : "user";
-
-    await ctx.db.patch(args.appointmentId, {
-      status: "waiting",
-      rescheduleTime: args.newTime,
-      rescheduleDate: args.newDate,
-      rescheduledBy,
+    await applyTransition(ctx, appt, actor, "waiting", "reschedule_proposed", {
+      rescheduleTime: args.newTime.trim(),
+      rescheduleDate: args.newDate.trim(),
+      rescheduledBy: actor.side === "staff" ? "admin" : "user",
     });
-
-    if (isStaff) {
-      await notifyStudent(
-        ctx,
-        appt.userId,
-        "appointment_rescheduled",
-        "Appointment Reschedule Proposed",
-        `A new time has been proposed: ${args.newDate} at ${args.newTime}.`
-      );
-    } else {
-      await notifyStaff(
-        ctx,
-        String(appt.userId),
-        "appointment_rescheduled",
-        "Reschedule Requested by Student",
-        `${caller.full_name || "A student"} requested to reschedule to ${args.newDate} at ${args.newTime}.`
-      );
-    }
-
     return { success: true };
   },
 });
 
+/**
+ * Staff: mark a confirmed appointment completed (with attendance).
+ * Student: share feedback about their own confirmed or completed appointment. Students never
+ * change the status; older app builds that call this to "complete" a session have their
+ * feedback recorded and the counsellor completes the appointment.
+ */
 export const completeAppointment = mutation({
   args: {
     appointmentId: v.id("appointments"),
@@ -764,64 +760,292 @@ export const completeAppointment = mutation({
     const appt = await ctx.db.get(args.appointmentId);
     if (!appt) throw new Error("Appointment not found");
 
+    if (TERMINAL_STATUSES.has(appt.status) && appt.status !== "completed") {
+      throw new Error(`Appointment is in a terminal state (${appt.status}) and cannot be modified.`);
+    }
+    if (args.attended !== "yes" && args.attended !== "no") throw new Error("attended must be 'yes' or 'no'.");
+    if (args.rating !== undefined && (!Number.isInteger(args.rating) || args.rating < 1 || args.rating > 5)) {
+      throw new Error("rating must be a whole number from 1 to 5.");
+    }
+
+    const actor = await actorFor(ctx, appt);
+    const text = args.attended === "yes" ? args.feedback : args.reason;
+    const feedbackPatch: Record<string, unknown> = {
+      rating: args.attended === "yes" ? args.rating : undefined,
+      feedback: text ? sanitizePlainText(text).slice(0, MAX_TEXT) : undefined,
+    };
+
+    if (actor.side === "staff") {
+      if (appt.status === "completed") {
+        throw new Error(`Appointment is in a terminal state (${appt.status}) and cannot be modified.`);
+      }
+      requireAction(appt, actor, "complete");
+      await applyTransition(ctx, appt, actor, "completed", "completed", { attended: args.attended, isFeedbackCompleted: true, ...feedbackPatch });
+      return { success: true, statusChanged: true };
+    }
+
+    requireAction(appt, actor, "feedback");
+    const now = Date.now();
+    await ctx.db.patch(appt._id, {
+      ...feedbackPatch,
+      attended: appt.attended ?? args.attended,
+      isFeedbackCompleted: true,
+      updatedAt: now,
+      statusHistory: withHistory(appt, historyEntry(appt.status, "student", "feedback")),
+    });
+    await notifyAppointmentEvent(ctx, appt, "feedback", "student");
+    return { success: true, statusChanged: false };
+  },
+});
+
+/** Cancel an appointment (Staff or Student Owner). A student cancelling a request withdraws it. */
+export const cancelAppointment = mutation({
+  args: { appointmentId: v.id("appointments") },
+  handler: async (ctx, args) => {
+    const caller = await getAuthenticatedUser(ctx);
+    if (!caller) throw new Error("Unauthenticated");
+
+    const appt = await ctx.db.get(args.appointmentId);
+    if (!appt) throw new Error("Appointment not found");
+
     if (TERMINAL_STATUSES.has(appt.status)) {
       throw new Error(`Appointment is in a terminal state (${appt.status}) and cannot be modified.`);
     }
 
-    const isStaff = caller.role === "admin" || caller.role === "counsellor";
-    const isStudentOwner =
-      caller._id === appt.userId ||
-      (caller.clerkId && caller.clerkId === (appt.userId as any));
-
-    if (!isStaff && !isStudentOwner) {
-      throw new Error("Unauthorized: Cannot complete another user's appointment.");
-    }
-
-    // Counsellors may only act on students in their caseload
-
-    if (isStaff) await assertCanAccessStudent(ctx, String(appt.userId));
-
-    if (appt.status !== "accepted" && appt.status !== "scheduled" && appt.status !== "waiting") {
-      throw new Error(`Invalid transition: Cannot complete appointment in status ${appt.status}.`);
-    }
-
-    const patch: any = {
-      status: "completed",
-      attended: args.attended,
-      isFeedbackCompleted: true,
-    };
-
-    if (args.attended === "yes") {
-      patch.rating = args.rating;
-      patch.feedback = args.feedback ? sanitizePlainText(args.feedback) : undefined;
-    } else {
-      patch.feedback = args.reason ? sanitizePlainText(args.reason) : undefined;
-    }
-
-    await ctx.db.patch(args.appointmentId, patch);
-
-    // Provenance sync (avoid redundant write)
-    if (appt.counsellorRequestId) {
-      const cr = await ctx.db.get(appt.counsellorRequestId);
-      if (cr && cr.status !== "completed") {
-        await ctx.db.patch(appt.counsellorRequestId, {
-          status: "completed",
-          updatedAt: Date.now(),
-        });
-      }
-    }
-
-    await notifyStudent(
-      ctx,
-      appt.userId,
-      "appointment_completed",
-      "Appointment Completed",
-      `Your consultation on ${appt.date || "recent session"} has been marked completed.`
-    );
-
+    const actor = await actorFor(ctx, appt);
+    requireAction(appt, actor, "cancel");
+    await applyTransition(ctx, appt, actor, "cancelled", "cancelled");
     return { success: true };
   },
 });
+
+/**
+ * Remove an appointment.
+ *  - Student: withdraws their own open request (kept as "cancelled"; records are not deleted).
+ *  - Admin: permanently deletes the record (audited), e.g. a duplicate entered by mistake.
+ */
+export const deleteAppointment = mutation({
+  args: { appointmentId: v.id("appointments") },
+  handler: async (ctx, args) => {
+    const caller = await getAuthenticatedUser(ctx);
+    if (!caller) throw new Error("Unauthenticated");
+
+    const appt = await ctx.db.get(args.appointmentId);
+    if (!appt) throw new Error("Appointment not found");
+
+    if (caller.role === "admin") {
+      await ctx.db.delete(args.appointmentId);
+      await logAuditEvent(ctx, String(caller._id), "appointment_deleted", JSON.stringify({ appointmentId: args.appointmentId, studentId: appt.userId, status: appt.status }));
+      return { success: true, deleted: true };
+    }
+    if (!(isStudentRole(caller.role) && appt.userId === caller._id)) {
+      throw new Error("Unauthorized to delete this appointment.");
+    }
+    if (TERMINAL_STATUSES.has(appt.status)) {
+      // Already closed: nothing to withdraw; the record stays as the student's history.
+      return { success: true, deleted: false };
+    }
+    const actor = await actorFor(ctx, appt);
+    await applyTransition(ctx, appt, actor, "cancelled", "cancelled");
+    return { success: true, deleted: false };
+  },
+});
+
+/** Fields a student may see about their own appointment (no internal links or staff fields). */
+function studentView(a: any, counsellorName: string | null) {
+  return {
+    _id: a._id as Id<"appointments">,
+    _creationTime: a._creationTime as number,
+    title: a.title as string | undefined,
+    reason: a.reason as string | undefined,
+    date: a.date as string | undefined,
+    time: a.time as string | undefined,
+    status: a.status as string,
+    statusLabel: appointmentStatusLabel(a, "student"),
+    createdBy: a.createdBy as string | undefined,
+    rescheduledBy: a.rescheduledBy as string | undefined,
+    rescheduleDate: a.rescheduleDate as string | undefined,
+    rescheduleTime: a.rescheduleTime as string | undefined,
+    rejectionReason: a.rejectionReason as string | undefined,
+    rating: a.rating as number | undefined,
+    feedback: a.feedback as string | undefined,
+    attended: a.attended as string | undefined,
+    isFeedbackCompleted: a.isFeedbackCompleted as boolean | undefined,
+    counsellorRequestId: a.counsellorRequestId as Id<"counsellorRequests"> | undefined,
+    sourceType: a.sourceType as string | undefined,
+    createdAt: a.createdAt as number,
+    counsellorName,
+    actions: allowedActions(a, "student"),
+  };
+}
+
+/** Student: my appointments, newest first (paginated). */
+export const listMyAppointments = query({
+  args: { paginationOpts: paginationOptsValidator },
+  handler: async (ctx, args) => {
+    const user = await getAuthenticatedUser(ctx);
+    if (!user || !isStudentRole(user.role)) return { page: [], isDone: true, continueCursor: "" };
+    const result = await ctx.db
+      .query("appointments")
+      .withIndex("by_userId", (q) => q.eq("userId", user._id))
+      .order("desc")
+      .paginate(args.paginationOpts);
+    const names = new Map<string, string | null>();
+    const page = [];
+    for (const a of result.page) {
+      if (!a.date || !a.time) continue;
+      const key = a.counsellorId ? String(a.counsellorId) : "";
+      if (key && !names.has(key)) names.set(key, ((await ctx.db.get(a.counsellorId!)) as any)?.full_name ?? null);
+      page.push(studentView(a, key ? names.get(key) ?? null : null));
+    }
+    return { ...result, page };
+  },
+});
+
+/**
+ * Staff: appointments with filters. Admins see the whole organisation; a counsellor sees only
+ * appointments with them for students currently in their caseload (filters cannot widen this).
+ */
+export const listAppointments = query({
+  args: {
+    paginationOpts: paginationOptsValidator,
+    status: v.optional(v.string()),
+    counsellorId: v.optional(v.id("users")),
+    studentId: v.optional(v.id("users")),
+    date: v.optional(v.string()),
+    when: v.optional(v.union(v.literal("upcoming"), v.literal("past"), v.literal("all"))),
+    needsCounsellor: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const caller = await requireCounselorOrAdmin(ctx);
+    const scope = (await getStaffScope(ctx))!;
+    const isAdmin = caller.role === "admin";
+    if (args.studentId) await assertCanAccessStudent(ctx, String(args.studentId));
+
+    const counsellorFilter = isAdmin ? args.counsellorId : caller._id;
+    let q;
+    if (args.studentId) q = ctx.db.query("appointments").withIndex("by_userId", (r) => r.eq("userId", args.studentId!));
+    else if (counsellorFilter) q = ctx.db.query("appointments").withIndex("by_counsellorId", (r) => r.eq("counsellorId", counsellorFilter));
+    else if (args.status) q = ctx.db.query("appointments").withIndex("by_status", (r) => r.eq("status", args.status!));
+    else q = ctx.db.query("appointments");
+    const result = await q.order("desc").paginate(args.paginationOpts);
+
+    const today = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const cache = new Map<string, any>();
+    const userOf = async (id: Id<"users"> | undefined) => {
+      if (!id) return null;
+      if (!cache.has(String(id))) cache.set(String(id), await ctx.db.get(id));
+      return cache.get(String(id));
+    };
+    const page = [];
+    for (const a of result.page) {
+      if (!scopeIncludes(scope, String(a.userId))) continue;
+      if (!isAdmin && a.counsellorId !== caller._id) continue;
+      if (counsellorFilter && a.counsellorId !== counsellorFilter) continue;
+      if (args.status && a.status !== args.status) continue;
+      if (args.date && a.date !== args.date) continue;
+      if (args.needsCounsellor && (a.counsellorId || !OPEN_STATUSES.has(a.status))) continue;
+      const upcoming = OPEN_STATUSES.has(a.status) && (!a.date || a.date >= today);
+      if (args.when === "upcoming" && !upcoming) continue;
+      if (args.when === "past" && upcoming) continue;
+      const student = await userOf(a.userId);
+      const counsellor = await userOf(a.counsellorId);
+      page.push({
+        _id: a._id,
+        studentId: a.userId,
+        studentName: student?.full_name || student?.alias || "Student",
+        patientId: student?.patientId ?? null,
+        counsellorId: a.counsellorId ?? null,
+        counsellorName: counsellor?.full_name ?? null,
+        counsellorActive: counsellor ? counsellor.status !== "inactive" : null,
+        title: a.title,
+        reason: a.reason,
+        date: a.date ?? (a.startTime ? new Date(a.startTime).toISOString().slice(0, 10) : undefined),
+        time: a.time,
+        status: a.status,
+        statusLabel: appointmentStatusLabel(a, "staff"),
+        awaiting: awaitingResponseFrom(a),
+        createdBy: a.createdBy,
+        rescheduledBy: a.rescheduledBy,
+        rescheduleDate: a.rescheduleDate,
+        rescheduleTime: a.rescheduleTime,
+        rejectionReason: a.rejectionReason,
+        attended: a.attended,
+        rating: a.rating,
+        feedback: a.feedback,
+        counsellorRequestId: a.counsellorRequestId,
+        createdAt: a.createdAt,
+        updatedAt: a.updatedAt ?? a.createdAt,
+        statusHistory: a.statusHistory ?? [],
+        actions: allowedActions(a, "staff"),
+      });
+    }
+    return { ...result, page };
+  },
+});
+
+/**
+ * When a student's counsellor changes, their open appointments follow them:
+ *  - to the new counsellor: re-addressed to them and set back to "requested" so the new
+ *    counsellor confirms the time (a confirmation by the previous counsellor does not bind them);
+ *  - no counsellor (unassigned): kept as they are, without a counsellor, and admins are told.
+ * The previous counsellor loses access with the assignment, so they never keep these requests.
+ */
+export async function moveOpenAppointmentsOnAssignmentChange(ctx: MutationCtx, studentId: Id<"users">, newCounsellorId: Id<"users"> | null) {
+  const rows = await ctx.db.query("appointments").withIndex("by_userId", (q) => q.eq("userId", studentId)).order("desc").take(200);
+  const label = await studentLabelFor(ctx, String(studentId));
+  for (const a of rows) {
+    if (!OPEN_STATUSES.has(a.status)) continue;
+    if (newCounsellorId && a.counsellorId === newCounsellorId) continue;
+    const wasConfirmed = CONFIRMED_STATUSES.has(a.status);
+    const base = { destination: "appointments" as const, relatedId: String(a._id) };
+    if (newCounsellorId) {
+      await ctx.db.patch(a._id, {
+        counsellorId: newCounsellorId,
+        status: "pending",
+        createdBy: "user",
+        rescheduleDate: undefined,
+        rescheduleTime: undefined,
+        rescheduledBy: undefined,
+        updatedAt: Date.now(),
+        statusHistory: withHistory(a, historyEntry("pending", "system", "reassigned")),
+      });
+      await createNotification(ctx, {
+        ...base,
+        recipientId: newCounsellorId,
+        type: "appointment_request_received",
+        title: "Appointment request transferred to you",
+        message: `${label} has an appointment request for ${dateTime(a)} that now needs your reply.`,
+        dedupeKey: `appt:${a._id}:reassigned:${newCounsellorId}`,
+      });
+      await createNotification(ctx, {
+        ...base,
+        recipientId: studentId,
+        type: wasConfirmed ? "appointment_reconfirm_needed" : "appointment_transferred",
+        title: wasConfirmed ? "Your appointment needs to be reconfirmed" : "Your request has a new counsellor",
+        message: wasConfirmed
+          ? `Your appointment on ${dateTime(a)} has moved to your new counsellor, who will confirm it.`
+          : `Your request for ${dateTime(a)} has been passed to your new counsellor.`,
+        dedupeKey: `appt:${a._id}:reassigned_student:${newCounsellorId}`,
+      });
+    } else {
+      if (!a.counsellorId) continue;
+      await ctx.db.patch(a._id, {
+        counsellorId: undefined,
+        updatedAt: Date.now(),
+        statusHistory: withHistory(a, historyEntry(a.status, "system", "counsellor_unassigned")),
+      });
+      await notifyEach(ctx, await activeAdminIds(ctx), {
+        ...base,
+        type: "appointment_needs_counsellor",
+        title: "Appointment needs a counsellor",
+        message: `${label} has an open appointment on ${dateTime(a)} and no assigned counsellor.`,
+        priority: "high",
+        dedupeKey: `appt:${a._id}:unassigned:${a.statusHistory?.length ?? 0}`,
+      });
+    }
+  }
+}
 
 export const getAppointmentByCounsellorRequestId = query({
   args: { counsellorRequestId: v.id("counsellorRequests") },
@@ -849,7 +1073,7 @@ export const getAppointmentByCounsellorRequestId = query({
 
     if (isStaff) await assertCanAccessStudent(ctx, String(appt.userId));
 
-    return appt;
+    return isStaff ? appt : withoutInternalLinks(appt);
   },
 });
 
@@ -928,9 +1152,10 @@ export const getTwoWayAppointmentsForPatient = query({
       .withIndex("by_userId", (q) => q.eq("userId", dbUser!._id))
       .collect();
 
-    return appointments
+    const rows = appointments
       .filter(a => a.date && a.time)
       .sort((a, b) => b.createdAt - a.createdAt);
+    return (await isStaffCaller(ctx)) ? rows : rows.map(withoutInternalLinks);
   },
 });
 
@@ -976,10 +1201,36 @@ export const getTwoWayAppointmentsForPatientPaginated = query({
       };
     });
 
+    const staff = await isStaffCaller(ctx);
     return {
       ...results,
-      page: normalizedPage,
+      page: staff ? normalizedPage : normalizedPage.map(withoutInternalLinks),
     };
   },
 });
 
+
+/**
+ * One-off maintenance after deploying the counsellor workflow: link existing OPEN appointments
+ * to the student's current counsellor so they appear in that counsellor's appointment list.
+ * Closed history is left as it is. Batched and safe to re-run:
+ *   npx convex run appointments:backfillCounsellorIds '{}'
+ */
+export const backfillCounsellorIds = internalMutation({
+  args: { cursor: v.optional(v.union(v.string(), v.null())) },
+  handler: async (ctx, args) => {
+    const page = await ctx.db.query("appointments").paginate({ cursor: args.cursor ?? null, numItems: 200 });
+    let linked = 0;
+    for (const a of page.page) {
+      if (a.counsellorId || !OPEN_STATUSES.has(a.status)) continue;
+      const counsellorId = await assignedCounsellorId(ctx, a.userId);
+      if (!counsellorId) continue;
+      await ctx.db.patch(a._id, { counsellorId, slotKey: a.slotKey ?? (a.date && a.time ? appointmentSlotKey(a.date, a.time) ?? undefined : undefined) });
+      linked++;
+    }
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.appointments.backfillCounsellorIds, { cursor: page.continueCursor });
+    }
+    return { linked, done: page.isDone };
+  },
+});

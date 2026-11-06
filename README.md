@@ -205,7 +205,9 @@ Use a separate key per deployment (dev / prod). Setting a new key invalidates ev
 ```bash
 npx convex run users:clearLegacyTempPasswords '{}'
 npx convex run users:redactLegacyTrashEntries '{}'
+npx convex run screening:purgeRetiredInstrumentData '{}'
 ```
+The last command deletes WSAS / ReQoL-10 placeholder data written by earlier versions (these instruments are not part of Emotify).
 
 **Counsellor caseloads:** counsellors can sign in to the staff dashboard and see only the students assigned to them. Create counsellor accounts from *Students → Add User*, then assign each student from the student's detail page. Safety alerts for an unassigned student go to every counsellor and admin.
 

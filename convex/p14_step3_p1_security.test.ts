@@ -298,14 +298,14 @@ describe("P14 Step 3: P1 Privacy, Authorization & Data Integrity Remediation Sui
     const logId = await authedA.mutation(internal.companion.logMessage, {
       userId: studentAId,
       role: "user",
-      content: "Hello Mitra, feeling calm today.",
+      content: "Hello Emoty, feeling calm today.",
     });
 
     expect(logId).toBeDefined();
 
     const history = await authedA.query(api.companion.getConversationHistory, {});
     expect(history.length).toBe(1);
-    expect(history[0].content).toBe("Hello Mitra, feeling calm today.");
+    expect(history[0].content).toBe("Hello Emoty, feeling calm today.");
     expect(history[0].userId).toBe(studentAId);
   });
 

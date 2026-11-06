@@ -4,7 +4,7 @@
  * Defines the type-safe contract for Emoty AI responses, strictly enforcing:
  * 1. Valid conversational modes (casual, emotional_support, guidance, app_assistance, out_of_scope).
  * 2. Controlled action allowlist (none, open_emotion_map, show_today_goal, etc.).
- * 3. Verified avatar states matching MitraAvatar.tsx (idle, calm, happy, sad, etc.).
+ * 3. Verified avatar states matching EmotyAvatar.tsx (idle, calm, happy, sad, etc.).
  * 4. Model configuration and robust JSON extraction/validation.
  * 5. Safe structured fallback generator.
  */
@@ -41,7 +41,7 @@ export type EmotyActionType = (typeof EMOTY_ACTION_TYPES)[number];
 
 /**
  * Avatar states strictly restricted to the 13 procedural SVG states
- * supported by components/avatar/MitraAvatar.tsx.
+ * supported by components/avatar/EmotyAvatar.tsx.
  */
 export const EMOTY_AVATAR_STATES = [
   "idle",

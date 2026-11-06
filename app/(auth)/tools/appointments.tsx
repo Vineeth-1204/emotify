@@ -8,7 +8,9 @@ import { useAppAuth } from "@/utils/auth";
 import { Ionicons } from "@expo/vector-icons";
 import { useThemeColors } from "@/context/MoodThemeContext";
 import { Calendar } from "react-native-calendars";
-import { EmotyAvatar, MitraAvatar } from "@/components/avatar/EmotyAvatar";
+import { EmotyAvatar } from "@/components/avatar/EmotyAvatar";
+import { CRISIS_RESOURCES } from "@/common/crisisResources";
+import * as Crypto from "expo-crypto";
 
 const HOURS = Array.from({ length: 12 }, (_, i) => (i + 1).toString().padStart(2, '0'));
 const MINUTES = Array.from({ length: 60 }, (_, i) => i.toString().padStart(2, '0'));
@@ -171,7 +173,16 @@ const TimeScroller = ({ selectedTime, onTimeChange, colors }: { selectedTime: st
   );
 };
 
-type TabStatus = "pending" | "waiting" | "accepted" | "rejected" | "completed";
+type TabStatus = "pending" | "waiting" | "accepted" | "rejected" | "completed" | "cancelled";
+
+const TAB_LABELS: Record<TabStatus, string> = {
+  pending: "Requested",
+  waiting: "New time",
+  accepted: "Confirmed",
+  rejected: "Declined",
+  completed: "Completed",
+  cancelled: "Cancelled",
+};
 
 export default function AppointmentsScreen() {
   const router = useRouter();
@@ -199,6 +210,10 @@ export default function AppointmentsScreen() {
   const requestReschedule = useMutation(api.appointments.requestReschedule);
   const completeAppointment = useMutation(api.appointments.completeAppointment);
   const deleteAppointment = useMutation(api.appointments.deleteAppointment);
+  const cancelAppointment = useMutation(api.appointments.cancelAppointment);
+  const myCounsellor = useQuery(api.counsellorAssignments.getMyCounsellor, isReady ? {} : "skip");
+  // One idempotency key per request being written: a retry after a timeout returns the same request.
+  const requestKeyRef = React.useRef<string | null>(null);
 
   // UI State
   const [activeTab, setActiveTab] = useState<TabStatus>("pending");
@@ -242,13 +257,29 @@ export default function AppointmentsScreen() {
     }
     setSubmittingReq(true);
     try {
-      await createCounsellorRequest({
+      const res = await createCounsellorRequest({
         thought_original: reqThought.trim(),
         sourceType: "self_initiated",
+        returnOutcome: true,
       });
       setShowCounsellorReqModal(false);
       setReqThought("");
-      Alert.alert("Request Sent", "Your counselor support request has been submitted.");
+
+      const outcome = res as unknown as { deduplicated?: boolean; deliveryStatus?: string };
+
+      if (outcome && typeof outcome === "object" && outcome.deduplicated) {
+        Alert.alert(
+          "Request Already Active",
+          "You already have a pending counselor support request. Our care team has your details and will contact you shortly."
+        );
+      } else if (outcome && typeof outcome === "object" && outcome.deliveryStatus === "no_active_staff") {
+        Alert.alert(
+          "Request Received",
+          `Your request has been recorded. Our counselors are currently offline. If you need immediate support, please call ${CRISIS_RESOURCES.helplineName} on ${CRISIS_RESOURCES.helplineNumber}.`
+        );
+      } else {
+        Alert.alert("Request Sent", "Your counselor support request has been submitted and staff have been notified.");
+      }
     } catch (err: any) {
       Alert.alert("Request Error", err.message || "Failed to submit request.");
     } finally {
@@ -275,15 +306,30 @@ export default function AppointmentsScreen() {
 
   const filtered = useMemo(() => {
     if (!appointments) return [];
-    return appointments.filter((a: any) => a.status === activeTab);
+    // Older counsellor-scheduled sessions use "scheduled": they are confirmed appointments.
+    return appointments.filter((a: any) => (a.status === "scheduled" ? "accepted" : a.status) === activeTab);
   }, [appointments, activeTab]);
 
   const handleDelete = async (appointmentId: Id<"appointments">) => {
-    Alert.alert("Delete Appointment", "Are you sure you want to delete this request?", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Delete", style: "destructive", onPress: async () => {
+    Alert.alert("Withdraw request", "Withdraw this appointment request? Your counsellor will be told it is no longer needed.", [
+      { text: "Keep it", style: "cancel" },
+      { text: "Withdraw", style: "destructive", onPress: async () => {
         try {
           await deleteAppointment({ appointmentId });
+          setShowDetail(false);
+        } catch (err: any) {
+          Alert.alert("Error", err.message);
+        }
+      }}
+    ]);
+  };
+
+  const handleCancelConfirmed = (appointmentId: Id<"appointments">) => {
+    Alert.alert("Cancel appointment", "Cancel this appointment? Your counsellor will be told.", [
+      { text: "Keep it", style: "cancel" },
+      { text: "Cancel appointment", style: "destructive", onPress: async () => {
+        try {
+          await cancelAppointment({ appointmentId });
           setShowDetail(false);
         } catch (err: any) {
           Alert.alert("Error", err.message);
@@ -298,6 +344,7 @@ export default function AppointmentsScreen() {
       return;
     }
     if (!dbUser) return;
+    if (!requestKeyRef.current) requestKeyRef.current = Crypto.randomUUID();
     try {
       await createAppointment({
         userId: dbUser._id,
@@ -306,7 +353,9 @@ export default function AppointmentsScreen() {
         date: selectedDate,
         time: selectedTime,
         reason,
+        requestKey: requestKeyRef.current,
       });
+      requestKeyRef.current = null;
       setShowCreate(false);
       setTitle(""); setReason(""); setSelectedDate(""); setSelectedTime("");
     } catch (e: any) {
@@ -424,7 +473,7 @@ export default function AppointmentsScreen() {
         <View style={[StyleSheet.absoluteFill, { zIndex: 9999, justifyContent: 'center', alignItems: 'center', backgroundColor: colors.background + 'EE' }]}>
            <Animated.View style={{ transform: [{ scale: scaleAnim }], alignItems: 'center', backgroundColor: colors.surface, padding: 32, borderRadius: 24, shadowOpacity: 0.2, shadowRadius: 20, elevation: 10 }}>
              <View style={{ marginBottom: 16 }}>
-               <MitraAvatar state="celebrating" size="md" />
+               <EmotyAvatar state="celebrating" size="md" />
              </View>
              <Text style={{ fontSize: 28, fontWeight: 'bold', color: colors.primary, marginBottom: 20 }}>Confirmed!</Text>
              {selectedAppt && (
@@ -569,7 +618,7 @@ export default function AppointmentsScreen() {
                     <Ionicons name="checkmark-circle" size={14} color="#15803d" />
                     <Text style={{ fontSize: 11, fontWeight: '600', color: '#15803d' }}>Completed</Text>
                   </View>
-                ) : fu.sourceType !== 'self_initiated' ? (
+                ) : !fu.selfInitiated ? (
                   // Clinical follow-ups are closed by the counsellor, not the student.
                   <View style={{ backgroundColor: '#eef2ff', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 }}>
                     <Text style={{ fontSize: 11, fontWeight: '600', color: colors.primary }}>Awaiting counsellor</Text>
@@ -599,13 +648,13 @@ export default function AppointmentsScreen() {
       {/* TABS */}
       <View style={styles.tabsContainer}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20, gap: 10 }}>
-          {(["pending", "waiting", "accepted", "rejected", "completed"] as TabStatus[]).map(tab => (
+          {(["pending", "waiting", "accepted", "rejected", "completed", "cancelled"] as TabStatus[]).map(tab => (
             <TouchableOpacity 
               key={tab} 
               onPress={() => setActiveTab(tab)}
               style={[styles.tabBtn, activeTab === tab ? { backgroundColor: colors.primary } : { backgroundColor: colors.surface }]}
             >
-              <Text style={{ color: activeTab === tab ? '#fff' : colors.text, fontWeight: '600', textTransform: 'capitalize' }}>{tab}</Text>
+              <Text style={{ color: activeTab === tab ? '#fff' : colors.text, fontWeight: '600' }}>{TAB_LABELS[tab]}</Text>
             </TouchableOpacity>
           ))}
         </ScrollView>
@@ -616,7 +665,7 @@ export default function AppointmentsScreen() {
         {queryStatus === "LoadingFirstPage" ? (
           <ActivityIndicator size="large" color={colors.primary} />
         ) : filtered.length === 0 ? (
-          <Text style={{ textAlign: 'center', color: colors.textMuted, marginTop: 40 }}>No {activeTab} appointments.</Text>
+          <Text style={{ textAlign: 'center', color: colors.textMuted, marginTop: 40 }}>No {TAB_LABELS[activeTab].toLowerCase()} appointments.</Text>
         ) : (
           <>
             {filtered.map((appt: any) => {
@@ -639,6 +688,14 @@ export default function AppointmentsScreen() {
           <View style={[styles.modalContent, { backgroundColor: colors.card, maxHeight: '90%' }]}>
             {renderCloseButton(() => setShowCreate(false))}
             <Text style={[styles.modalTitle, { color: colors.text }]}>New Appointment</Text>
+            <View style={{ backgroundColor: colors.background, padding: 12, borderRadius: 10, marginBottom: 12, flexDirection: 'row', gap: 8 }}>
+              <Ionicons name="person-circle-outline" size={18} color={colors.textSecondary} />
+              <Text style={{ flex: 1, color: colors.textSecondary, lineHeight: 20 }}>
+                {myCounsellor?.status === "assigned"
+                  ? `Your request will go to ${myCounsellor.counsellor.displayName}, your counsellor.`
+                  : "You don't have a counsellor assigned yet. Your request will go to the care team, who will connect you with a counsellor and reply here."}
+              </Text>
+            </View>
             
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ gap: 16 }}>
               <TextInput placeholder="Title (e.g. Follow up)" value={title} onChangeText={setTitle} style={[styles.input, { backgroundColor: colors.background, color: colors.text, marginBottom: 0 }]} placeholderTextColor={colors.textMuted} />
@@ -703,19 +760,26 @@ export default function AppointmentsScreen() {
                 )}
                 
                 {selectedAppt.status === 'pending' && selectedAppt.createdBy === 'user' && (
-                  <Text style={{ color: colors.textMuted, fontStyle: 'italic', textAlign: 'center' }}>Awaiting admin confirmation...</Text>
+                  <Text style={{ color: colors.textMuted, fontStyle: 'italic', textAlign: 'center' }}>Waiting for your counsellor to reply.</Text>
                 )}
 
                 {/* Reschedule Handshake */}
                 {selectedAppt.status === 'waiting' && selectedAppt.rescheduledBy === 'admin' && (
                   <View style={{ gap: 10 }}>
-                     <Text style={{ color: colors.text, textAlign: 'center', marginBottom: 8 }}>Admin requested a new time: {selectedAppt.rescheduleDate} at {selectedAppt.rescheduleTime}</Text>
+                     <Text style={{ color: colors.text, textAlign: 'center', marginBottom: 8 }}>Your counsellor suggested a new time: {selectedAppt.rescheduleDate} at {selectedAppt.rescheduleTime}</Text>
                      <TouchableOpacity onPress={handleAccept} style={[styles.btn, { backgroundColor: colors.success || '#10b981' }]}><Text style={{ color: '#fff', fontWeight: '600' }}>Accept New Time</Text></TouchableOpacity>
                      <TouchableOpacity onPress={() => { setShowDetail(false); setShowReject(true); }} style={[styles.btn, { backgroundColor: colors.error || '#ef4444' }]}><Text style={{ color: '#fff', fontWeight: '600' }}>Reject</Text></TouchableOpacity>
                   </View>
                 )}
                 {selectedAppt.status === 'waiting' && selectedAppt.rescheduledBy === 'user' && (
-                  <Text style={{ color: colors.textMuted, fontStyle: 'italic', textAlign: 'center' }}>Awaiting admin to confirm your requested reschedule time...</Text>
+                  <Text style={{ color: colors.textMuted, fontStyle: 'italic', textAlign: 'center' }}>Waiting for your counsellor to confirm the new time.</Text>
+                )}
+
+                {(selectedAppt.status === 'accepted' || selectedAppt.status === 'scheduled') && (
+                  <View style={{ gap: 10 }}>
+                    <TouchableOpacity onPress={() => { setShowDetail(false); setRescheduleDate(selectedAppt.date); setShowReschedule(true); }} style={[styles.btn, { backgroundColor: colors.surface }]}><Text style={{ color: colors.text, fontWeight: '600' }}>Ask for a different time</Text></TouchableOpacity>
+                    <TouchableOpacity onPress={() => handleCancelConfirmed(selectedAppt._id)} style={[styles.btn, { backgroundColor: colors.surface }]}><Text style={{ color: colors.error || '#ef4444', fontWeight: '600' }}>Cancel appointment</Text></TouchableOpacity>
+                  </View>
                 )}
 
                 {selectedAppt.status === 'completed' && !selectedAppt.rating && (
@@ -724,7 +788,7 @@ export default function AppointmentsScreen() {
 
                 {selectedAppt.status === 'rejected' && (
                   <View style={{ backgroundColor: (colors.error || '#ef4444') + '15', padding: 12, borderRadius: 8 }}>
-                    <Text style={{ color: colors.error || '#ef4444', fontWeight: 'bold' }}>Rejected:</Text>
+                    <Text style={{ color: colors.error || '#ef4444', fontWeight: 'bold' }}>Declined:</Text>
                     <Text style={{ color: colors.text }}>{selectedAppt.rejectionReason}</Text>
                   </View>
                 )}
@@ -794,7 +858,7 @@ export default function AppointmentsScreen() {
         <View style={styles.modalOverlay}>
           <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
             {renderCloseButton(() => setShowComplete(false))}
-            <Text style={[styles.modalTitle, { color: colors.text }]}>Complete Session</Text>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>Share feedback</Text>
             
             <Text style={{ color: colors.text, marginBottom: 8, fontWeight: '600' }}>Rate your session</Text>
             <View style={{ flexDirection: 'row', gap: 8, marginBottom: 20, justifyContent: 'center' }}>
@@ -903,16 +967,18 @@ function AppointmentCard({ appt, colors, styles, handleDelete, setSelectedAppt, 
       onPress={() => { setSelectedAppt(appt); setShowDetail(true); }}
       style={[styles.card, { backgroundColor: colors.surface, position: 'relative' }]}
     >
-      {(appt.status === 'pending' || appt.status === 'rejected') && (
+      {(appt.status === 'pending' || appt.status === 'waiting') && (
         <TouchableOpacity 
           onPress={() => handleDelete(appt._id)}
+          accessibilityRole="button"
+          accessibilityLabel="Withdraw request"
           style={{ position: 'absolute', top: 12, right: 12, zIndex: 10, padding: 4 }}
         >
-          <Ionicons name="trash-outline" size={20} color={colors.error || '#ef4444'} />
+          <Ionicons name="close-circle-outline" size={20} color={colors.error || '#ef4444'} />
         </TouchableOpacity>
       )}
 
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingRight: (appt.status === 'pending' || appt.status === 'rejected') ? 30 : 0 }}>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingRight: (appt.status === 'pending' || appt.status === 'waiting') ? 30 : 0 }}>
         <Text style={[styles.cardTitle, { color: colors.text }]}>{appt.title}</Text>
         <Text style={{ color: colors.textMuted, fontSize: 12 }}>{appt.date}</Text>
       </View>

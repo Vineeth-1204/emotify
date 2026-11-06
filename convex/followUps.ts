@@ -1,9 +1,11 @@
 import { v } from "convex/values";
 import { mutation, query } from "./functions";
 import { checkRateLimit } from "./rateLimiter";
-import { assertCanAccessStudent, getAuthenticatedUser, getStaffScope, getStaffRecipientsForStudent } from "./authz";
+import { assertCanAccessStudent, getAuthenticatedUser, getStaffScope, getStaffRecipientsForStudent, requireCounselorOrAdmin } from "./authz";
 import type { Doc } from "./_generated/dataModel";
+import { legacyFollowUpSourceType } from "../common/legacyClientCompat";
 import { sanitizePlainText } from "./sanitizer";
+import { createNotification, notifyEach } from "./notify";
 
 export const create = mutation({
   args: {
@@ -113,15 +115,15 @@ export const create = mutation({
     });
 
     if (isStaff) {
-      await ctx.db.insert("notifications", {
+      await createNotification(ctx, {
         recipientId: canonicalTargetUserId,
         type: "follow_up_created",
         title: "Care Follow-up Scheduled",
         message: `A follow-up (${args.type.replace(/_/g, " ")}) has been scheduled for ${new Date(args.dueDate).toLocaleDateString()}.`,
         priority: "medium",
-        read: false,
-        archived: false,
-        createdAt: Date.now(),
+        destination: "appointments",
+        relatedId: String(followUpId),
+        dedupeKey: `follow_up:${followUpId}:created`,
       });
     }
 
@@ -132,6 +134,9 @@ export const create = mutation({
 export const getPending = query({
   args: { userId: v.optional(v.string()) },
   handler: async (ctx, args) => {
+    // Staff-only: returns full follow-up rows (staff notes, completedBy, clinical links). No app
+    // build calls it; students use getStudentFollowUps, which returns a minimal projection.
+    await requireCounselorOrAdmin(ctx);
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return [];
     const targetUserId = args.userId || identity.subject;
@@ -222,7 +227,20 @@ export const getStudentFollowUps = query({
     deduped.sort((a, b) => (b.dueDate ?? b.createdAt) - (a.dueDate ?? a.createdAt));
 
     if (!isStaff) {
-      return deduped.map(({ notes, completedBy, ...safe }) => safe);
+      // Students get only what the Appointments screen shows: no notes, staff names,
+      // screening/triage/appointment links or internal source categories.
+      return deduped.map((f) => ({
+        _id: f._id,
+        type: f.type,
+        dueDate: f.dueDate,
+        completed: f.completed,
+        status: f.status,
+        completedAt: f.completedAt,
+        selfInitiated: f.sourceType === "self_initiated",
+        // Legacy-client compatibility: older builds decide "Complete" vs "Awaiting counsellor"
+        // from sourceType. Reduced to two values; the real source category stays staff-only.
+        sourceType: legacyFollowUpSourceType(f.sourceType),
+      }));
     }
 
     return deduped;
@@ -232,6 +250,8 @@ export const getStudentFollowUps = query({
 export const getFollowUpById = query({
   args: { id: v.id("followUps") },
   handler: async (ctx, args) => {
+    // Staff-only clinical read: students use the minimal self-service endpoints instead.
+    await requireCounselorOrAdmin(ctx);
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated: Login required.");
 
@@ -402,30 +422,27 @@ export const markComplete = mutation({
     });
 
     if (isStaff) {
-      await ctx.db.insert("notifications", {
+      await createNotification(ctx, {
         recipientId: followUp.userId,
         type: "follow_up_completed",
         title: "Care Follow-up Completed",
         message: `Your follow-up (${followUp.type.replace(/_/g, " ")}) has been marked completed by the counselor.`,
         priority: "medium",
-        read: false,
-        archived: false,
-        createdAt: now,
+        destination: "appointments",
+        relatedId: String(followUp._id),
+        dedupeKey: `follow_up:${followUp._id}:completed:student`,
       });
     } else {
       const staff = await getStaffRecipientsForStudent(ctx, followUp.userId);
-      for (const s of staff) {
-        await ctx.db.insert("notifications", {
-          recipientId: String(s._id),
-          type: "follow_up_completed",
-          title: "Follow-up Completed by Student",
-          message: `${caller.full_name || "A student"} completed their care follow-up (${followUp.type.replace(/_/g, " ")}).`,
-          priority: "medium",
-          read: false,
-          archived: false,
-          createdAt: now,
-        });
-      }
+      await notifyEach(ctx, staff.map((s: any) => s._id), {
+        type: "follow_up_completed",
+        title: "Follow-up Completed by Student",
+        message: `${caller.full_name || "A student"} completed their care follow-up (${followUp.type.replace(/_/g, " ")}).`,
+        priority: "medium",
+        destination: "appointments",
+        relatedId: String(followUp._id),
+        dedupeKey: `follow_up:${followUp._id}:completed:staff`,
+      });
     }
 
     return { success: true };
@@ -435,6 +452,8 @@ export const markComplete = mutation({
 export const getFollowUpsByAppointmentId = query({
   args: { appointmentId: v.id("appointments") },
   handler: async (ctx, args) => {
+    // Staff-only clinical read: students use the minimal self-service endpoints instead.
+    await requireCounselorOrAdmin(ctx);
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return [];
 

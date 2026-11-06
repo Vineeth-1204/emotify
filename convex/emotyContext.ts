@@ -4,6 +4,7 @@ import type { Id } from "./_generated/dataModel";
 import { getAuthenticatedUser } from "./authz";
 import { sanitizePlainText } from "./sanitizer";
 import { getBoundedUserMemoriesForContext } from "./emotyMemory";
+import { getCompanionDisplayName, readStoredEmotyPreferences } from "../common/companionName";
 
 // =========================================================================
 // 1. EXACT CONTEXT BUDGET CONSTANTS
@@ -371,10 +372,7 @@ export const getAuthoritativeEmotyContext = internalQuery({
 
       ageCohort = normalizeAgeCohort((authUser as any).age);
 
-      const customCompanion = (authUser as any).mitraPreferences?.name;
-      if (customCompanion && typeof customCompanion === "string" && customCompanion.trim().length > 0) {
-        companionName = truncateString(customCompanion.trim(), 30) || "Emoty";
-      }
+      companionName = getCompanionDisplayName(readStoredEmotyPreferences(authUser as any)?.name);
     }
 
     const language = truncateString(args.language, MAX_LANGUAGE_CHARS);

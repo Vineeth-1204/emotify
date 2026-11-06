@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, Alert, Dimensions, Animated, ScrollView } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
+import { CHECKIN_POST_SESSION_HREF, isCheckinReturn } from "@/common/checkinReturn";
 import { useAppAuth } from "@/utils/auth";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
@@ -15,7 +16,7 @@ import Svg, { Circle, Path, G } from "react-native-svg";
 import * as SecureStore from "expo-secure-store";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAvatar } from "@/context/AvatarContext";
-import { EmotyAvatar, MitraAvatar } from "@/components/avatar/EmotyAvatar";
+import { EmotyAvatar } from "@/components/avatar/EmotyAvatar";
 import { CalmPointToken } from "@/components/svg/system";
 import { JPMR_STEPS, JPMRStep, JPMRMediaViewer, PlayState } from "@/components/jpmr";
 
@@ -143,7 +144,10 @@ export default function JPMRScreen() {
     sourceType?: string;
     attemptId?: string;
     triageId?: string;
+    returnTo?: string;
   }>();
+  // Opened by the guided check-in: finish by handing back to its "How do you feel now?" step
+  const returnToCheckin = isCheckinReturn(params.returnTo);
   const { user } = useAppAuth();
   const { setAvatarState } = useAvatar();
 
@@ -570,7 +574,7 @@ export default function JPMRScreen() {
           <View style={styles.stepContent}>
             <Text style={styles.title}>Guided JPMR Relaxation</Text>
             <View style={{ alignItems: "center", marginVertical: 14 }}>
-              <MitraAvatar state="breathing" size="lg" />
+              <EmotyAvatar state="breathing" size="lg" />
             </View>
             <Text style={styles.subtitle}>
               This is a guided relaxation to release muscle tension. Find a comfortable seat or lie down. It takes about 12 minutes. Press Start when ready.
@@ -715,7 +719,7 @@ export default function JPMRScreen() {
           <View style={styles.stepContent}>
             <Text style={styles.title}>Session Summary</Text>
             <View style={{ alignItems: "center", marginVertical: 12 }}>
-              <MitraAvatar state={improvement > 0 ? "celebrating" : "calm"} size="md" />
+              <EmotyAvatar state={improvement > 0 ? "celebrating" : "calm"} size="md" />
             </View>
             <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, marginBottom: 8 }}>
               <CalmPointToken size={20} />
@@ -734,14 +738,24 @@ export default function JPMRScreen() {
               </View>
             </View>
 
-            <Text style={styles.compareHeading}>Would you like to compare how your body feels now?</Text>
+            {!returnToCheckin && (
+              <Text style={styles.compareHeading}>Would you like to compare how your body feels now?</Text>
+            )}
 
             <View style={styles.compareBtnContainer}>
-              <Button
-                title="Compare Body Map"
-                onPress={() => router.replace({ pathname: "/(auth)/tools/emotion-map" }) as any}
-                style={styles.actionBtn}
-              />
+              {returnToCheckin ? (
+                <Button
+                  title="Continue"
+                  onPress={() => router.replace(CHECKIN_POST_SESSION_HREF as any)}
+                  style={styles.actionBtn}
+                />
+              ) : (
+                <Button
+                  title="Compare Body Map"
+                  onPress={() => router.replace({ pathname: "/(auth)/tools/emotion-map" }) as any}
+                  style={styles.actionBtn}
+                />
+              )}
               <Button
                 title="Back to Dashboard"
                 onPress={() => router.replace("/(auth)/(tabs)") as any}

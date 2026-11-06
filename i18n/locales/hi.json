@@ -149,6 +149,7 @@
     "gender_non-binary": "गैर-बाइनरी",
     "gender_other": "अन्य",
     "gender_prefer-not-to-say": "बताना नहीं चाहते",
+    "emergencyContact": "आपातकालीन संपर्क",
     "emergencyContactLabel": "आपातकालीन संपर्क नाम",
     "emergencyPhoneLabel": "आपातकालीन संपर्क फ़ोन",
     "saveProfile": "परिवर्तन सहेजें",
@@ -215,7 +216,13 @@
     "microgoalsTag": "आदतें",
     "appointmentsTitle": "परामर्श अपॉइंटमेंट",
     "appointmentsDesc": "चिकित्सीय सत्र और अनुरोध प्रबंधित करें।",
-    "appointmentsTag": "सलाह"
+    "appointmentsTag": "सलाह",
+    "morningAffirmationTitle": "सुबह का संकल्प",
+    "morningAffirmationDesc": "आज के लिए एक विचार या सकारात्मक स्मृति निर्धारित करें।",
+    "morningAffirmationTag": "दिनचर्या",
+    "eveningGratitudeTitle": "शाम का आभार",
+    "eveningGratitudeDesc": "दिन खत्म करने से पहले आज के अच्छे पलों को संजोएं।",
+    "eveningGratitudeTag": "दिनचर्या"
   },
   "screening": {
     "title": "कल्याण चेक-इन",

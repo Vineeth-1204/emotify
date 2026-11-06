@@ -1,8 +1,11 @@
 import { v } from "convex/values";
+import type { Id } from "./_generated/dataModel";
 import { mutation, query } from "./functions";
 import { checkRateLimit } from "./rateLimiter";
 import { requireCounselorOrAdmin, getAuthenticatedUser, assertCanAccessStudent, getStaffRecipientsForStudent } from "./authz";
+import { createNotification, notifyEach, studentLabelFor } from "./notify";
 import { sanitizePlainText } from "./sanitizer";
+import { latestTriageIdFor } from "./triage";
 
 export const create = mutation({
   args: {
@@ -13,8 +16,9 @@ export const create = mutation({
     sourceType: v.optional(v.string()),
     attemptId: v.optional(v.id("screeningAttempts")),
     triageId: v.optional(v.id("triages")),
+    returnOutcome: v.optional(v.boolean()),
   },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Id<"counsellorRequests">> => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated: Login required.");
 
@@ -75,10 +79,47 @@ export const create = mutation({
 
       const activeReq = existing.find((r) => activeStatuses.has(r.status || "pending"));
       if (activeReq) {
-        // Return existing active request ID, do not create duplicate record or send duplicate notification
+        // Return the existing active request instead of creating a duplicate. A student asking
+        // again from the crisis screen still re-alerts the care team (critical, at most once an
+        // hour per request), so the app can truthfully say the team has been told.
+        let deliveryStatus = (activeReq.deliveryStatus ?? "already_active") as "already_active" | "notified" | "no_active_staff";
+        let notifiedStaffCount = activeReq.notifiedStaffCount ?? 0;
+        if (args.sourceType === "emergency_modal" && !isStaff) {
+          const staff = await getStaffRecipientsForStudent(ctx, effectiveUserId);
+          const hour = Math.floor(Date.now() / (60 * 60 * 1000));
+          await notifyEach(ctx, staff.map((m: any) => m._id), {
+            type: "counsellor_request",
+            title: "Student asked again for urgent contact",
+            message: `${await studentLabelFor(ctx, effectiveUserId)} asked again for immediate counsellor contact from the support screen.`,
+            priority: "critical",
+            destination: "requests",
+            relatedId: String(activeReq._id),
+            dedupeKey: `counsellor_request:${activeReq._id}:repeat:${hour}`,
+          });
+          deliveryStatus = staff.length > 0 ? "notified" : "no_active_staff";
+          notifiedStaffCount = staff.length;
+        }
+        if (args.returnOutcome) {
+          return {
+            success: true,
+            requestId: activeReq._id,
+            deduplicated: true,
+            notifiedStaffCount,
+            deliveryStatus,
+          } as unknown as Id<"counsellorRequests">;
+        }
         return activeReq._id;
       }
     }
+
+    // The crisis screen no longer receives triage ids; link the request to the student's latest
+    // triage on the server so provenance is unchanged.
+    const triageId =
+      args.triageId ?? (args.sourceType === "emergency_modal" && !isStaff ? await latestTriageIdFor(ctx, Array.from(searchIds)) : undefined);
+
+    // Determine recipients according to assignment rules
+    const allStaff = await getStaffRecipientsForStudent(ctx, effectiveUserId);
+    const deliveryStatus = allStaff.length > 0 ? "notified" : "no_active_staff";
 
     const requestId = await ctx.db.insert("counsellorRequests", {
       user_id: effectiveUserId,
@@ -88,25 +129,38 @@ export const create = mutation({
       status: "pending",
       sourceType: args.sourceType || "self_initiated",
       attemptId: args.attemptId,
-      triageId: args.triageId,
+      triageId,
+      deliveryStatus,
+      notifiedStaffCount: allStaff.length,
+      deduplicated: false,
       updatedAt: Date.now(),
     });
 
-    // Notify admins and the student's assigned counsellor (all counsellors if unassigned)
-    const allStaff = await getStaffRecipientsForStudent(ctx, effectiveUserId);
-    const studentName = caller?.full_name || "A student";
+    // De-identified label ("Student 101"), as for safety alerts: these may reach counsellors who
+    // are not the student's (unassigned students alert every active counsellor).
+    const emergency = args.sourceType === "emergency_modal";
+    await notifyEach(ctx, allStaff.map((m: any) => m._id), {
+      type: "counsellor_request",
+      title: emergency ? "Urgent: student asked for immediate contact" : "New Counselor Support Request",
+      message: `${await studentLabelFor(ctx, effectiveUserId)} requested counselor support${emergency ? " from the support screen" : ""}.`,
+      priority: emergency ? "critical" : "medium",
+      destination: "requests",
+      relatedId: String(requestId),
+      dedupeKey: `counsellor_request:${requestId}`,
+    });
 
-    for (const staff of allStaff) {
-      await ctx.db.insert("notifications", {
-        recipientId: String(staff._id),
-        type: "counsellor_request",
-        title: "New Counselor Support Request",
-        message: `${studentName} requested counselor support.`,
-        priority: "medium",
-        read: false,
-        archived: false,
-        createdAt: Date.now(),
-      });
+    if (allStaff.length === 0) {
+      console.warn(`[COUNSELLOR REQUEST NO ACTIVE STAFF] requestId=${requestId} userId=${effectiveUserId}`);
+    }
+
+    if (args.returnOutcome) {
+      return {
+        success: true,
+        requestId,
+        deduplicated: false,
+        notifiedStaffCount: allStaff.length,
+        deliveryStatus: deliveryStatus as "notified" | "no_active_staff",
+      } as unknown as Id<"counsellorRequests">;
     }
 
     return requestId;
@@ -160,15 +214,15 @@ export const updateStatus = mutation({
         message = "Your counselor support request has been closed.";
       }
 
-      await ctx.db.insert("notifications", {
+      await createNotification(ctx, {
         recipientId: request.user_id,
-        type: "counsellor_request",
+        type: "counsellor_request_update",
         title,
         message,
         priority: "medium",
-        read: false,
-        archived: false,
-        createdAt: Date.now(),
+        destination: "appointments",
+        relatedId: String(request._id),
+        dedupeKey: `counsellor_request:${request._id}:status:${args.status}`,
       });
     }
 
@@ -216,6 +270,8 @@ export const getMyRequests = query({
 export const getStudentCounsellorRequests = query({
   args: { userId: v.string() },
   handler: async (ctx, args) => {
+    // Staff-only clinical read: students use the minimal self-service endpoints instead.
+    await requireCounselorOrAdmin(ctx);
     await assertCanAccessStudent(ctx, args.userId);
 
     let targetUser: any = null;
@@ -262,6 +318,8 @@ export const getStudentCounsellorRequests = query({
 export const getRequestById = query({
   args: { requestId: v.id("counsellorRequests") },
   handler: async (ctx, args) => {
+    // Staff-only clinical read: students use the minimal self-service endpoints instead.
+    await requireCounselorOrAdmin(ctx);
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated: Login required.");
 

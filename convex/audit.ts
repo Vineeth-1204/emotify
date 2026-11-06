@@ -19,7 +19,7 @@ export const logEvent = internalMutation({
 });
 
 export async function logAuditEvent(
-  ctx: MutationCtx,
+  ctx: { db: any } | MutationCtx,
   userId: string | undefined,
   action: string,
   details?: string

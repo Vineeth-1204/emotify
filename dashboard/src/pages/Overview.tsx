@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   Clock,
   HeartPulse,
+  Info,
   TrendingUp,
   UserPlus,
 } from "lucide-react";
@@ -23,6 +24,7 @@ import {
 } from "recharts";
 import { EmptyState, LoadingState } from "../components/UIComponents";
 import EnrollPatientModal from "../components/EnrollPatientModal";
+import { useDashboardAuth } from "../components/AuthContext";
 
 function getAlertTitle(type: string) {
   if (type === "suicideRisk" || type === "suicide") return "Suicide risk alert";
@@ -36,8 +38,12 @@ export default function Overview() {
   const feed = useQuery(api.dashboard.getActivityFeed);
   const alerts = useQuery(api.dashboard.getAlerts);
   const allAppointments = useQuery(api.appointments.listAllTwoWayAppointments);
+  const directoryStatus = useQuery(api.counsellorDirectory.getMyDirectoryStatus);
 
   const [showEnrollModal, setShowEnrollModal] = useState(false);
+  const { isAdmin } = useDashboardAuth();
+
+  const isUnlinkedCounsellor = !isAdmin && directoryStatus?.isCounsellor === true && directoryStatus?.isLinked === false;
 
   const todayStr = new Date().toISOString().split("T")[0];
   const todaysAppointments = allAppointments?.filter((appointment) => appointment.date === todayStr) || [];
@@ -52,6 +58,36 @@ export default function Overview() {
 
   return (
     <div className="overview-page animate-fade-in">
+      {isUnlinkedCounsellor && (
+        <div
+          role="status"
+          className="glass-panel"
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 14,
+            padding: "16px 20px",
+            borderRadius: 14,
+            background: "rgba(37, 99, 235, 0.08)",
+            border: "1px solid rgba(37, 99, 235, 0.25)",
+            color: "var(--text-primary)",
+            marginBottom: 20,
+            fontSize: "0.92rem",
+            lineHeight: 1.5,
+          }}
+        >
+          <Info size={22} style={{ color: "#2563eb", flexShrink: 0, marginTop: 2 }} aria-hidden="true" />
+          <div>
+            <strong style={{ display: "block", color: "var(--text-primary)", marginBottom: 2 }}>
+              Counsellor onboarding in progress
+            </strong>
+            <p style={{ margin: 0, color: "var(--text-secondary)" }}>
+              Your counsellor account is awaiting staff directory setup. Please contact an administrator to complete your onboarding. Your student caseload will appear after setup.
+            </p>
+          </div>
+        </div>
+      )}
+
       <section className="overview-heading">
         <div>
           <p className="overview-eyebrow">Workspace</p>
@@ -74,10 +110,13 @@ export default function Overview() {
           <article className="overview-metric-card">
             <div className="overview-metric-icon"><HeartPulse size={20} /></div>
             <div>
-              <p className="overview-metric-label">Students</p>
+              <p className="overview-metric-label">{isAdmin ? "Students" : "My students"}</p>
               <p className="overview-metric-value">{data?.totalPatients ?? 0}</p>
-              <p className="overview-metric-note">Registered accounts</p>
+              <p className="overview-metric-note">
+                {isAdmin ? "Registered accounts" : (data?.totalPatients ?? 0) === 0 ? "None assigned yet. An administrator assigns your caseload." : "Assigned to your caseload"}
+              </p>
             </div>
+            <Link className="overview-card-link" to={isAdmin ? "/assignments" : "/patients"} aria-label={isAdmin ? "Manage student assignments" : "View my students"}>→</Link>
           </article>
 
           <article className="overview-metric-card">

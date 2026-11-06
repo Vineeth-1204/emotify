@@ -151,6 +151,7 @@
     "gender_non-binary": "Non-binary",
     "gender_other": "Other",
     "gender_prefer-not-to-say": "Prefer not to say",
+    "emergencyContact": "Emergency Contact",
     "emergencyContactLabel": "Emergency Contact Name",
     "emergencyPhoneLabel": "Emergency Contact Phone",
     "saveProfile": "Save Changes",
@@ -180,7 +181,20 @@
     "exportingBtn": "Generating CSV...",
     "exportSuccess": "Your wellbeing logs have been compiled successfully.",
     "exportError": "Failed to export data.",
-    "signOutBtn": "Sign Out"
+    "signOutBtn": "Sign Out",
+    "myCounsellor": {
+      "title": "MY COUNSELLOR",
+      "role": "Counsellor",
+      "assignedSince": "Your counsellor since {{date}}",
+      "email": "Email",
+      "phone": "Phone",
+      "requestSession": "Request a session",
+      "unassigned": "Your counsellor hasn't been assigned yet. Please contact your institution's administrator for assistance.",
+      "unavailable": "Your counsellor is currently unavailable. Please contact your institution's administrator for assistance.",
+      "loading": "Loading your counsellor…",
+      "loadError": "We couldn't load your counsellor right now. Check your connection; this will update when you're back online.",
+      "signInAgain": "Please sign in again to see your counsellor."
+    }
   },
   "tools": {
     "howImFeelingTitle": "How I'm Feeling",
@@ -217,7 +231,13 @@
     "microgoalsTag": "Habits",
     "appointmentsTitle": "Appointments",
     "appointmentsDesc": "Manage clinical sessions and requests.",
-    "appointmentsTag": "Consult"
+    "appointmentsTag": "Consult",
+    "morningAffirmationTitle": "Morning Affirmation",
+    "morningAffirmationDesc": "Set an intentional thought or carry a gentle reminder for today.",
+    "morningAffirmationTag": "Routine",
+    "eveningGratitudeTitle": "Evening Gratitude",
+    "eveningGratitudeDesc": "Notice small good moments from today before winding down.",
+    "eveningGratitudeTag": "Routine"
   },
   "screening": {
     "title": "Wellness Check-Ins",
@@ -243,7 +263,58 @@
     "resultSevere": "Significant Distress",
     "emergencyAlertTitle": "Support is Always Available",
     "emergencyAlertDesc": "Your responses suggest you may be experiencing significant distress. Please consider connecting with a trusted counselor or crisis support service.",
-    "emergencyContactHelpline": "Access Helpline Numbers"
+    "emergencyContactHelpline": "Access Helpline Numbers",
+    "result": {
+      "title": "Your check-in summary",
+      "steady": {
+        "heading": "Thank you for checking in.",
+        "body": "Your answers have been saved. Taking time to notice how you feel is a good step. How we feel can change from week to week, so check in again whenever you like, and reach out if things start to feel harder."
+      },
+      "support": {
+        "heading": "You deserve support, too.",
+        "body": "Some of your answers suggest that you may be going through a difficult time. You don't have to figure everything out on your own. Talking to a counsellor or someone you trust could help."
+      },
+      "prioritySupport": {
+        "heading": "You don't have to handle this alone.",
+        "body": "Your answers suggest that you're experiencing difficulties that deserve attention. Speaking with a counsellor soon could help you work through what is happening and find the right support."
+      },
+      "immediateSafety": {
+        "heading": "Your safety matters most right now.",
+        "body": "We're concerned for your safety. If you're in danger now, please call emergency services immediately.",
+        "bodyHelpline": "You don't have to go through this alone. You can also call {{helplineName}} on {{helplineNumber}} to talk to someone, at any time."
+      },
+      "trustedAdult": {
+        "heading": "We're here with you",
+        "question": "Thank you for being honest with us — that's really brave. Sometimes big feelings can feel really hard to carry. A caring adult will reach out to talk with you very soon. Right now, is there a grown-up nearby you trust — like a parent, teacher, or family member?",
+        "yesButton": "Yes, I can talk to someone",
+        "needHelpButton": "I need help finding someone",
+        "acknowledgedYes": "That's really good to know. You don't have to carry big feelings on your own.",
+        "acknowledgedNeedHelp": "We're here to help you connect with someone caring right now. You can talk to a counsellor or call the helpline at any time.",
+        "calmBridge": "While we figure out the next step together, would you like to try a calm activity right now?",
+        "calmBridgeYes": "Yes, let's try something",
+        "calmBridgeNo": "Not right now",
+        "declined": "That's totally okay. The calm tools will be here whenever you're ready — no rush at all. 🌿"
+      },
+      "actions": {
+        "home": "Go to my wellbeing space",
+        "tools": "Explore support options",
+        "counsellor": "Talk to a counsellor",
+        "connectCounsellor": "Connect with a counsellor",
+        "callEmergency": "Call emergency services ({{number}})",
+        "callHelpline": "Call {{helplineName}} ({{number}})",
+        "moreSupport": "More ways to get support"
+      },
+      "safetyFooter": "If you ever feel unsafe, you can call {{helplineName}} on {{helplineNumber}} at any time, or {{emergencyNumber}} in an emergency.",
+      "loading": "Preparing your summary…",
+      "offline": "Your answers are saved. We can't load your summary right now; it will appear when you're back online.",
+      "missing": "Your answers are saved, but we couldn't show your summary here. You can find support options on your home screen.",
+      "error": "Something went wrong while showing your summary. Your answers are saved."
+    },
+    "submit": {
+      "error": "We couldn't send your answers. They're still saved on this device, so you can try again.",
+      "retry": "Try again",
+      "waiting": "Waiting for a connection. Your answers will be sent when you're back online."
+    }
   },
   "companion": {
     "emergencyBannerSupportDesc": "{{name}} is here to support you but cannot replace emergency help. If you feel overwhelmed, free confidential help is open 24/7.",
@@ -336,5 +407,41 @@
     "empatheticDesc": "A soft, compassionate voice dedicated to thoughtful listening",
     "uplifting": "Bright & Uplifting",
     "upliftingDesc": "A bright, cheerful tone that provides positive encouragement"
+  },
+  "notifications": {
+    "permission": {
+      "title": "Stay in the loop",
+      "body": "Emotify can let you know when your counsellor replies about an appointment or there is an update for you. Notifications never show personal details on your lock screen.",
+      "notNow": "Not now",
+      "allow": "Allow notifications"
+    },
+    "centre": {
+      "title": "Notifications",
+      "markAllRead": "Mark all as read",
+      "empty": "You're all caught up. Updates about your appointments and your counsellor will appear here.",
+      "error": "We couldn't load your notifications.",
+      "retry": "Try again",
+      "loading": "Loading notifications",
+      "loadMore": "Show older",
+      "unread": "Unread",
+      "openLabel": "Open notification",
+      "bellLabel": "Notifications, {{count}} unread",
+      "justNow": "Just now",
+      "minutesAgo": "{{count}} min ago",
+      "hoursAgo": "{{count}} h ago",
+      "daysAgo": "{{count}} d ago"
+    }
+  },
+  "emotyGuide": {
+    "breathingCopy": "Thanks for checking in. Want to take two slow minutes to breathe with me?",
+    "breathingButton": "Breathe with me",
+    "groundingCopy": "That sounds like a lot to carry. A short grounding exercise can help you feel a little steadier. Want to try it together?",
+    "groundingButton": "Try grounding",
+    "reframeCopy": "The last few days sound like they've been tough. Want to look at one thought that's been on your mind, together?",
+    "reframeButton": "Let's look at it",
+    "appointmentTodayCopy": "You have a session with your counsellor today. I'm glad you're making time for yourself.",
+    "appointmentTomorrowCopy": "You have a session with your counsellor tomorrow. You can check the details any time.",
+    "appointmentButton": "View appointment",
+    "notNow": "Not now"
   }
 }

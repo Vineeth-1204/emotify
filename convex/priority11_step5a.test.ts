@@ -683,8 +683,10 @@ describe("Priority 11 Step 5A: Telemetry Query Bounding & Patient ID Counter", (
     }
 
     test("P11-5A-SCR-01: Screening history returns newest attempts first", async () => {
-      const { t, studentAId } = await setupTestEnvironment();
+      const { t, studentAId, adminId } = await setupTestEnvironment();
       const session = t.withIdentity({ subject: studentAId });
+      // Screening history is a staff-only clinical read
+      const adminSession = t.withIdentity({ subject: adminId });
 
       await session.mutation(api.screening.submitScreeningAttempt, {
         userId: studentAId,
@@ -698,7 +700,11 @@ describe("Priority 11 Step 5A: Telemetry Query Bounding & Patient ID Counter", (
         responses: makeResponses(),
       });
 
-      const history = await session.query(api.screening.getScreeningHistory, {
+      await expect(
+        session.query(api.screening.getScreeningHistory, { userId: studentAId })
+      ).rejects.toThrow(/Counselor or Admin access required/);
+
+      const history = await adminSession.query(api.screening.getScreeningHistory, {
         userId: studentAId,
       });
 
@@ -707,8 +713,9 @@ describe("Priority 11 Step 5A: Telemetry Query Bounding & Patient ID Counter", (
     });
 
     test("P11-5A-SCR-02: Screening history returns at most 20 records at database level", async () => {
-      const { t, studentAId } = await setupTestEnvironment();
-      const session = t.withIdentity({ subject: studentAId });
+      const { t, studentAId, adminId } = await setupTestEnvironment();
+      // Screening history is a staff-only clinical read
+      const session = t.withIdentity({ subject: adminId });
 
       // Insert 25 attempts directly in db to test bounding
       await t.run(async (ctx) => {

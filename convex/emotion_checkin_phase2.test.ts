@@ -2,13 +2,13 @@
 /**
  * Emotion Check-in Client Rework — Phase 2 Test Suite
  *
- * Tests the Mitra Guided Clarification + Interactive Emotion Flow additions.
+ * Tests the Emoty Guided Clarification + Interactive Emotion Flow additions.
  *
  * Covered requirements:
  * 1.  Multiple emotions selected → strongest question is asked.
  * 2.  User selects strongest normally → flow advances.
  * 3.  First "I'm not sure" on strongest → uncertainty state becomes rephrased.
- * 4.  Mitra rephrases instead of repeating the exact same question.
+ * 4.  Emoty rephrases instead of repeating the exact same question.
  * 5.  Second "I'm not sure" on strongest → fallback triggered (step 6).
  * 6.  Fallback offers existing canonical interventions.
  * 7.  Flow can complete with no body region selected.

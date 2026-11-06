@@ -4,6 +4,7 @@ import { expect, test, describe } from "vitest";
 import { api, internal } from "./_generated/api";
 import schema from "./schema";
 import { assignAllPatientsToCounsellors } from "../test-utils/identity";
+import { latestSubmission, staffViewer } from "../test-utils/screening";
 import type { Id } from "./_generated/dataModel";
 
 const modules = import.meta.glob("./**/*.ts");
@@ -119,11 +120,13 @@ describe("Priority 5 Step 3: Longitudinal Readiness & Screening Migration Suite"
     const studentSession = t.withIdentity({ subject: studentAId });
 
     // Submit Attempt 1
-    const res1 = await studentSession.mutation(api.screening.submitScreeningAttempt, {
+    const res1Response = await studentSession.mutation(api.screening.submitScreeningAttempt, {
       patientId: "STU-ALPHA",
       responses: mildResponses,
       startedAt: Date.now() - 60000,
     });
+    expect(res1Response).not.toHaveProperty("attemptId");
+    const res1 = await latestSubmission(t, studentAId);
     expect(res1.attemptId).toBeDefined();
 
     // Verify Attempt 1 stored
@@ -135,11 +138,13 @@ describe("Priority 5 Step 3: Longitudinal Readiness & Screening Migration Suite"
     });
 
     // Submit Attempt 2 later
-    const res2 = await studentSession.mutation(api.screening.submitScreeningAttempt, {
+    const res2Response = await studentSession.mutation(api.screening.submitScreeningAttempt, {
       patientId: "STU-ALPHA",
       responses: moderateResponses,
       startedAt: Date.now() - 30000,
     });
+    expect(res2Response).not.toHaveProperty("attemptId");
+    const res2 = await latestSubmission(t, studentAId);
     expect(res2.attemptId).toBeDefined();
     expect(res2.attemptId).not.toEqual(res1.attemptId);
 
@@ -167,11 +172,13 @@ describe("Priority 5 Step 3: Longitudinal Readiness & Screening Migration Suite"
     const studentSession = t.withIdentity({ subject: studentAId });
 
     // Submit screening attempt
-    const res = await studentSession.mutation(api.screening.submitScreeningAttempt, {
+    const resResponse = await studentSession.mutation(api.screening.submitScreeningAttempt, {
       patientId: "STU-ALPHA",
       responses: moderateResponses,
       startedAt: Date.now() - 10000,
     });
+    expect(resResponse).not.toHaveProperty("attemptId");
+    const res = await latestSubmission(t, studentAId);
 
     // Verify ZERO rows inserted into legacy screenings table
     await t.run(async (ctx) => {
@@ -179,15 +186,23 @@ describe("Priority 5 Step 3: Longitudinal Readiness & Screening Migration Suite"
       expect(legacyRows.length).toBe(0);
     });
 
+    // A student's own call gets only the minimal legacy-client view (no ids, flags or item answers);
+    // an admin sees the authoritative data
+    expect(await studentSession.query(api.screening.getLatest, {})).toEqual({ phq9_total: 7, gad7_total: 6 });
+    const ownRows: any[] = await studentSession.query(api.screening.getAll, {});
+    expect(ownRows).toHaveLength(1);
+    expect(Object.keys(ownRows[0]).sort()).toEqual(["createdAt", "gad7_total", "phq9_item9_score", "phq9_total", "pq16_total"]);
+    const admin = await staffViewer(t);
+
     // Verify getLatest returns authoritative data mapped correctly
-    const latest = await studentSession.query(api.screening.getLatest, {});
+    const latest: any = await admin.query(api.screening.getLatest, { userId: studentAId });
     expect(latest).not.toBeNull();
     expect(latest?.phq9_total).toBe(7);
     expect(latest?.gad7_total).toBe(6);
     expect(latest?.attemptId).toEqual(res.attemptId);
 
     // Verify getAll returns authoritative data
-    const all = await studentSession.query(api.screening.getAll, {});
+    const all: any = await admin.query(api.screening.getAll, { userId: studentAId });
     expect(all.length).toBe(1);
     expect(all[0].phq9_total).toBe(7);
     expect(all[0].attemptId).toEqual(res.attemptId);
@@ -210,13 +225,17 @@ describe("Priority 5 Step 3: Longitudinal Readiness & Screening Migration Suite"
       });
     });
 
+    // The student's own call gets only the two totals from the legacy fallback; an admin sees the record
+    expect(await studentSession.query(api.screening.getLatest, {})).toEqual({ phq9_total: 11, gad7_total: 9 });
+    const admin = await staffViewer(t);
+
     // Query getLatest & getAll
-    const latest = await studentSession.query(api.screening.getLatest, {});
+    const latest: any = await admin.query(api.screening.getLatest, { userId: studentAId });
     expect(latest).not.toBeNull();
     expect(latest?.phq9_total).toBe(11);
     expect(latest?.gad7_total).toBe(9);
 
-    const all = await studentSession.query(api.screening.getAll, {});
+    const all: any = await admin.query(api.screening.getAll, { userId: studentAId });
     expect(all.length).toBe(1);
     expect(all[0].phq9_total).toBe(11);
   });
@@ -239,11 +258,13 @@ describe("Priority 5 Step 3: Longitudinal Readiness & Screening Migration Suite"
       pq16: makePQ16Responses(0),
     };
 
-    const res2 = await studentSession.mutation(api.screening.submitScreeningAttempt, {
+    const res2Response = await studentSession.mutation(api.screening.submitScreeningAttempt, {
       patientId: "STU-ALPHA",
       responses: escalatedMild,
       startedAt: Date.now() - 5000,
     });
+    expect(res2Response).not.toHaveProperty("attemptId");
+    const res2 = await latestSubmission(t, studentAId);
 
     // Verify escalation alert created and linked to Attempt 2
     await t.run(async (ctx) => {
@@ -272,8 +293,14 @@ describe("Priority 5 Step 3: Longitudinal Readiness & Screening Migration Suite"
       startedAt: Date.now() - 10000,
     });
 
-    // Student B queries their own screening - should be empty
-    const bScreenings = await sessionB.query(api.screening.getAll, {});
+    // Student B's own legacy-client view is empty; naming Student A is refused
+    expect(await sessionB.query(api.screening.getAll, {})).toEqual([]);
+    await expect(
+      sessionB.query(api.screening.getAll, { userId: studentAId })
+    ).rejects.toThrow(/Students can access ONLY/);
+
+    // Student B's own self-service export is empty (does not leak Student A's records)
+    const bScreenings = await sessionB.query(api.screening.exportMyScreenings, {});
     expect(bScreenings.length).toBe(0);
 
     // Student B attempts to query Student A's clinical timeline - should be rejected
@@ -288,18 +315,22 @@ describe("Priority 5 Step 3: Longitudinal Readiness & Screening Migration Suite"
     const sessionCounselor = t.withIdentity({ subject: counselorId });
 
     // Submit Attempt 1
-    const res1 = await sessionA.mutation(api.screening.submitScreeningAttempt, {
+    const res1Response = await sessionA.mutation(api.screening.submitScreeningAttempt, {
       patientId: "STU-ALPHA",
       responses: mildResponses,
       startedAt: Date.now() - 30000,
     });
+    expect(res1Response).not.toHaveProperty("attemptId");
+    const res1 = await latestSubmission(t, studentAId);
 
     // Submit Attempt 2
-    const res2 = await sessionA.mutation(api.screening.submitScreeningAttempt, {
+    const res2Response = await sessionA.mutation(api.screening.submitScreeningAttempt, {
       patientId: "STU-ALPHA",
       responses: moderateResponses,
       startedAt: Date.now() - 10000,
     });
+    expect(res2Response).not.toHaveProperty("attemptId");
+    const res2 = await latestSubmission(t, studentAId);
 
     // Counselor views Student A's timeline
     const timeline = await sessionCounselor.query(api.timeline.getStudentClinicalTimeline, {
@@ -343,12 +374,12 @@ describe("Priority 5 Step 3: Longitudinal Readiness & Screening Migration Suite"
     expect(res2.message).toContain("Already checked in today");
   });
 
-  test("LONG-08: Mitra AI chat isolation and exclusion from clinical timeline", async () => {
+  test("LONG-08: Emoty AI chat isolation and exclusion from clinical timeline", async () => {
     const { t, studentAId, counselorId } = await setupTestEnvironment();
     const sessionA = t.withIdentity({ subject: studentAId });
     const sessionCounselor = t.withIdentity({ subject: counselorId });
 
-    // Student A sends a private message to Mitra
+    // Student A sends a private message to Emoty
     await sessionA.mutation(internal.companion.createMessage, {
       messageId: "msg_priv_123",
       role: "user",

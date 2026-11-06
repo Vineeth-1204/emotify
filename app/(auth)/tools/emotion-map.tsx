@@ -5,12 +5,15 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
+  Pressable,
   Alert,
   Dimensions,
   Modal,
   Animated,
   ActivityIndicator,
   BackHandler,
+  Linking,
+  AccessibilityInfo,
 } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { useAppAuth } from "@/utils/auth";
@@ -43,20 +46,51 @@ import {
   GroundingIcon,
   JournalActivityIcon,
 } from "@/components/svg/activities";
-import { EmotyAvatar, MitraAvatar } from "@/components/avatar/EmotyAvatar";
+import { EmotyAvatar } from "@/components/avatar/EmotyAvatar";
 import { BreathingPlayer } from "@/components/breathing/BreathingPlayer";
 import { SensoryGroundingPlayer } from "@/components/grounding/SensoryGroundingPlayer";
 import { SENSORY_54321_PROTOCOL } from "@/constants/GroundingProtocols";
-import { BREATHING_PROTOCOLS } from "@/constants/BreathingProtocols";
+import { formatProtocolDuration, resolveActiveBreathingProtocol } from "@/constants/BreathingProtocols";
+import { CHECKIN_RETURN_TO } from "@/common/checkinReturn";
+import { getGuidedMeditation, openGuidedMeditation } from "@/common/guidedMeditations";
+import { MeditationPlayerModal } from "@/components/meditation/MeditationPlayerModal";
+import {
+  INTENSITY_ANCHORS,
+  map10ScaleToAnchor,
+  evaluateReassessment,
+  type ReassessmentResult,
+} from "@/common/meditationReassessment";
+import {
+  getIntensityLevel,
+  intensityPrompt,
+  toneForEmotion,
+  toneForFeeling,
+  type FeelingTone,
+} from "@/common/intensityWording";
+import {
+  getDiscoveryGroups,
+  getPrimaryMeaningChoices,
+  nextDiscoveryMode,
+  previousDiscoveryMode,
+  type DiscoveryMode,
+} from "@/common/emotionDiscovery";
+import {
+  HELP_ME_NOTICE_STEPS,
+  NOTICE_STEP_MS,
+  getBodySensations,
+  includesWholeBody,
+  regionsForSensations,
+  type BodyRegion,
+} from "@/common/bodySensations";
 import {
   determineIntervention,
   getRelevantBodyRegions,
   InterventionRoutingResult,
+  type CanonicalEmotionKey,
 } from "@/common/emotionRouting";
 import {
   PRIMARY_EMOTIONS,
   SECONDARY_EMOTIONS_BY_PRIMARY,
-  UNCERTAINTY_REPHRASINGS,
   getCanonicalEmotionForRouting,
   PrimaryEmotionId,
 } from "@/common/emotionTaxonomy";
@@ -65,6 +99,7 @@ import { useLanguage } from "@/context/LanguageContext";
 import {
   PRIMARY_EMOTION_CARD_DESCRIPTIONS,
   PRIMARY_EMOTION_CARD_MIN_HEIGHT,
+  primaryEmotionCardSelectedColors,
 } from "@/common/primaryEmotionCardLayout";
 
 // Phase 3: SecureStore key for pending post-session state (JPMR/Reframe navigate away, then return)
@@ -83,28 +118,16 @@ const FEATURE_EMOTIONS = [
   { id: "guilty", label: "Guilty / Regretful", shortLabel: "Guilty", Icon: GuiltyEmotionIcon },
 ];
 
-const STANDARD_BODY_REGIONS = ["Chest", "Stomach", "Shoulders", "Head", "Hands", "Legs"] as const;
-
-const getIntensityLabel = (value: number) => {
-  if (value <= 2)
-    return { text: "Minimal", desc: "Barely noticeable, very mild physical or emotional presence.", color: "#10B981" };
-  if (value <= 4)
-    return { text: "Mild", desc: "Noticeable but easily managed and does not disrupt activities.", color: "#3B82F6" };
-  if (value <= 6)
-    return { text: "Moderate", desc: "Quite noticeable, distracting, but you can still function.", color: "#F59E0B" };
-  if (value <= 8)
-    return { text: "Severe", desc: "Strong distress, hard to ignore, significantly impacts focus.", color: "#EA580C" };
-  return { text: "Extreme", desc: "Overwhelming distress, demands complete attention and intervention.", color: "#EF4444" };
-};
-
 interface IntensitySelectorProps {
   value: number;
   onChange: (val: number) => void;
   activeColor?: string;
+  /** Tone of the selected feeling: wording and colours describe its strength, not distress. */
+  tone: FeelingTone;
 }
 
-function IntensitySelector({ value, onChange, activeColor }: IntensitySelectorProps) {
-  const level = getIntensityLabel(value);
+function IntensitySelector({ value, onChange, activeColor, tone }: IntensitySelectorProps) {
+  const level = getIntensityLevel(value, tone);
 
   const handleDecrement = () => {
     if (value > 1) {
@@ -127,7 +150,7 @@ function IntensitySelector({ value, onChange, activeColor }: IntensitySelectorPr
 
   const renderCircle = (n: number) => {
     const isSelected = value === n;
-    const numLevel = getIntensityLabel(n);
+    const numLevel = getIntensityLevel(n, tone);
     return (
       <TouchableOpacity
         key={n}
@@ -219,33 +242,45 @@ export default function EmotionMapScreen() {
   const [selectedEmotions, setSelectedEmotions] = useState<string[]>([]);
   const [strongestEmotion, setStrongestEmotion] = useState<string | null>(null);
 
-  // Phase 2 — Step 2 uncertainty sub-state
-  const [step2UncertaintyState, setStep2UncertaintyState] = useState<"normal" | "rephrased">("normal");
+  // Step 2: "Not sure" opens guided discovery (see common/emotionDiscovery.ts). The check-in only
+  // continues once the student picks a feeling; no emotion is ever filled in for them.
+  const [discovery, setDiscovery] = useState<DiscoveryMode>({ kind: "choose" });
+  const discoveryGroups = primaryEmotion ? getDiscoveryGroups(primaryEmotion) : [];
 
-  // Step 3: Body cues
-  const [selectedRegions, setSelectedRegions] = useState<string[]>([]);
+  // Step 3: Body sensations (sensation-first). Saved as the existing figure regions.
+  const [selectedSensations, setSelectedSensations] = useState<string[]>([]);
+  // "Not really" after Help me notice. Saved as no regions (the schema has no separate "unsure").
   const [isUnsureBody, setIsUnsureBody] = useState<boolean>(false);
-
-  // Phase 2 — Step 3 uncertainty sub-state
-  const [step3UncertaintyState, setStep3UncertaintyState] = useState<"normal" | "rephrased">("normal");
+  // Help me notice: null = off, 0..n-1 = highlighting that step, n = finished
+  const [noticeIndex, setNoticeIndex] = useState<number | null>(null);
 
   // Step 4: Intensity
   const [intensity, setIntensity] = useState<number>(5);
 
   // Step 5: Automatic Intervention Launch Transition
   const [routedIntervention, setRoutedIntervention] = useState<InterventionRoutingResult | null>(null);
+  // Emotion the recommendation was routed from; selects the optional guided meditation
+  const [routedEmotionKey, setRoutedEmotionKey] = useState<CanonicalEmotionKey | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
-  // Phase 3 — Modal states for inline interventions
+  // Phase 3 & 5 — Modal states for inline interventions
   const [showBreathingModal, setShowBreathingModal] = useState(false);
   const [showGroundingModal, setShowGroundingModal] = useState(false);
+  const [showMeditationModal, setShowMeditationModal] = useState(false);
+  const [completedMeditationTitle, setCompletedMeditationTitle] = useState<string | null>(null);
 
-  // Phase 3 — Post-intervention state
+  // Phase 3 & 5 — Post-intervention state
   // emotionLogId: the _id of the emotionLog created in step 4 — used to patch postIntensity
   const [emotionLogId, setEmotionLogId] = useState<string | null>(null);
   // postIntensityValue: the user's self-reported feeling after intervention
   const [postIntensityValue, setPostIntensityValue] = useState<number>(5);
-  // postOutcome: simple 3-way result for mitra followup message
+  // postIntensityAnchor: 4-anchor re-rating (1=A little, 2=Some, 3=A lot, 4=Overwhelming)
+  const [postIntensityAnchor, setPostIntensityAnchor] = useState<1 | 2 | 3 | 4>(2);
+  // reselectedEmotion: student's feeling after intervention
+  const [reselectedEmotion, setReselectedEmotion] = useState<string | null>(null);
+  // reassessmentResult: delta and branching
+  const [reassessmentResult, setReassessmentResult] = useState<ReassessmentResult | null>(null);
+  // postOutcome: simple 3-way result for Emoty followup message
   const [postOutcome, setPostOutcome] = useState<"better" | "same" | "worse" | null>(null);
   const [isSavingPost, setIsSavingPost] = useState(false);
 
@@ -254,10 +289,10 @@ export default function EmotionMapScreen() {
   // 2: Secondary emotion selection (scoped to primary)
   // 3: Body sensation
   // 4: Intensity
-  // 5: Intervention intro (Mitra recommends)
+  // 5: Intervention intro (Emoty recommends)
   // 6: Uncertain support (fallback activity)
   // 7: Post-intervention check ("How do you feel now?")
-  // 8: Mitra followup message
+  // 8: Emoty followup message
   const [step, setStep] = useState<number>(contextualPrimary ? 2 : 1);
 
   // History Tab States
@@ -281,6 +316,10 @@ export default function EmotionMapScreen() {
     const onBackPress = () => {
       if (activeTab === "history") {
         setActiveTab("log");
+        return true;
+      }
+      if (step === 2 && discovery.kind !== "choose") {
+        setDiscovery(previousDiscoveryMode(discovery, discoveryGroups.length));
         return true;
       }
       if (step === 2) {
@@ -316,7 +355,7 @@ export default function EmotionMapScreen() {
 
     const sub = BackHandler.addEventListener("hardwareBackPress", onBackPress);
     return () => sub.remove();
-  }, [step, activeTab, router, contextualPrimary]);
+  }, [step, activeTab, router, contextualPrimary, discovery, discoveryGroups.length]);
 
   // Phase 3 — On mount: check if returning from JPMR/Reframe with pending post-session state
   useEffect(() => {
@@ -344,10 +383,31 @@ export default function EmotionMapScreen() {
       setStep(1);
       setPrimaryEmotion(null);
       setSecondaryEmotion(null);
-      setSelectedRegions([]);
+      setSelectedSensations([]);
+      setIsUnsureBody(false);
       setRoutedIntervention(null);
     }
   }, [params.reset]);
+
+  // Sensations belong to one emotion's list: clear them when the emotion changes
+  // (same key as intervention routing)
+  const sensationEmotionKey = primaryEmotion ? getCanonicalEmotionForRouting(primaryEmotion, secondaryEmotion) : null;
+  useEffect(() => {
+    setSelectedSensations([]);
+    setIsUnsureBody(false);
+  }, [sensationEmotionKey]);
+
+  // Help me notice: advance one region every NOTICE_STEP_MS; stops when leaving step 3
+  useEffect(() => {
+    if (step !== 3) {
+      if (noticeIndex !== null) setNoticeIndex(null);
+      return;
+    }
+    if (noticeIndex === null || noticeIndex >= HELP_ME_NOTICE_STEPS.length) return;
+    AccessibilityInfo.announceForAccessibility(HELP_ME_NOTICE_STEPS[noticeIndex].line);
+    const timer = setTimeout(() => setNoticeIndex(noticeIndex + 1), NOTICE_STEP_MS);
+    return () => clearTimeout(timer);
+  }, [step, noticeIndex]);
 
   // Step 1: User selects a primary emotion
   const handleSelectPrimary = (id: PrimaryEmotionId) => {
@@ -356,14 +416,14 @@ export default function EmotionMapScreen() {
     setSecondaryEmotion(null);
     setStrongestEmotion(id);
     setSelectedEmotions([id]);
-    setStep2UncertaintyState("normal");
+    setDiscovery({ kind: "choose" });
   };
 
   // Step 1 -> Next: Advance to Step 2
   const handleContinueFromStep1 = () => {
     if (!primaryEmotion) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-    setStep2UncertaintyState("normal");
+    setDiscovery({ kind: "choose" });
     setStep(2);
   };
 
@@ -379,56 +439,71 @@ export default function EmotionMapScreen() {
   const handleContinueFromStep2 = () => {
     if (!secondaryEmotion) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-    setStep3UncertaintyState("normal");
     setStep(3);
   };
 
-  // Phase 2 — Step 2: User chooses "Not sure" on secondary emotion
+  // Step 2: "Not sure" opens guided discovery. Nothing is selected for the student.
   const handleUnsureSecondary = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-    if (step2UncertaintyState === "normal") {
-      // First attempt: Rephrase with concrete examples
-      setStep2UncertaintyState("rephrased");
-    } else {
-      // Second uncertainty: Stop interrogating. Enter uncertain_support (step 6).
-      // Fall back to primary emotion for intervention routing if user triggers a tool
-      if (primaryEmotion) {
-        setStrongestEmotion(primaryEmotion);
-        setSelectedEmotions([primaryEmotion]);
-      }
-      setStep(6);
-    }
+    setSecondaryEmotion(null);
+    setDiscovery({ kind: "explore", group: 0 });
   };
 
-  // Toggle body region in Step 3
-  const toggleRegion = (region: string) => {
+  // "None of these": the next group of feelings, then the broad-emotion meanings
+  const handleDiscoveryNone = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    setDiscovery((mode) => nextDiscoveryMode(mode, discoveryGroups.length));
+  };
+  const handleDiscoveryBack = () => setDiscovery((mode) => previousDiscoveryMode(mode, discoveryGroups.length));
+
+  // A feeling that fits: the normal selection, then the student confirms with Continue
+  const handlePickDiscoveredFeeling = (option: string) => {
+    handleSelectSecondary(option);
+    setDiscovery({ kind: "choose" });
+  };
+
+  // A broad emotion that sounds closer: switch to it and show its feelings
+  const handlePickBroadMeaning = (id: PrimaryEmotionId) => handleSelectPrimary(id);
+
+  const handleStillNotSure = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    setDiscovery({ kind: "unresolved" });
+  };
+
+  // Explicit choice to leave the check-in for a calming activity (step 6). Nothing is saved there.
+  const handleSkipToCalmingActivity = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    setStep(6);
+  };
+
+  // Step 3: toggle a body sensation (multi-select)
+  const toggleSensation = (label: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     setIsUnsureBody(false);
-    setStep3UncertaintyState("normal");
-    if (selectedRegions.includes(region)) {
-      setSelectedRegions(selectedRegions.filter((r) => r !== region));
-    } else {
-      setSelectedRegions([...selectedRegions, region]);
-    }
+    setSelectedSensations((prev) => (prev.includes(label) ? prev.filter((l) => l !== label) : [...prev, label]));
   };
 
-  const handleToggleUnsureBody = () => {
+  // Step 3: Help me notice — a short optional body check, skippable at any point
+  const handleStartNotice = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-    if (step3UncertaintyState === "normal") {
-      // First time: rephrase with concrete examples
-      setIsUnsureBody(true);
-      setSelectedRegions([]);
-      setStep3UncertaintyState("rephrased");
-    } else {
-      // Already rephrased; user still unsure — proceed without body location
-      setIsUnsureBody(true);
-      setSelectedRegions([]);
-      setStep(4);
-    }
+    setIsUnsureBody(false);
+    setNoticeIndex(0);
+  };
+  const handleSkipNotice = () => setNoticeIndex(HELP_ME_NOTICE_STEPS.length);
+
+  // After Help me notice: nothing stood out. Continue without a sensation; that is a valid answer.
+  const handleNothingNoticed = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    setSelectedSensations([]);
+    setIsUnsureBody(true);
+    setNoticeIndex(null);
+    setStep(4);
   };
 
+  // Step 3 -> Next. A sensation is never required.
   const handleContinueFromStep3 = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    setNoticeIndex(null);
     setStep(4);
   };
 
@@ -475,9 +550,13 @@ export default function EmotionMapScreen() {
       const canonicalEmotion = getCanonicalEmotionForRouting(primaryEmotion, secondaryEmotion);
       const intervention = determineIntervention(canonicalEmotion, intensity);
       setRoutedIntervention(intervention);
+      setRoutedEmotionKey(canonicalEmotion);
 
-      const effectiveRegions = isUnsureBody ? [] : selectedRegions;
+      // Sensations are saved as the figure regions they name (wording is not in the schema)
+      const effectiveRegions = isUnsureBody ? [] : regionsForSensations(canonicalEmotion, selectedSensations);
+      // "Not sure" on the specific feeling: only the primary emotion the student chose is saved
       const logEmotion = secondaryEmotion || primaryEmotion;
+      const historyLabel = secondaryEmotion || PRIMARY_EMOTIONS.find((e) => e.id === primaryEmotion)?.label || primaryEmotion;
       const emotionsList = secondaryEmotion ? [primaryEmotion, secondaryEmotion] : [primaryEmotion];
 
       // Authoritative emotionLogs insertion — capture logId for Phase 3 post-intensity patch
@@ -498,7 +577,7 @@ export default function EmotionMapScreen() {
 
       await createEmotionMap({
         userId: user?.id,
-        emotionLabel: logEmotion,
+        emotionLabel: historyLabel,
         selectedRegions: effectiveRegions,
         bodyRatings: ratingsList.length > 0 ? ratingsList : [{ region: "General", intensity }],
         averageIntensity: intensity,
@@ -518,7 +597,7 @@ export default function EmotionMapScreen() {
   };
 
   // Phase 3 — Save pending state before navigating away to JPMR/Reframe
-  // so the user returns to step 7 (post-intervention Mitra check) after completing the tool.
+  // so the user returns to step 7 (post-intervention Emoty check) after completing the tool.
   const savePendingAndNavigate = async (pathname: string, extraParams: Record<string, string> = {}) => {
     const currentEmotion = secondaryEmotion || primaryEmotion || strongestEmotion;
     if (emotionLogId && currentEmotion) {
@@ -533,17 +612,61 @@ export default function EmotionMapScreen() {
     }
     router.replace({
       pathname: pathname as any,
-      params: { sourceType: "emotion_checkin", returnTo: "emotion_map_post", ...extraParams },
+      params: { sourceType: "emotion_checkin", returnTo: CHECKIN_RETURN_TO, ...extraParams },
     } as any);
   };
 
-  // Phase 3 — Handle genuine intervention completion (inline breathing/grounding)
+  // Phase 3 & 5 — Handle genuine intervention completion (inline breathing/grounding)
   const handleInlineInterventionComplete = () => {
     setShowBreathingModal(false);
     setShowGroundingModal(false);
-    setPostIntensityValue(Math.max(1, intensity - 1)); // seed with slight improvement as default
+    setShowMeditationModal(false);
+    const initialEmotion = secondaryEmotion || primaryEmotion || strongestEmotion || "calm";
+    setReselectedEmotion(initialEmotion);
+    setPostIntensityAnchor(Math.max(1, map10ScaleToAnchor(intensity) - 1) as 1 | 2 | 3 | 4);
+    setPostIntensityValue(Math.max(1, intensity - 1));
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
     setStep(7);
+  };
+
+  // Phase 5 — Handle genuine meditation completion
+  const handleMeditationComplete = (title: string) => {
+    setShowMeditationModal(false);
+    setCompletedMeditationTitle(title);
+    const initialEmotion = secondaryEmotion || primaryEmotion || strongestEmotion || "calm";
+    setReselectedEmotion(initialEmotion);
+    setPostIntensityAnchor(Math.max(1, map10ScaleToAnchor(intensity) - 1) as 1 | 2 | 3 | 4);
+    setPostIntensityValue(Math.max(1, intensity - 1));
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    setStep(7);
+  };
+
+  // Phase 5 — Full post-intervention reassessment with 4 anchors and emotion re-selection
+  const handleConfirmPostReassessment = async () => {
+    setIsSavingPost(true);
+    try {
+      const result = evaluateReassessment(intensity, postIntensityAnchor);
+      setReassessmentResult(result);
+      setPostOutcome(result.branch === "improved" ? "better" : result.branch === "worse" ? "worse" : "same");
+
+      if (emotionLogId) {
+        await recordPostIntensity({
+          logId: emotionLogId as any,
+          postIntensity: postIntensityAnchor,
+          postEmotion: reselectedEmotion || undefined,
+          deltaIntensity: result.delta,
+          branchTaken: result.branch,
+          meditationTitle: completedMeditationTitle || routedIntervention?.title,
+        });
+      }
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      setStep(8);
+    } catch (err) {
+      console.warn("Post-intensity recording failed (non-blocking):", err);
+      setStep(8);
+    } finally {
+      setIsSavingPost(false);
+    }
   };
 
   // Phase 3 — Post-intervention intensity submitted by user
@@ -565,6 +688,17 @@ export default function EmotionMapScreen() {
       setStep(8);
     } finally {
       setIsSavingPost(false);
+    }
+  };
+
+  // Step 5: Optional guided meditation, opened outside the app. It does not log anything or
+  // change the step, so the built-in intervention and the post-check stay exactly as they were.
+  const guidedMeditation = getGuidedMeditation(routedEmotionKey);
+  const handleOpenGuidedMeditation = async () => {
+    Haptics.selectionAsync().catch(() => {});
+    const result = await openGuidedMeditation(guidedMeditation, (url) => Linking.openURL(url));
+    if (result !== "opened") {
+      Alert.alert("Couldn't open the meditation", "You can still try the exercise above.");
     }
   };
 
@@ -659,16 +793,30 @@ export default function EmotionMapScreen() {
     }
   };
 
+  // Step 3: sensation options follow the emotion the student chose
+  const sensationOptions = getBodySensations(sensationEmotionKey);
+  const sensationRegions = regionsForSensations(sensationEmotionKey, selectedSensations);
+  const sensationWholeBody = includesWholeBody(sensationEmotionKey, selectedSensations);
+  const isNoticing = noticeIndex !== null && noticeIndex < HELP_ME_NOTICE_STEPS.length;
+  const noticeFinished = noticeIndex === HELP_ME_NOTICE_STEPS.length;
+  const figureColor = activePrimaryDef?.themeColor || Colors.primary;
+  // The figure is feedback only: it shows the regions behind the chosen sensations, or the
+  // region Help me notice is on. It is not a picker.
+  const regionFill = (region: BodyRegion) => {
+    if (isNoticing) return HELP_ME_NOTICE_STEPS[noticeIndex!].region === region ? figureColor : "#E2E8F0";
+    if (sensationRegions.includes(region)) return figureColor;
+    if (sensationWholeBody) return figureColor + "55";
+    return "#E2E8F0";
+  };
+
   // Resolve breathing protocol from registry using approved active protocols only.
-  // relaxing_478 (4-7-8) remains defined_inactive — never resolved here.
-  const activeBreathingProtocol = (() => {
-    const id = routedIntervention?.protocolId;
-    if (id && BREATHING_PROTOCOLS[id] && BREATHING_PROTOCOLS[id].isActive) {
-      return BREATHING_PROTOCOLS[id];
-    }
-    // Safe fallback: box_4444 (active)
-    return BREATHING_PROTOCOLS.box_4444;
-  })();
+  // relaxing_478 (4-7-8) remains defined_inactive — never resolved here. Falls back to box_4444.
+  const activeBreathingProtocol = resolveActiveBreathingProtocol(routedIntervention?.protocolId);
+  // Breathing cards show the length of the session that will actually play
+  const interventionDuration =
+    routedIntervention?.interventionType === "breathing"
+      ? formatProtocolDuration(activeBreathingProtocol)
+      : routedIntervention?.recommendedDuration;
 
   return (
     <View style={styles.container}>
@@ -688,6 +836,8 @@ export default function EmotionMapScreen() {
               onPress={() => {
                 if (activeTab === "history") {
                   setActiveTab("log");
+                } else if (step === 2 && discovery.kind !== "choose") {
+                  handleDiscoveryBack();
                 } else if (step === 2) {
                   if (contextualPrimary) router.back();
                   else setStep(1);
@@ -741,17 +891,18 @@ export default function EmotionMapScreen() {
             {/* STEP 1: Broad emotional state (Primary Emotions) */}
             {step === 1 && (
               <View style={styles.stepCard}>
-                <View style={styles.mitraHeaderRow}>
-                  <MitraAvatar state="neutral" size="md" />
-                  <View style={styles.mitraSpeechBubble}>
-                    <Text style={styles.mitraSpeechText}>How are you feeling right now?</Text>
-                    <Text style={styles.mitraSubtext}>You can start with what feels closest.</Text>
+                <View style={styles.emotyHeaderRow}>
+                  <EmotyAvatar state="neutral" size="md" />
+                  <View style={styles.emotySpeechBubble}>
+                    <Text style={styles.emotySpeechText}>How are you feeling right now?</Text>
+                    <Text style={styles.emotySubtext}>You can start with what feels closest.</Text>
                   </View>
                 </View>
 
                 <View style={styles.primaryGrid}>
                   {PRIMARY_EMOTIONS.map((emotion) => {
                     const isSelected = primaryEmotion === emotion.id;
+                    const selectedColors = primaryEmotionCardSelectedColors(emotion.themeColor);
                     const IconComponent =
                       emotion.id === "happy"
                         ? HappyEmotionIcon
@@ -762,21 +913,26 @@ export default function EmotionMapScreen() {
                         : CalmEmotionIcon;
 
                     return (
-                      <TouchableOpacity
+                      // Pressable with a slight scale, not an opacity fade: fading an elevated card
+                      // lets its Android shadow show through the card while pressed.
+                      <Pressable
                         key={emotion.id}
-                        style={[
+                        style={({ pressed }) => [
                           styles.primaryCard,
                           isSelected && styles.primaryCardSelected,
-                          isSelected && { borderColor: emotion.themeColor, backgroundColor: emotion.themeColor + "10" },
+                          isSelected && { borderColor: selectedColors.borderColor, backgroundColor: selectedColors.backgroundColor },
+                          pressed && styles.primaryCardPressed,
                         ]}
                         onPress={() => handleSelectPrimary(emotion.id)}
-                        activeOpacity={0.85}
+                        accessibilityRole="radio"
+                        accessibilityState={{ selected: isSelected, checked: isSelected }}
+                        accessibilityLabel={`${emotion.label}: ${PRIMARY_EMOTION_CARD_DESCRIPTIONS[emotion.id]}`}
                       >
                         <View
                           style={[
                             styles.primaryIconContainer,
                             { backgroundColor: emotion.themeColor + "18" },
-                            isSelected && { backgroundColor: emotion.themeColor + "30" },
+                            isSelected && { backgroundColor: selectedColors.iconBackgroundColor },
                           ]}
                         >
                           <IconComponent size={36} color={emotion.themeColor} />
@@ -799,7 +955,7 @@ export default function EmotionMapScreen() {
                             <Ionicons name="checkmark" size={14} color={Colors.white} />
                           )}
                         </View>
-                      </TouchableOpacity>
+                      </Pressable>
                     );
                   })}
                 </View>
@@ -810,243 +966,366 @@ export default function EmotionMapScreen() {
             {/* STEP 2: Secondary Emotions */}
             {step === 2 && primaryEmotion && (
               <View style={styles.stepCard}>
-                <View style={styles.mitraHeaderRow}>
-                  <MitraAvatar state="listening" size="md" />
-                  <View style={styles.mitraSpeechBubble}>
-                    {step2UncertaintyState === "normal" ? (
+                <View style={styles.emotyHeaderRow}>
+                  <EmotyAvatar state="listening" size="md" />
+                  <View style={styles.emotySpeechBubble} accessibilityLiveRegion="polite">
+                    {discovery.kind === "choose" && (
                       <>
-                        <Text style={styles.mitraSpeechText}>
+                        <Text style={styles.emotySpeechText}>
                           Got it. You're feeling {PRIMARY_EMOTIONS.find((e) => e.id === primaryEmotion)?.label.toLowerCase()}.
                         </Text>
-                        <Text style={styles.mitraSubtext}>What's closest to how you're feeling?</Text>
+                        <Text style={styles.emotySubtext}>What's closest to how you're feeling?</Text>
                       </>
-                    ) : (
+                    )}
+                    {discovery.kind === "explore" && (
                       <>
-                        <Text style={styles.mitraSpeechText}>
-                          {UNCERTAINTY_REPHRASINGS[primaryEmotion].prompt}
+                        <Text style={styles.emotySpeechText}>
+                          {discovery.group === 0 ? "That's okay. Let's figure it out together." : "How about these?"}
                         </Text>
-                        <Text style={styles.mitraSubtext}>
-                          {UNCERTAINTY_REPHRASINGS[primaryEmotion].examples}
-                        </Text>
+                        <Text style={styles.emotySubtext}>Does it feel more like…</Text>
+                      </>
+                    )}
+                    {discovery.kind === "broad" && (
+                      <>
+                        <Text style={styles.emotySpeechText}>{"Let's look at it another way."}</Text>
+                        <Text style={styles.emotySubtext}>Which of these sounds closest?</Text>
+                      </>
+                    )}
+                    {discovery.kind === "unresolved" && (
+                      <>
+                        <Text style={styles.emotySpeechText}>{"That's okay. Some feelings are hard to name."}</Text>
+                        <Text style={styles.emotySubtext}>{"Without a feeling, this check-in won't be saved."}</Text>
                       </>
                     )}
                   </View>
                 </View>
 
-                <View style={styles.secondaryContainer}>
-                  <View style={styles.secondaryGrid}>
-                    {(SECONDARY_EMOTIONS_BY_PRIMARY[primaryEmotion] || [])
-                      .filter((opt) => opt !== "Not sure")
-                      .map((option) => {
-                        const isSelected = secondaryEmotion === option;
-                        const primaryThemeColor =
-                          PRIMARY_EMOTIONS.find((e) => e.id === primaryEmotion)?.themeColor || Colors.primary;
+                {discovery.kind === "choose" && (
+                  <View style={styles.secondaryContainer}>
+                    <View style={styles.secondaryGrid}>
+                      {(SECONDARY_EMOTIONS_BY_PRIMARY[primaryEmotion] || [])
+                        .filter((opt) => opt !== "Not sure")
+                        .map((option) => {
+                          const isSelected = secondaryEmotion === option;
+                          const primaryThemeColor =
+                            PRIMARY_EMOTIONS.find((e) => e.id === primaryEmotion)?.themeColor || Colors.primary;
 
-                        return (
-                          <TouchableOpacity
-                            key={option}
-                            style={[
-                              styles.secondaryChip,
-                              isSelected && [
-                                styles.secondaryChipSelected,
-                                { backgroundColor: primaryThemeColor, borderColor: primaryThemeColor },
-                              ],
-                            ]}
-                            onPress={() => handleSelectSecondary(option)}
-                            activeOpacity={0.8}
-                          >
-                            <Text
+                          return (
+                            <TouchableOpacity
+                              key={option}
                               style={[
-                                styles.secondaryChipText,
-                                isSelected && styles.secondaryChipTextSelected,
+                                styles.secondaryChip,
+                                isSelected && [
+                                  styles.secondaryChipSelected,
+                                  { backgroundColor: primaryThemeColor, borderColor: primaryThemeColor },
+                                ],
                               ]}
+                              onPress={() => handleSelectSecondary(option)}
+                              accessibilityRole="radio"
+                              accessibilityState={{ selected: isSelected, checked: isSelected }}
+                              activeOpacity={0.8}
                             >
-                              {option}
-                            </Text>
-                            {isSelected && (
+                              {/* Icon is always present and text weight is fixed, so selecting a chip
+                                  never changes its width and the wrapped rows do not jump */}
                               <Ionicons
-                                name="checkmark-circle"
+                                name={isSelected ? "checkmark-circle" : "ellipse-outline"}
                                 size={16}
-                                color={Colors.white}
-                                style={{ marginLeft: 6 }}
+                                color={isSelected ? Colors.white : Colors.textMuted}
+                                style={styles.chipIcon}
                               />
-                            )}
-                          </TouchableOpacity>
-                        );
-                      })}
-                  </View>
+                              <Text
+                                style={[
+                                  styles.secondaryChipText,
+                                  isSelected && styles.secondaryChipTextSelected,
+                                ]}
+                              >
+                                {option}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                    </View>
 
-                  <TouchableOpacity
-                    style={[
-                      styles.unsureInlineBtn,
-                      step2UncertaintyState === "rephrased" && styles.unsureInlineBtnActive,
-                    ]}
-                    onPress={handleUnsureSecondary}
-                  >
-                    <Ionicons
-                      name="help-circle-outline"
-                      size={18}
-                      color={step2UncertaintyState === "rephrased" ? Colors.primary : Colors.textMuted}
-                    />
-                    <Text
-                      style={[
-                        styles.unsureInlineText,
-                        step2UncertaintyState === "rephrased" && { color: Colors.primary, fontFamily: Theme.fontFamily.bold },
-                      ]}
+                    <TouchableOpacity style={styles.unsureInlineBtn} onPress={handleUnsureSecondary} accessibilityRole="button">
+                      <Ionicons name="help-circle-outline" size={18} color={Colors.textMuted} />
+                      <Text style={styles.unsureInlineText}>Not sure</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                {discovery.kind === "explore" && (
+                  // A few of this emotion's feelings at a time; picking one returns to the choices
+                  <View style={styles.secondaryContainer}>
+                    <View style={styles.secondaryGrid}>
+                      {(discoveryGroups[discovery.group] ?? []).map((option) => (
+                        <TouchableOpacity
+                          key={option}
+                          style={[styles.secondaryChip, styles.sensationChip]}
+                          onPress={() => handlePickDiscoveredFeeling(option)}
+                          accessibilityRole="button"
+                          activeOpacity={0.8}
+                        >
+                          <Text style={[styles.secondaryChipText, styles.sensationChipText]}>{option}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                    <TouchableOpacity style={styles.unsureInlineBtn} onPress={handleDiscoveryNone} accessibilityRole="button">
+                      <Text style={[styles.unsureInlineText, { color: Colors.primary }]}>None of these</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                {discovery.kind === "broad" && (
+                  // The specification's plain meaning of each broad emotion
+                  <View style={styles.secondaryContainer}>
+                    {getPrimaryMeaningChoices().map((choice) => (
+                      <TouchableOpacity
+                        key={choice.id}
+                        style={styles.meaningCard}
+                        onPress={() => handlePickBroadMeaning(choice.id)}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${choice.meaning} ${choice.label}`}
+                        activeOpacity={0.85}
+                      >
+                        <Text style={styles.meaningText}>{choice.meaning}</Text>
+                        <Text style={styles.meaningLabel}>{choice.label}</Text>
+                      </TouchableOpacity>
+                    ))}
+                    <TouchableOpacity style={styles.unsureInlineBtn} onPress={handleStillNotSure} accessibilityRole="button">
+                      <Text style={styles.unsureInlineText}>Still not sure</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                {discovery.kind === "unresolved" && (
+                  // Stop asking; offer another try, the choices, or a calming activity (nothing saved)
+                  <View style={styles.secondaryContainer}>
+                    <TouchableOpacity
+                      style={styles.unsureInlineBtn}
+                      onPress={() => setDiscovery({ kind: "explore", group: 0 })}
+                      accessibilityRole="button"
                     >
-                      {step2UncertaintyState === "rephrased" ? "Still not sure — that's completely okay" : "Not sure"}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
+                      <Text style={[styles.unsureInlineText, { color: Colors.primary }]}>Try again</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.unsureInlineBtn}
+                      onPress={() => setDiscovery({ kind: "choose" })}
+                      accessibilityRole="button"
+                    >
+                      <Text style={[styles.unsureInlineText, { color: Colors.primary }]}>Back to the feelings</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.unsureInlineBtn}
+                      onPress={handleSkipToCalmingActivity}
+                      accessibilityRole="button"
+                      accessibilityHint="Leaves the check-in without saving it"
+                    >
+                      <Text style={[styles.unsureInlineText, { color: Colors.primary }]}>Do something calming instead</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
 
                 <View style={styles.navRow}>
-                  <Button title="Back" onPress={() => setStep(1)} variant="outline" style={styles.halfBtn} />
-                  <Button
-                    title="Continue"
-                    onPress={handleContinueFromStep2}
-                    disabled={!secondaryEmotion}
-                    style={styles.halfBtn}
-                  />
+                  {discovery.kind === "choose" ? (
+                    <>
+                      <Button title="Back" onPress={() => setStep(1)} variant="outline" style={styles.halfBtn} />
+                      <Button
+                        title="Continue"
+                        onPress={handleContinueFromStep2}
+                        disabled={!secondaryEmotion}
+                        style={styles.halfBtn}
+                      />
+                    </>
+                  ) : (
+                    <Button title="Back" onPress={handleDiscoveryBack} variant="outline" style={styles.halfBtn} />
+                  )}
                 </View>
               </View>
             )}
 
-            {/* STEP 3: Body Sensation - Phase 2 rephrase/auto-advance */}
+            {/* STEP 3: How does it feel in your body? Sensation-first; the figure is feedback only */}
             {step === 3 && (
               <View style={styles.stepCard}>
-                <View style={styles.mitraHeaderRow}>
-                  <MitraAvatar state="listening" size="md" />
-                  <View style={styles.mitraSpeechBubble}>
-                    {step3UncertaintyState === "normal" ? (
+                <View style={styles.emotyHeaderRow}>
+                  <EmotyAvatar state="listening" size="md" />
+                  <View style={styles.emotySpeechBubble} accessibilityLiveRegion="polite">
+                    {isNoticing ? (
                       <>
-                        <Text style={styles.mitraSpeechText}>Where do you notice it most?</Text>
-                        <Text style={styles.mitraSubtext}>
-                          {secondaryEmotion
-                            ? `Where do you feel that sense of ${secondaryEmotion.toLowerCase()} in your body?`
-                            : `Where do you notice that feeling in your body?`}
-                        </Text>
+                        <Text style={styles.emotySpeechText}>{HELP_ME_NOTICE_STEPS[noticeIndex!].line}</Text>
+                        <Text style={styles.emotySubtext}>Just notice. There is nothing to get right.</Text>
                       </>
                     ) : (
                       <>
-                        <Text style={styles.mitraSpeechText}>{"That's okay."}</Text>
-                        <Text style={styles.mitraSubtext}>
-                          Sometimes feelings show up as a tight chest, a knot in the stomach, tense shoulders, or restless hands. Do you notice anything like that?
+                        <Text style={styles.emotySpeechText}>
+                          {noticeFinished ? "Anything stand out?" : "How does it feel in your body?"}
                         </Text>
+                        <Text style={styles.emotySubtext}>Pick anything that fits.</Text>
                       </>
                     )}
                   </View>
                 </View>
-                <View style={styles.bodyMapContainer}>
-                  <View style={styles.svgWrapper}>
-                    <Svg width={140} height={260} viewBox="0 0 200 320">
-                      <Circle cx={100} cy={35} r={20} fill={selectedRegions.includes("Head") ? (activePrimaryDef?.themeColor || Colors.primary) : "#E2E8F0"} onPress={() => toggleRegion("Head")} />
-                      <Path d="M 65 65 L 135 65 L 130 85 L 70 85 Z" fill={selectedRegions.includes("Shoulders") ? (activePrimaryDef?.themeColor || Colors.primary) : "#E2E8F0"} onPress={() => toggleRegion("Shoulders")} />
-                      <Path d="M 72 88 L 128 88 L 125 125 L 75 125 Z" fill={selectedRegions.includes("Chest") ? (activePrimaryDef?.themeColor || Colors.primary) : "#E2E8F0"} onPress={() => toggleRegion("Chest")} />
-                      <Path d="M 75 128 L 125 128 L 120 170 L 80 170 Z" fill={selectedRegions.includes("Stomach") ? (activePrimaryDef?.themeColor || Colors.primary) : "#E2E8F0"} onPress={() => toggleRegion("Stomach")} />
-                      <Path d="M 62 68 L 48 80 L 38 150 L 48 150 L 58 90 Z" fill={selectedRegions.includes("Hands") ? (activePrimaryDef?.themeColor || Colors.primary) : "#E2E8F0"} onPress={() => toggleRegion("Hands")} />
-                      <Path d="M 138 68 L 152 80 L 162 150 L 152 150 L 142 90 Z" fill={selectedRegions.includes("Hands") ? (activePrimaryDef?.themeColor || Colors.primary) : "#E2E8F0"} onPress={() => toggleRegion("Hands")} />
-                      <Path d="M 80 173 L 97 173 L 92 295 L 75 295 Z" fill={selectedRegions.includes("Legs") ? (activePrimaryDef?.themeColor || Colors.primary) : "#E2E8F0"} onPress={() => toggleRegion("Legs")} />
-                      <Path d="M 103 173 L 120 173 L 125 295 L 108 295 Z" fill={selectedRegions.includes("Legs") ? (activePrimaryDef?.themeColor || Colors.primary) : "#E2E8F0"} onPress={() => toggleRegion("Legs")} />
-                    </Svg>
-                  </View>
-                  <View style={styles.bodyListColumn}>
-                    {STANDARD_BODY_REGIONS.map((region) => {
-                      const isSelected = selectedRegions.includes(region);
-                      return (
-                        <TouchableOpacity
-                          key={region}
-                          style={[
-                            styles.bodyRegionChip,
-                            isSelected && [
-                              styles.bodyRegionChipSelected,
-                              activePrimaryDef ? { backgroundColor: activePrimaryDef.themeColor, borderColor: activePrimaryDef.themeColor } : null,
-                            ],
-                          ]}
-                          onPress={() => toggleRegion(region)}
-                        >
-                          <Ionicons name={isSelected ? "checkbox" : "square-outline"} size={18} color={isSelected ? Colors.white : Colors.textSecondary} style={{ marginRight: 6 }} />
-                          <Text style={[styles.bodyRegionText, isSelected && styles.bodyRegionTextSelected]}>{region}</Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                    <TouchableOpacity
-                      style={[
-                        styles.bodyRegionChip,
-                        selectedRegions.includes("Somewhere else") && [
-                          styles.bodyRegionChipSelected,
-                          activePrimaryDef ? { backgroundColor: activePrimaryDef.themeColor, borderColor: activePrimaryDef.themeColor } : null,
-                        ],
-                      ]}
-                      onPress={() => toggleRegion("Somewhere else")}
-                    >
-                      <Ionicons name={selectedRegions.includes("Somewhere else") ? "checkbox" : "square-outline"} size={18} color={selectedRegions.includes("Somewhere else") ? Colors.white : Colors.textSecondary} style={{ marginRight: 6 }} />
-                      <Text style={[styles.bodyRegionText, selectedRegions.includes("Somewhere else") && styles.bodyRegionTextSelected]}>Somewhere else</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={[styles.bodyRegionChip, styles.unsureChip, isUnsureBody && styles.unsureChipSelected]} onPress={handleToggleUnsureBody}>
-                      <Ionicons name={isUnsureBody ? "help-circle" : "help-circle-outline"} size={18} color={isUnsureBody ? Colors.primary : Colors.textMuted} style={{ marginRight: 6 }} />
-                      <Text style={[styles.bodyRegionText, isUnsureBody && { color: Colors.primary, fontFamily: Theme.fontFamily.bold }]}>{step3UncertaintyState === "rephrased" ? "Still not sure — that's fine" : "I'm not sure"}</Text>
+
+                <View style={styles.bodyFigureWrap} pointerEvents="none" importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
+                  <Svg width={92} height={148} viewBox="0 0 200 320">
+                    <Circle cx={100} cy={35} r={20} fill={regionFill("Head")} />
+                    <Path d="M 65 65 L 135 65 L 130 85 L 70 85 Z" fill={regionFill("Shoulders")} />
+                    <Path d="M 72 88 L 128 88 L 125 125 L 75 125 Z" fill={regionFill("Chest")} />
+                    <Path d="M 75 128 L 125 128 L 120 170 L 80 170 Z" fill={regionFill("Stomach")} />
+                    <Path d="M 62 68 L 48 80 L 38 150 L 48 150 L 58 90 Z" fill={regionFill("Hands")} />
+                    <Path d="M 138 68 L 152 80 L 162 150 L 152 150 L 142 90 Z" fill={regionFill("Hands")} />
+                    <Path d="M 80 173 L 97 173 L 92 295 L 75 295 Z" fill={regionFill("Legs")} />
+                    <Path d="M 103 173 L 120 173 L 125 295 L 108 295 Z" fill={regionFill("Legs")} />
+                  </Svg>
+                </View>
+
+                {isNoticing ? (
+                  <View style={styles.noticeFooter}>
+                    <View style={styles.noticeDots}>
+                      {HELP_ME_NOTICE_STEPS.map((s, i) => (
+                        <View key={s.region} style={[styles.noticeDot, i <= noticeIndex! && { backgroundColor: figureColor }]} />
+                      ))}
+                    </View>
+                    <TouchableOpacity style={styles.unsureInlineBtn} onPress={handleSkipNotice} accessibilityRole="button">
+                      <Text style={styles.unsureInlineText}>Skip</Text>
                     </TouchableOpacity>
                   </View>
-                </View>
-                <View style={styles.navRow}>
-                  <Button title="Back" onPress={() => setStep(2)} variant="outline" style={styles.halfBtn} />
-                  <Button title="Continue" onPress={handleContinueFromStep3} style={styles.halfBtn} />
-                </View>
+                ) : (
+                  <>
+                    <View style={styles.secondaryGrid}>
+                      {sensationOptions.map((sensation) => {
+                        const isSelected = selectedSensations.includes(sensation.label);
+                        return (
+                          <TouchableOpacity
+                            key={sensation.label}
+                            style={[
+                              styles.secondaryChip,
+                              styles.sensationChip,
+                              isSelected && [styles.secondaryChipSelected, { backgroundColor: figureColor, borderColor: figureColor }],
+                            ]}
+                            onPress={() => toggleSensation(sensation.label)}
+                            accessibilityRole="checkbox"
+                            accessibilityState={{ checked: isSelected }}
+                            activeOpacity={0.8}
+                          >
+                            <Ionicons
+                              name={isSelected ? "checkmark-circle" : "ellipse-outline"}
+                              size={16}
+                              color={isSelected ? Colors.white : Colors.textMuted}
+                              style={styles.chipIcon}
+                            />
+                            <Text style={[styles.secondaryChipText, styles.sensationChipText, isSelected && styles.secondaryChipTextSelected]}>
+                              {sensation.label}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+
+                    {noticeFinished ? (
+                      <TouchableOpacity style={styles.unsureInlineBtn} onPress={handleNothingNoticed} accessibilityRole="button">
+                        <Text style={styles.unsureInlineText}>Not really</Text>
+                      </TouchableOpacity>
+                    ) : (
+                      <TouchableOpacity
+                        style={styles.unsureInlineBtn}
+                        onPress={handleStartNotice}
+                        accessibilityRole="button"
+                        accessibilityHint="A short guided body check, about 20 seconds"
+                      >
+                        <Ionicons name="sparkles-outline" size={18} color={Colors.primary} />
+                        <Text style={[styles.unsureInlineText, { color: Colors.primary }]}>Help me notice</Text>
+                      </TouchableOpacity>
+                    )}
+
+                    <View style={styles.navRow}>
+                      <Button title="Back" onPress={() => setStep(2)} variant="outline" style={styles.halfBtn} />
+                      <Button title="Continue" onPress={handleContinueFromStep3} style={styles.halfBtn} />
+                    </View>
+                  </>
+                )}
               </View>
             )}
 
             {/* STEP 4: Intensity */}
             {step === 4 && (
               <View style={styles.stepCard}>
-                <View style={styles.mitraHeaderRow}>
-                  <MitraAvatar state="neutral" size="md" />
-                  <View style={styles.mitraSpeechBubble}>
-                    <Text style={styles.mitraSpeechText}>How strong does it feel right now?</Text>
-                    <Text style={styles.mitraSubtext}>
-                      {secondaryEmotion
-                        ? `Rate the intensity of ${secondaryEmotion.toLowerCase()} on a scale from 1 to 10.`
-                        : `Rate the intensity on a scale from 1 to 10.`}
+                <View style={styles.emotyHeaderRow}>
+                  <EmotyAvatar state="neutral" size="md" />
+                  <View style={styles.emotySpeechBubble}>
+                    <Text style={styles.emotySpeechText}>How strong does it feel right now?</Text>
+                    <Text style={styles.emotySubtext}>
+                      {intensityPrompt(secondaryEmotion)}
                     </Text>
                   </View>
                 </View>
-                <IntensitySelector value={intensity} onChange={setIntensity} activeColor={activeColors.primary} />
+                <IntensitySelector value={intensity} onChange={setIntensity} activeColor={activeColors.primary} tone={toneForEmotion(primaryEmotion)} />
                 <View style={styles.navRow}>
                   <Button title="Back" onPress={() => setStep(3)} variant="outline" style={styles.halfBtn} />
                   <Button title={isSubmitting ? "Finding Best Tool..." : "Continue"} onPress={handleContinueFromStep4} disabled={isSubmitting} style={styles.halfBtn} />
                 </View>
               </View>
             )}
-            {/* STEP 5: Mitra Intervention Intro — Phase 3 */}
+            {/* STEP 5: Emoty Intervention Intro — Phase 3 */}
             {step === 5 && routedIntervention && (
               <View style={styles.stepCard}>
-                <View style={styles.mitraHeaderRow}>
-                  <MitraAvatar state="supportive" size="md" />
-                  <View style={styles.mitraSpeechBubble}>
-                    <Text style={styles.mitraSpeechText}>{routedIntervention.transitionMessage}</Text>
+                <View style={styles.emotyHeaderRow}>
+                  <EmotyAvatar state="supportive" size="md" />
+                  <View style={styles.emotySpeechBubble}>
+                    <Text style={styles.emotySpeechText}>{routedIntervention.transitionMessage}</Text>
                   </View>
                 </View>
                 <View style={styles.interventionCard}>
                   <View style={styles.interventionHeader}>
                     <View style={styles.interventionIconBox}>{getInterventionIcon(routedIntervention.interventionType)}</View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.interventionTitle}>{routedIntervention.title}</Text>
-                      <View style={styles.badgeRow}>
-                        <View style={styles.pillTag}><Text style={styles.pillTagText}>{routedIntervention.studentFacingName}</Text></View>
-                        <View style={[styles.pillTag, styles.durationPill]}>
-                          <Ionicons name="time-outline" size={12} color={Colors.primary} />
-                          <Text style={[styles.pillTagText, { color: Colors.primary }]}>{routedIntervention.recommendedDuration}</Text>
-                        </View>
-                      </View>
+                    <Text style={styles.interventionTitle}>{routedIntervention.title}</Text>
+                  </View>
+                  {/* Full card width and wrapping, so long names never push the duration off the card */}
+                  <View style={styles.badgeRow}>
+                    <View style={styles.pillTag}><Text style={styles.pillTagText}>{routedIntervention.studentFacingName}</Text></View>
+                    <View style={[styles.pillTag, styles.durationPill]}>
+                      <Ionicons name="time-outline" size={12} color={Colors.primary} />
+                      <Text style={[styles.pillTagText, { color: Colors.primary }]}>{interventionDuration}</Text>
                     </View>
                   </View>
                   <Text style={styles.interventionReason}>{routedIntervention.reason}</Text>
                 </View>
-                <TouchableOpacity style={styles.startInterventionBtn} onPress={handleStartIntervention} activeOpacity={0.9}>
+                <TouchableOpacity style={styles.startInterventionBtn} onPress={handleStartIntervention} activeOpacity={0.9} accessibilityRole="button">
                   <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={styles.startBtnGradient}>
                     <Text style={styles.startBtnText}>{"Let's start"}</Text>
                     <Ionicons name="arrow-forward" size={20} color={Colors.white} />
                   </LinearGradient>
                 </TouchableOpacity>
+                {guidedMeditation && (
+                  <Pressable
+                    style={({ pressed }) => [styles.meditationRow, pressed && styles.meditationRowPressed]}
+                    onPress={handleOpenGuidedMeditation}
+                    accessibilityRole="link"
+                    accessibilityLabel={`Optional guided meditation: ${guidedMeditation.title}`}
+                    accessibilityHint="Opens YouTube outside Emotify"
+                  >
+                    <View style={styles.meditationIconBox}>
+                      <Ionicons name="play-circle-outline" size={24} color={Colors.primary} />
+                    </View>
+                    <View style={styles.meditationTextCol}>
+                      <Text style={styles.meditationEyebrow}>Guided meditation · Optional</Text>
+                      <Text style={styles.meditationTitle}>{guidedMeditation.title}</Text>
+                      <Text style={styles.meditationMeta}>
+                        {guidedMeditation.durationLabel ? `YouTube · ${guidedMeditation.durationLabel}` : "YouTube"}
+                      </Text>
+                    </View>
+                    <Ionicons name="open-outline" size={18} color={Colors.textMuted} />
+                  </Pressable>
+                )}
+                {guidedMeditation && (
+                  <TouchableOpacity
+                    style={styles.inAppMeditationBtn}
+                    onPress={() => setShowMeditationModal(true)}
+                    activeOpacity={0.88}
+                  >
+                    <Ionicons name="headset-outline" size={18} color={Colors.primary} />
+                    <Text style={styles.inAppMeditationText}>Play Guided Meditation In-App</Text>
+                  </TouchableOpacity>
+                )}
                 <TouchableOpacity style={styles.maybeLaterBtn} onPress={() => router.replace("/(auth)/(tabs)")}>
                   <Text style={styles.maybeLaterText}>Maybe later</Text>
                 </TouchableOpacity>
@@ -1055,11 +1334,11 @@ export default function EmotionMapScreen() {
             {/* STEP 6: Uncertain Support — Phase 2. Local UI only, no DB record. 4-7-8 NOT offered. */}
             {step === 6 && (
               <View style={styles.stepCard}>
-                <View style={styles.mitraHeaderRow}>
-                  <MitraAvatar state="supportive" size="md" />
-                  <View style={styles.mitraSpeechBubble}>
-                    <Text style={styles.mitraSpeechText}>{"That's completely okay."}</Text>
-                    <Text style={styles.mitraSubtext}>You do not have to figure it out right now. Let us just do something that might help you feel a little more settled.</Text>
+                <View style={styles.emotyHeaderRow}>
+                  <EmotyAvatar state="supportive" size="md" />
+                  <View style={styles.emotySpeechBubble}>
+                    <Text style={styles.emotySpeechText}>{"That's completely okay."}</Text>
+                    <Text style={styles.emotySubtext}>You do not have to figure it out right now. Let us just do something that might help you feel a little more settled.</Text>
                   </View>
                 </View>
                 <View style={styles.fallbackActivityList}>
@@ -1067,7 +1346,7 @@ export default function EmotionMapScreen() {
                     <View style={styles.fallbackIconBox}><DeepBreathingActivityIcon size={28} color={Colors.primary} /></View>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.fallbackActivityTitle}>{"Let's breathe"}</Text>
-                      <Text style={styles.fallbackActivitySub}>A simple 3-minute breathing exercise</Text>
+                      <Text style={styles.fallbackActivitySub}>A short breathing exercise</Text>
                     </View>
                     <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
                   </TouchableOpacity>
@@ -1093,86 +1372,241 @@ export default function EmotionMapScreen() {
                 </TouchableOpacity>
               </View>
             )}
-            {/* STEP 7: Post-Intervention Check — Phase 3 */}
+            {/* STEP 7: Post-Intervention Check — Phase 3 & 5 */}
             {step === 7 && (
               <View style={styles.stepCard}>
-                <View style={styles.mitraHeaderRow}>
-                  <MitraAvatar state="calm" size="md" />
-                  <View style={styles.mitraSpeechBubble}>
-                    <Text style={styles.mitraSpeechText}>Nice. Take a moment.</Text>
-                    <Text style={styles.mitraSubtext}>How do you feel now compared to before?</Text>
+                <View style={styles.emotyHeaderRow}>
+                  <EmotyAvatar state="calm" size="md" />
+                  <View style={styles.emotySpeechBubble}>
+                    <Text style={styles.emotySpeechText}>Nice. Take a moment.</Text>
+                    <Text style={styles.emotySubtext}>How do you feel now compared to before?</Text>
                   </View>
                 </View>
-                <View style={styles.postCheckRow}>
-                  <TouchableOpacity
-                    style={[styles.postCheckBtn, styles.postCheckBetter]}
-                    onPress={() => handleSubmitPostCheck("better")}
-                    disabled={isSavingPost}
-                    activeOpacity={0.85}
-                  >
-                    <Ionicons name="arrow-up" size={22} color="#16A34A" />
-                    <Text style={[styles.postCheckLabel, { color: "#16A34A" }]}>A bit better</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.postCheckBtn, styles.postCheckSame]}
-                    onPress={() => handleSubmitPostCheck("same")}
-                    disabled={isSavingPost}
-                    activeOpacity={0.85}
-                  >
-                    <Ionicons name="remove" size={22} color={Colors.textSecondary} />
-                    <Text style={[styles.postCheckLabel, { color: Colors.textSecondary }]}>About the same</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.postCheckBtn, styles.postCheckWorse]}
-                    onPress={() => handleSubmitPostCheck("worse")}
-                    disabled={isSavingPost}
-                    activeOpacity={0.85}
-                  >
-                    <Ionicons name="arrow-down" size={22} color="#EA580C" />
-                    <Text style={[styles.postCheckLabel, { color: "#EA580C" }]}>A bit harder</Text>
-                  </TouchableOpacity>
+
+                {/* Canonical 8 Emotion Re-selection */}
+                <Text style={styles.reassessSectionTitle}>What feeling describes you best right now?</Text>
+                <View style={styles.reassessEmotionGrid}>
+                  {(["calm", "happy", "worried", "sad", "angry", "tired", "embarrassed", "guilty"] as const).map((emKey) => {
+                    const isSelected = (reselectedEmotion || "").toLowerCase().includes(emKey);
+                    return (
+                      <TouchableOpacity
+                        key={emKey}
+                        style={[styles.reassessEmotionChip, isSelected && styles.reassessEmotionChipActive]}
+                        onPress={() => {
+                          Haptics.selectionAsync().catch(() => {});
+                          setReselectedEmotion(emKey);
+                        }}
+                      >
+                        <Text style={[styles.reassessEmotionText, isSelected && styles.reassessEmotionTextActive]}>
+                          {emKey.charAt(0).toUpperCase() + emKey.slice(1)}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
                 </View>
-                {isSavingPost && <ActivityIndicator size="small" color={Colors.primary} style={{ marginTop: 12 }} />}
+
+                {/* 4-Anchor Intensity Re-rating */}
+                <Text style={styles.reassessSectionTitle}>How strong is this feeling?</Text>
+                <View style={styles.anchorCardList}>
+                  {INTENSITY_ANCHORS.map((anchor) => {
+                    const isSelected = postIntensityAnchor === anchor.level;
+                    return (
+                      <TouchableOpacity
+                        key={anchor.level}
+                        style={[
+                          styles.anchorCard,
+                          isSelected && { borderColor: anchor.color, backgroundColor: anchor.color + "12" },
+                        ]}
+                        onPress={() => {
+                          Haptics.selectionAsync().catch(() => {});
+                          setPostIntensityAnchor(anchor.level);
+                        }}
+                      >
+                        <View style={styles.anchorHeaderRow}>
+                          <Text style={styles.anchorEmoji}>{anchor.emoji}</Text>
+                          <Text style={[styles.anchorLabel, isSelected && { color: anchor.color }]}>
+                            {anchor.label}
+                          </Text>
+                        </View>
+                        <Text style={styles.anchorDesc}>{anchor.description}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                {/* Confirm Reassessment */}
+                <TouchableOpacity
+                  style={styles.startInterventionBtn}
+                  onPress={handleConfirmPostReassessment}
+                  disabled={isSavingPost}
+                  activeOpacity={0.88}
+                >
+                  <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={styles.startBtnGradient}>
+                    {isSavingPost ? (
+                      <ActivityIndicator size="small" color={Colors.white} />
+                    ) : (
+                      <>
+                        <Text style={styles.startBtnText}>Confirm & Continue</Text>
+                        <Ionicons name="arrow-forward" size={20} color={Colors.white} />
+                      </>
+                    )}
+                  </LinearGradient>
+                </TouchableOpacity>
+
                 <TouchableOpacity style={styles.maybeLaterBtn} onPress={() => router.replace("/(auth)/(tabs)")}>
                   <Text style={styles.maybeLaterText}>Skip and go home</Text>
                 </TouchableOpacity>
               </View>
             )}
-            {/* STEP 8: Mitra Followup — Phase 3 */}
+            {/* STEP 8: Emoty Followup — Phase 3 & 5 */}
             {step === 8 && (
               <View style={styles.stepCard}>
-                <View style={styles.mitraHeaderRow}>
-                  <MitraAvatar
-                    state={postOutcome === "better" ? "celebrating" : postOutcome === "worse" ? "supportive" : "calm"}
+                <View style={styles.emotyHeaderRow}>
+                  <EmotyAvatar
+                    state={
+                      reassessmentResult?.branch === "improved" || postOutcome === "better"
+                        ? "celebrating"
+                        : reassessmentResult?.branch === "worse" || postOutcome === "worse"
+                        ? "supportive"
+                        : "calm"
+                    }
                     size="md"
                   />
-                  <View style={styles.mitraSpeechBubble}>
-                    {postOutcome === "better" && (
-                      <>
-                        <Text style={styles.mitraSpeechText}>Good. I am glad that helped a little.</Text>
-                        <Text style={styles.mitraSubtext}>Every small moment of care counts.</Text>
-                      </>
-                    )}
-                    {postOutcome === "same" && (
-                      <>
-                        <Text style={styles.mitraSpeechText}>{"That's okay."}</Text>
-                        <Text style={styles.mitraSubtext}>Sometimes it takes a little longer. You showed up for yourself today.</Text>
-                      </>
-                    )}
-                    {postOutcome === "worse" && (
-                      <>
-                        <Text style={styles.mitraSpeechText}>Thanks for telling me.</Text>
-                        <Text style={styles.mitraSubtext}>It is okay to feel that way. Rest if you need to. Your counsellor can help if things feel overwhelming.</Text>
-                      </>
-                    )}
+                  <View style={styles.emotySpeechBubble}>
+                    <Text style={styles.emotySpeechText}>
+                      {reassessmentResult?.supportiveHeading ||
+                        (postOutcome === "better"
+                          ? "Good. I am glad that helped a little."
+                          : postOutcome === "worse"
+                          ? "Thanks for telling me."
+                          : "That's okay.")}
+                    </Text>
+                    <Text style={styles.emotySubtext}>
+                      {reassessmentResult?.supportiveBody ||
+                        (postOutcome === "better"
+                          ? "Every small moment of care counts."
+                          : postOutcome === "worse"
+                          ? "It is okay to feel that way. Rest if you need to. Your counsellor can help if things feel overwhelming."
+                          : "Sometimes it takes a little longer. You showed up for yourself today.")}
+                    </Text>
                   </View>
                 </View>
-                <TouchableOpacity style={styles.startInterventionBtn} onPress={() => router.replace("/(auth)/(tabs)")} activeOpacity={0.9}>
-                  <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={styles.startBtnGradient}>
-                    <Text style={styles.startBtnText}>Back to Home</Text>
-                    <Ionicons name="home-outline" size={20} color={Colors.white} />
-                  </LinearGradient>
-                </TouchableOpacity>
+
+                {/* Reassessment observation summary */}
+                <View style={styles.reassessSummaryCard}>
+                  <View style={styles.reassessSummaryRow}>
+                    <View style={styles.reassessSummaryItem}>
+                      <Text style={styles.reassessSummaryLabel}>BEFORE</Text>
+                      <Text style={styles.reassessSummaryVal}>
+                        {primaryEmotion || "Emotion"} · {intensity}/10
+                      </Text>
+                    </View>
+                    <Ionicons name="arrow-forward-outline" size={18} color={Colors.textMuted} />
+                    <View style={styles.reassessSummaryItem}>
+                      <Text style={styles.reassessSummaryLabel}>AFTER</Text>
+                      <Text style={styles.reassessSummaryVal}>
+                        {reselectedEmotion || primaryEmotion || "Emotion"} ·{" "}
+                        {INTENSITY_ANCHORS.find((a) => a.level === postIntensityAnchor)?.label || "Done"}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+
+                {/* Dynamic Branch Actions */}
+                {reassessmentResult?.branch === "improved" && (
+                  <View style={{ gap: 10, marginTop: 12 }}>
+                    <TouchableOpacity
+                      style={styles.branchActionBtn}
+                      onPress={() => router.replace("/(auth)/tools/microgoals")}
+                      activeOpacity={0.88}
+                    >
+                      <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={styles.branchActionGradient}>
+                        <Text style={styles.branchActionText}>Try a MicroGoal</Text>
+                        <Ionicons name="flag-outline" size={20} color={Colors.white} />
+                      </LinearGradient>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.branchSecondaryBtn}
+                      onPress={() => router.replace("/(auth)/(tabs)")}
+                    >
+                      <Text style={styles.branchSecondaryText}>Back to Home</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                {reassessmentResult?.branch === "unchanged" && (
+                  <View style={{ gap: 10, marginTop: 12 }}>
+                    <TouchableOpacity
+                      style={styles.branchActionBtn}
+                      onPress={() => router.replace("/(auth)/tools/microgoals")}
+                      activeOpacity={0.88}
+                    >
+                      <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={styles.branchActionGradient}>
+                        <Text style={styles.branchActionText}>Try a MicroGoal</Text>
+                        <Ionicons name="flag-outline" size={20} color={Colors.white} />
+                      </LinearGradient>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.branchSecondaryBtn}
+                      onPress={() => router.replace("/(auth)/tools/appointments")}
+                    >
+                      <Text style={styles.branchSecondaryText}>Connect with a counsellor</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.branchSecondaryBtn}
+                      onPress={() => router.replace("/(auth)/(tabs)")}
+                    >
+                      <Text style={styles.branchSecondaryText}>Back to Home</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                {reassessmentResult?.branch === "worse" && (
+                  <View style={{ gap: 10, marginTop: 12 }}>
+                    <TouchableOpacity
+                      style={styles.branchActionBtn}
+                      onPress={() => router.replace("/(auth)/tools/appointments")}
+                      activeOpacity={0.88}
+                    >
+                      <LinearGradient colors={["#EA580C", "#C2410C"]} style={styles.branchActionGradient}>
+                        <Text style={styles.branchActionText}>Connect with a counsellor</Text>
+                        <Ionicons name="chatbubbles-outline" size={20} color={Colors.white} />
+                      </LinearGradient>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.branchSecondaryBtn}
+                      onPress={() => Linking.openURL("tel:14416").catch(() => {})}
+                    >
+                      <Ionicons name="call-outline" size={16} color={Colors.text} style={{ marginRight: 6 }} />
+                      <Text style={styles.branchSecondaryText}>Call 14416 (Tele-MANAS Helpline)</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.branchSecondaryBtn}
+                      onPress={() => setShowBreathingModal(true)}
+                    >
+                      <Text style={styles.branchSecondaryText}>Try gentle Box Breathing</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.branchSecondaryBtn}
+                      onPress={() => router.replace("/(auth)/(tabs)")}
+                    >
+                      <Text style={styles.branchSecondaryText}>Back to Home</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                {!reassessmentResult && (
+                  <TouchableOpacity
+                    style={styles.startInterventionBtn}
+                    onPress={() => router.replace("/(auth)/(tabs)")}
+                    activeOpacity={0.9}
+                  >
+                    <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={styles.startBtnGradient}>
+                      <Text style={styles.startBtnText}>Back to Home</Text>
+                      <Ionicons name="home-outline" size={20} color={Colors.white} />
+                    </LinearGradient>
+                  </TouchableOpacity>
+                )}
               </View>
             )}
           </View>
@@ -1353,7 +1787,7 @@ export default function EmotionMapScreen() {
                             style={[
                               styles.logIntensity,
                               {
-                                color: getIntensityLabel(Math.round(log.averageIntensity)).color,
+                                color: getIntensityLevel(Math.round(log.averageIntensity), toneForFeeling(log.emotionLabel)).color,
                               },
                             ]}
                           >
@@ -1406,7 +1840,7 @@ export default function EmotionMapScreen() {
               subtitle={routedIntervention?.title || "Follow the rhythm to ease tension"}
               themeColor={Colors.primary}
               onComplete={(_result) => {
-                // Genuine completion — advance to Mitra post-intervention check
+                // Genuine completion — advance to Emoty post-intervention check
                 handleInlineInterventionComplete();
               }}
               onClose={() => {
@@ -1439,7 +1873,7 @@ export default function EmotionMapScreen() {
                   setShowGroundingModal(false);
                 }}
                 onComplete={(_logId) => {
-                  // Genuine completion — advance to Mitra post-intervention check
+                  // Genuine completion — advance to Emoty post-intervention check
                   handleInlineInterventionComplete();
                 }}
               />
@@ -1447,6 +1881,15 @@ export default function EmotionMapScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Phase 5 — Guided Meditation Player Modal (inline, completion → step 7) */}
+      <MeditationPlayerModal
+        visible={showMeditationModal}
+        meditation={guidedMeditation}
+        emotionColor={activeColors.primary}
+        onClose={() => setShowMeditationModal(false)}
+        onComplete={(title) => handleMeditationComplete(title)}
+      />
     </View>
   );
 }
@@ -1504,13 +1947,13 @@ const styles = StyleSheet.create({
     ...Theme.shadows.secondary,
     width: "100%",
   },
-  mitraHeaderRow: {
+  emotyHeaderRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
     marginBottom: Theme.spacing.lg,
   },
-  mitraSpeechBubble: {
+  emotySpeechBubble: {
     flex: 1,
     backgroundColor: "#F8FAFC",
     padding: Theme.spacing.md,
@@ -1518,13 +1961,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#E2E8F0",
   },
-  mitraSpeechText: {
+  emotySpeechText: {
     fontFamily: Theme.fontFamily.bold,
     fontSize: Theme.fontSize.md,
     color: Colors.text,
     marginBottom: 4,
   },
-  mitraSubtext: {
+  emotySubtext: {
     fontFamily: Theme.fontFamily.medium,
     fontSize: Theme.fontSize.xs,
     color: Colors.textSecondary,
@@ -1552,9 +1995,13 @@ const styles = StyleSheet.create({
     ...Theme.shadows.tertiary,
     position: "relative",
   },
+  // Same elevation as unselected cards (no jump on Android); selection shows through the
+  // border, opaque tint, label colour and check badge.
   primaryCardSelected: {
     backgroundColor: Colors.white,
-    ...Theme.shadows.primary,
+  },
+  primaryCardPressed: {
+    transform: [{ scale: 0.98 }],
   },
   primaryIconContainer: {
     width: 52,
@@ -1632,9 +2079,60 @@ const styles = StyleSheet.create({
     fontSize: Theme.fontSize.sm,
     color: Colors.text,
   },
+  // Same weight as unselected text so the chip keeps its width
   secondaryChipTextSelected: {
-    fontFamily: Theme.fontFamily.bold,
     color: Colors.white,
+  },
+  chipIcon: {
+    marginRight: 6,
+  },
+  // Step 2 discovery: broad-emotion meanings from the specification
+  meaningCard: {
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: Theme.borderRadius.lg,
+    borderWidth: 1.5,
+    borderColor: "#E2E8F0",
+    backgroundColor: "#F8FAFC",
+    marginBottom: 10,
+  },
+  meaningText: {
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: Theme.fontSize.sm,
+    color: Colors.text,
+  },
+  meaningLabel: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: Theme.fontSize.xs,
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
+  // Step 3 sensation chips: long labels wrap inside the chip instead of overflowing
+  sensationChip: {
+    maxWidth: "100%",
+  },
+  sensationChipText: {
+    flexShrink: 1,
+  },
+  bodyFigureWrap: {
+    alignSelf: "center",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: Theme.spacing.md,
+  },
+  noticeFooter: {
+    alignItems: "center",
+    marginTop: Theme.spacing.sm,
+  },
+  noticeDots: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  noticeDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#E2E8F0",
   },
 
   grid: {
@@ -1711,57 +2209,6 @@ const styles = StyleSheet.create({
   },
   strongestTextSelected: {
     color: Colors.primary,
-  },
-  bodyMapContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginVertical: Theme.spacing.md,
-    gap: 12,
-  },
-  svgWrapper: {
-    flex: 1.2,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#F8FAFC",
-    borderRadius: Theme.borderRadius.lg,
-    paddingVertical: Theme.spacing.md,
-    borderWidth: 1,
-    borderColor: "#E2E8F0",
-  },
-  bodyListColumn: {
-    flex: 1,
-    gap: 8,
-  },
-  bodyRegionChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    borderRadius: Theme.borderRadius.md,
-    backgroundColor: "#F8FAFC",
-    borderWidth: 1,
-    borderColor: "#E2E8F0",
-  },
-  bodyRegionChipSelected: {
-    borderColor: Colors.primary,
-    backgroundColor: Colors.primary,
-  },
-  bodyRegionText: {
-    fontFamily: Theme.fontFamily.bold,
-    fontSize: Theme.fontSize.xs,
-    color: Colors.textSecondary,
-  },
-  bodyRegionTextSelected: {
-    color: Colors.white,
-  },
-  unsureChip: {
-    borderColor: "#CBD5E1",
-    backgroundColor: "#F1F5F9",
-  },
-  unsureChipSelected: {
-    borderColor: Colors.primary,
-    backgroundColor: Colors.primary + "15",
   },
   nextBtn: { marginTop: Theme.spacing.md, borderRadius: Theme.borderRadius.lg },
   navRow: {
@@ -1860,7 +2307,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    marginBottom: Theme.spacing.md,
+    marginBottom: Theme.spacing.sm,
   },
   interventionIconBox: {
     width: 52,
@@ -1873,17 +2320,20 @@ const styles = StyleSheet.create({
     borderColor: "#E2E8F0",
   },
   interventionTitle: {
+    flex: 1,
     fontFamily: Theme.fontFamily.bold,
     fontSize: Theme.fontSize.md,
     color: Colors.text,
-    marginBottom: 4,
   },
   badgeRow: {
     flexDirection: "row",
+    flexWrap: "wrap",
     gap: 6,
     alignItems: "center",
+    marginBottom: Theme.spacing.md,
   },
   pillTag: {
+    maxWidth: "100%",
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 6,
@@ -1896,6 +2346,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primary + "10",
   },
   pillTagText: {
+    flexShrink: 1,
     fontFamily: Theme.fontFamily.bold,
     fontSize: 11,
     color: Colors.primary,
@@ -1923,6 +2374,50 @@ const styles = StyleSheet.create({
     fontSize: Theme.fontSize.md,
     color: Colors.white,
   },
+  meditationRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    minHeight: 56,
+    marginTop: Theme.spacing.md,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: Theme.borderRadius.lg,
+    borderWidth: 1.5,
+    borderColor: "#E2E8F0",
+    backgroundColor: Colors.white,
+  },
+  meditationRowPressed: {
+    transform: [{ scale: 0.98 }],
+  },
+  meditationIconBox: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: Colors.primary + "12",
+  },
+  meditationTextCol: {
+    flex: 1,
+  },
+  meditationEyebrow: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: 11,
+    color: Colors.primary,
+  },
+  meditationTitle: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: Theme.fontSize.sm,
+    color: Colors.text,
+    marginTop: 2,
+  },
+  meditationMeta: {
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: Theme.fontSize.xs,
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
   maybeLaterBtn: {
     marginTop: 12,
     paddingVertical: 10,
@@ -1945,10 +2440,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     borderRadius: Theme.borderRadius.full,
   },
-  unsureInlineBtnActive: {
-    backgroundColor: Colors.primary + "12",
-  },
   unsureInlineText: {
+    flexShrink: 1,
+    textAlign: "center",
     fontFamily: Theme.fontFamily.medium,
     fontSize: Theme.fontSize.sm,
     color: Colors.textMuted,
@@ -2174,6 +2668,145 @@ const styles = StyleSheet.create({
   postCheckWorse: {
     backgroundColor: "#FFF7ED",
     borderColor: "#FDBA74",
+  },
+  // Phase 5 — In-App Meditation & 4-Anchor Reassessment styles
+  inAppMeditationBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    marginTop: 8,
+    paddingVertical: 12,
+    borderRadius: Theme.borderRadius.lg,
+    backgroundColor: Colors.primary + "12",
+    borderWidth: 1.5,
+    borderColor: Colors.primary + "30",
+  },
+  inAppMeditationText: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: Theme.fontSize.sm,
+    color: Colors.primary,
+  },
+  reassessSectionTitle: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: Theme.fontSize.sm,
+    color: Colors.text,
+    marginTop: Theme.spacing.md,
+    marginBottom: 8,
+  },
+  reassessEmotionGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginBottom: Theme.spacing.md,
+  },
+  reassessEmotionChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: Theme.borderRadius.full,
+    backgroundColor: "#F8FAFC",
+    borderWidth: 1.5,
+    borderColor: "#E2E8F0",
+  },
+  reassessEmotionChipActive: {
+    backgroundColor: Colors.primary,
+    borderColor: Colors.primary,
+  },
+  reassessEmotionText: {
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: Theme.fontSize.xs,
+    color: Colors.textSecondary,
+  },
+  reassessEmotionTextActive: {
+    fontFamily: Theme.fontFamily.bold,
+    color: Colors.white,
+  },
+  anchorCardList: {
+    gap: 8,
+    marginBottom: Theme.spacing.md,
+  },
+  anchorCard: {
+    padding: 12,
+    borderRadius: Theme.borderRadius.lg,
+    backgroundColor: "#F8FAFC",
+    borderWidth: 1.5,
+    borderColor: "#E2E8F0",
+  },
+  anchorHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 2,
+  },
+  anchorEmoji: {
+    fontSize: 16,
+  },
+  anchorLabel: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: Theme.fontSize.sm,
+    color: Colors.text,
+  },
+  anchorDesc: {
+    fontFamily: Theme.fontFamily.regular,
+    fontSize: Theme.fontSize.xs,
+    color: Colors.textSecondary,
+  },
+  reassessSummaryCard: {
+    backgroundColor: "#F8FAFC",
+    borderRadius: Theme.borderRadius.lg,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    marginVertical: Theme.spacing.md,
+  },
+  reassessSummaryRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  reassessSummaryItem: {
+    flex: 1,
+  },
+  reassessSummaryLabel: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: 10,
+    color: Colors.textMuted,
+    letterSpacing: 1,
+    marginBottom: 2,
+  },
+  reassessSummaryVal: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: Theme.fontSize.sm,
+    color: Colors.text,
+  },
+  branchActionBtn: {
+    borderRadius: Theme.borderRadius.lg,
+    overflow: "hidden",
+  },
+  branchActionGradient: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 14,
+  },
+  branchActionText: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: Theme.fontSize.md,
+    color: Colors.white,
+  },
+  branchSecondaryBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 12,
+    borderRadius: Theme.borderRadius.lg,
+    backgroundColor: "#F1F5F9",
+  },
+  branchSecondaryText: {
+    fontFamily: Theme.fontFamily.bold,
+    fontSize: Theme.fontSize.sm,
+    color: Colors.text,
   },
 });
 

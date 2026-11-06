@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Tabs, useRouter } from "expo-router";
 import { useThemeColors } from "@/context/MoodThemeContext";
+import { Colors } from "@/constants/Colors";
 import { Theme } from "@/constants/Theme";
 import { Ionicons } from "@expo/vector-icons";
 import { useAppAuth } from "@/utils/auth";
@@ -11,7 +12,8 @@ import { Button } from "@/components/ui/Button";
 import { BlurView } from "expo-blur";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { ShieldSafetyIcon } from "@/components/svg/system";
+import { EmotyPresence } from "@/components/avatar/EmotyPresence";
+import { getEmotyPresence } from "@/common/emotyPresence";
 
 import { useLanguage } from "@/context/LanguageContext";
 import { CRISIS_RESOURCES, HELPLINE_DIAL_URL, EMERGENCY_DIAL_URL } from "@/common/crisisResources";
@@ -31,40 +33,60 @@ export default function TabLayout() {
     clerkId: user!.id,
   } : "skip");
 
-  const latestTriage = useQuery(api.triage.getLatest, isReady ? {
-    userId: user!.id,
-  } : "skip");
+  // Minimal server-derived gate (no triage record, level or ids reach the app).
+  const safetyStatus = useQuery(api.triage.getMySafetyStatus, isReady ? {} : "skip");
 
   const createCounsellorRequest = useMutation(api.counsellorRequests.create);
   const recordEmergencyDismissal = useMutation(api.alerts.recordEmergencyScreenDismissal);
 
   React.useEffect(() => {
-    if (latestTriage?.level === "force_retest") {
+    if (safetyStatus?.forceRetest) {
       router.replace("/(auth)/screening");
     }
-  }, [latestTriage?.level]);
+  }, [safetyStatus?.forceRetest]);
 
-  const isEmergency = latestTriage?.level === "suicide_flag" && !dismissedEmergency;
+  const isEmergency = !!safetyStatus?.crisis && !dismissedEmergency;
 
   const handleTalkToCounselor = async () => {
     if (!user) return;
     try {
-      // Canonical counselor request record (server notifies staff)
-      await createCounsellorRequest({
+      // Canonical counselor request record (server notifies staff and links the latest triage)
+      const res = await createCounsellorRequest({
         sourceType: "emergency_modal",
-        triageId: latestTriage?._id ? (latestTriage._id as any) : undefined,
         situation_text: "Student requested immediate counselor contact from emergency modal",
+        returnOutcome: true,
       });
 
-      Alert.alert("Request Sent", "A counselor has been notified and will reach out to you shortly.");
+      const outcome = res as unknown as { deduplicated?: boolean; deliveryStatus?: string };
+
+      if (outcome && typeof outcome === "object" && outcome.deduplicated && outcome.deliveryStatus === "notified") {
+        Alert.alert(
+          "Care Team Told Again",
+          "You already have an open request, and we've let your care team know again that you'd like to talk now. They will reach out to you as soon as they can."
+        );
+      } else if (outcome && typeof outcome === "object" && outcome.deduplicated && outcome.deliveryStatus !== "no_active_staff") {
+        Alert.alert(
+          "Request Already Active",
+          "You already have an active request for counselor support. Our care team has your details and will reach out to you shortly."
+        );
+      } else if (outcome && typeof outcome === "object" && outcome.deliveryStatus === "no_active_staff") {
+        Alert.alert(
+          "Support Request Received",
+          `Your request has been recorded. Our counselors are currently offline. If you need urgent support right now, please call ${CRISIS_RESOURCES.helplineName} on ${CRISIS_RESOURCES.helplineNumber} or emergency services on ${CRISIS_RESOURCES.emergencyNumber}.`
+        );
+      } else {
+        Alert.alert("Request Sent", "A counselor has been notified and will reach out to you shortly.");
+      }
     } catch (err: any) {
       Alert.alert("Request Error", err.message || "Failed to submit request.");
     }
   };
 
   if (isEmergency) {
+    // Safety screen keeps the base palette; the decorative mood theme never applies here.
+    const safetyColors = Colors;
     return (
-      <View style={[styles.container, { padding: Theme.spacing.xl, paddingTop: 80, backgroundColor: colors.white }]}>
+      <View style={[styles.container, { padding: Theme.spacing.xl, paddingTop: 80, backgroundColor: safetyColors.white }]}>
         <TouchableOpacity
           style={styles.closeButton}
           onPress={() => {
@@ -74,13 +96,16 @@ export default function TabLayout() {
           }}
           activeOpacity={0.7}
         >
-          <Ionicons name="close" size={28} color={colors.textSecondary} />
+          <Ionicons name="close" size={28} color={safetyColors.textSecondary} />
         </TouchableOpacity>
         <View style={{ alignItems: 'center', marginBottom: 20 }}>
-          <ShieldSafetyIcon size={64} color={colors.error} />
+          <EmotyPresence presence={getEmotyPresence({ scene: "safety" })} layout="stacked" size="md" />
         </View>
-        <Text style={[styles.emergencyTitle, { color: colors.error, textAlign: 'center' }]}>Safety Priority</Text>
-        <Text style={[styles.emergencyText, { color: colors.text, textAlign: 'center', marginVertical: Theme.spacing.xl, fontSize: 18 }]}>
+        {/* Calm, direct heading; the approved crisis guidance and every action below are unchanged. */}
+        <Text style={[styles.emergencyTitle, { color: safetyColors.text, textAlign: 'center' }]} accessibilityRole="header">
+          {t("screening.result.immediateSafety.heading")}
+        </Text>
+        <Text style={[styles.emergencyText, { color: safetyColors.text, textAlign: 'center', marginVertical: Theme.spacing.xl, fontSize: 18 }]}>
           We're concerned for your safety. If you're in danger now, please call emergency services immediately.
         </Text>
         
@@ -88,7 +113,7 @@ export default function TabLayout() {
           <Button 
             title={`Call Emergency Services (${CRISIS_RESOURCES.emergencyNumber})`} 
             onPress={() => Linking.openURL(EMERGENCY_DIAL_URL)} 
-            variant="danger" 
+            variant="primary" 
             size="lg" 
           />
           <Button 
@@ -112,15 +137,13 @@ export default function TabLayout() {
             size="lg" 
           />
           <View style={{ height: 40 }} />
-          <Text style={{ color: colors.textSecondary, textAlign: 'center', marginBottom: 10 }}>Or try a grounding exercise:</Text>
+          <Text style={{ color: safetyColors.textSecondary, textAlign: 'center', marginBottom: 10 }}>Or try a grounding exercise:</Text>
           <Button 
             title="5-4-3-2-1 Sensory Grounding" 
             onPress={() => router.push({
               pathname: "/(auth)/tools/grounding",
-              params: {
-                sourceType: "crisis_blocker",
-                triageId: latestTriage?._id ? (latestTriage._id as string) : undefined,
-              }
+              // The server links the latest triage to crisis-blocker sessions.
+              params: { sourceType: "crisis_blocker" }
             } as any)} 
             size="lg" 
           />
@@ -129,7 +152,7 @@ export default function TabLayout() {
     );
   }
 
-  const isScreeningComplete = (!!appUser?.screeningComplete) && latestTriage?.level !== "force_retest";
+  const isScreeningComplete = (!!appUser?.screeningComplete) && !safetyStatus?.forceRetest;
 
   return (
     <Tabs

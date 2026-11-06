@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { expect, test, describe } from "vitest";
+import { expect, test, describe, vi, beforeAll, afterAll } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";
 import { assignAllPatientsToCounsellors } from "../test-utils/identity";
@@ -8,6 +8,16 @@ import type { Id } from "./_generated/dataModel";
 import { sanitizePlainText } from "./sanitizer";
 
 const modules = import.meta.glob("./**/*.ts");
+
+// Appointment fixtures use fixed October 2026 dates. Requests must not be in the past, so the
+// clock is pinned to the date these fixtures were written for (only Date is faked).
+beforeAll(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-10-05T09:00:00Z"));
+});
+afterAll(() => {
+  vi.useRealTimers();
+});
 
 describe("P14 Step 4: P2 Security & Performance Hardening Suite", () => {
   async function setupSecurityEnvironment() {

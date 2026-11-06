@@ -19,6 +19,7 @@ import { useLanguage } from "@/context/LanguageContext";
 import { useVoice } from "@/context/VoiceContext";
 import { VoiceSettingsModal } from "@/components/voice/VoiceSettingsModal";
 import { EmotyPreferencesSection } from "@/components/profile/EmotyPreferencesSection";
+import { MyCounsellorSection } from "@/components/profile/MyCounsellorSection";
 import { CRISIS_RESOURCES, HELPLINE_DIAL_URL, EMERGENCY_DIAL_URL } from "@/common/crisisResources";
 
 const { width } = Dimensions.get('window');
@@ -33,10 +34,11 @@ export default function ProfileScreen() {
   const styles = useStyles(stylesFactory);
 
   const dbUser = useQuery(api.users.getByClerkId, isReady && userId ? { clerkId: userId } : "skip");
-  const exportScreenings = useQuery(api.screening.getAll, isReady && userId ? { userId: userId } : "skip");
+  // Own questionnaire totals for the personal data export (no ids, triage or flags).
+  const exportScreenings = useQuery(api.screening.exportMyScreenings, isReady ? {} : "skip");
 
   const { t, language, setLanguage, supportedLanguages, activeLanguageOption } = useLanguage();
-  const { avatarName, avatarGender, setMitraPreferences } = useAvatar();
+  const { avatarName, avatarGender, setEmotyPreferences } = useAvatar();
   const { voiceEnabled, setVoiceEnabled, selectedVoice } = useVoice();
   const [showRenameModal, setShowRenameModal] = useState(false);
   const [showLanguageModal, setShowLanguageModal] = useState(false);
@@ -131,7 +133,7 @@ export default function ProfileScreen() {
     }
     const finalGender: AvatarGender = selectedGender === "male" ? "male" : "female";
     try {
-      await setMitraPreferences({
+      await setEmotyPreferences({
         name: trimmed,
         avatarGender: finalGender,
       });
@@ -233,9 +235,9 @@ export default function ProfileScreen() {
     try {
       const csvRows = [];
       csvRows.push("Screening Data");
-      csvRows.push("UserID,PHQ9,GAD7,PQ16,WSAS,ReQoL10,Item9,Date");
-      exportScreenings.forEach((s: any) => {
-        csvRows.push(`${userId},${s.phq9_total},${s.gad7_total},${s.pq16_total},${s.wsas_total},${s.reqol10_total},${s.phq9_item9_score},${new Date(s.createdAt).toISOString()}`);
+      csvRows.push("UserID,PHQ9,GAD7,PQ16,Item9,Date");
+      exportScreenings.forEach((s) => {
+        csvRows.push(`${userId},${s.phq9Total},${s.gad7Total},${s.pq16Total},${s.phq9Item9},${new Date(s.completedAt).toISOString()}`);
       });
       csvRows.push("");
 
@@ -281,7 +283,7 @@ export default function ProfileScreen() {
         style={StyleSheet.absoluteFill}
       />
 
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={[styles.content, { paddingBottom: 160 }]} showsVerticalScrollIndicator={false}>
         {/* Signature Header */}
         <View style={styles.header}>
           <View style={styles.avatarWrapper}>
@@ -362,7 +364,7 @@ export default function ProfileScreen() {
               <TouchableOpacity
                 onPress={() => {
                   setSelectedGender(avatarGender || "female");
-                  setNewCompanionName(avatarName || "Mitra");
+                  setNewCompanionName(avatarName || "Emoty");
                   setShowRenameModal(true);
                 }}
                 style={{
@@ -438,6 +440,9 @@ export default function ProfileScreen() {
         {/* Emoty Personalization & Preferences Section */}
         <EmotyPreferencesSection isReady={isReady} />
 
+        {/* My Counsellor: the student's assigned counsellor (live, read-only) */}
+        <MyCounsellorSection isReady={isReady} />
+
         {/* Account Details Section */}
         <View style={styles.section}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: Theme.spacing.md }}>
@@ -484,8 +489,9 @@ export default function ProfileScreen() {
             <View style={styles.divider} />
             <DetailRow
               icon="call-outline"
-              label={t("profile.emergencyContactLabel")}
-              value={dbUser.emergencyContactName ? `${dbUser.emergencyContactName}${dbUser.emergencyContactPhone ? ` (${dbUser.emergencyContactPhone})` : ''}` : "-"}
+              label={t("profile.emergencyContact")}
+              value={dbUser.emergencyContactName || "-"}
+              subValue={dbUser.emergencyContactPhone || undefined}
               colors={colors}
               styles={styles}
             />
@@ -600,7 +606,7 @@ export default function ProfileScreen() {
           icon={<Ionicons name="log-out-outline" size={20} color={colors.error} />}
         />
 
-        <View style={{ height: 120 }} />
+        <View style={{ height: 20 }} />
       </ScrollView>
 
       {/* CUSTOMIZE COMPANION MODAL */}
@@ -1028,14 +1034,39 @@ function IdentityCard({ icon, label, color, traits, value, loading, styles }: an
   );
 }
 
-function DetailRow({ icon, label, value, colors, styles }: { icon: any; label: string; value: string; colors: any; styles: any }) {
+function DetailRow({
+  icon,
+  label,
+  value,
+  subValue,
+  colors,
+  styles,
+}: {
+  icon: any;
+  label: string;
+  value: string;
+  subValue?: string;
+  colors: any;
+  styles: any;
+}) {
   return (
     <View style={styles.row}>
       <View style={styles.rowLeft}>
         <Ionicons name={icon} size={18} color={colors.textSecondary} style={styles.icon} />
-        <Text style={styles.label}>{label}</Text>
+        <Text style={styles.label} numberOfLines={1}>
+          {label}
+        </Text>
       </View>
-      <Text style={styles.value}>{value}</Text>
+      <View style={styles.rowRight}>
+        <Text style={styles.value} numberOfLines={1}>
+          {value}
+        </Text>
+        {subValue ? (
+          <Text style={styles.subValue} numberOfLines={1}>
+            {subValue}
+          </Text>
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -1202,11 +1233,20 @@ function stylesFactory(colors: any) {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    padding: 14,
+    paddingVertical: 13,
+    paddingHorizontal: 14,
+    gap: 12,
   } as ViewStyle,
   rowLeft: {
     flexDirection: "row",
     alignItems: "center",
+    flexShrink: 0,
+    maxWidth: "52%",
+  } as ViewStyle,
+  rowRight: {
+    alignItems: "flex-end",
+    justifyContent: "center",
+    flex: 1,
   } as ViewStyle,
   icon: {
     marginRight: 12,
@@ -1220,6 +1260,14 @@ function stylesFactory(colors: any) {
     fontFamily: Theme.fontFamily.bold,
     fontSize: 14,
     color: colors.textSecondary,
+    textAlign: "right",
+  } as TextStyle,
+  subValue: {
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: 12,
+    color: colors.textMuted,
+    marginTop: 2,
+    textAlign: "right",
   } as TextStyle,
   divider: {
     height: 1,

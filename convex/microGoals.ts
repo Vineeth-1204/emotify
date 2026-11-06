@@ -1,5 +1,5 @@
-import { v, ConvexError } from "convex/values";
-import { internalMutation } from "./_generated/server";
+import { v, ConvexError, type ObjectType } from "convex/values";
+import { internalMutation, type QueryCtx, type MutationCtx } from "./_generated/server";
 import { mutation, query } from "./functions";
 import { checkRateLimit } from "./rateLimiter";
 import { logAuditEvent } from "./audit";
@@ -20,6 +20,17 @@ import {
 
 export type { GoalTemplate };
 export { TEMPLATES, ROUTINE_HABIT_CATALOG };
+
+import {
+  selectDailyMicroGoals,
+  SYMPTOM_DEFINITIONS,
+  MICROGOALS_CATALOGUE,
+  COMPLETION_REINFORCEMENTS,
+  GENTLE_NUDGES,
+  WEEKLY_MODELING_MESSAGES,
+  type StudentGoalHistoryItem,
+} from "../common/symptomMicroGoals";
+import { insertSafetyAlert } from "./alerts";
 
 
 // ==========================================
@@ -366,28 +377,41 @@ export const getWeeklySummary = query({
   args: { userId: v.optional(v.string()) },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return { completedCount: 0, pointsEarned: 0, completionRate: 0, totalCount: 0 };
-    const userId = identity.subject;
+    if (!identity) return { completedCount: 0, pointsEarned: 0, completionRate: 0, totalCount: 0, skippedCount: 0, avgIntensityDrop: 0, reflectionMessage: "" };
+    const targetUserId = args.userId || identity.subject;
+
+    await assertCanAccessStudent(ctx, targetUserId);
 
     const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
 
     const allGoals = await ctx.db
       .query("microGoals")
-      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .withIndex("by_userId", (q) => q.eq("userId", targetUserId))
       .collect();
 
     const recentGoals = allGoals.filter((g) => g.createdAt >= sevenDaysAgo);
     const completed = recentGoals.filter((g) => g.completed);
+    const skipped = recentGoals.filter((g) => g.skipped);
 
-    const pointsEarned = completed.reduce((sum, g) => sum + (g.xpAwarded || g.points), 0);
+    const pointsEarned = completed.reduce((sum, g) => sum + (g.points || g.xpAwarded || 1), 0);
     const totalCount = recentGoals.length;
     const completionRate = totalCount > 0 ? (completed.length / totalCount) * 100 : 0;
 
+    const drops = completed.map((g) => g.intensityDrop).filter((d): d is number => typeof d === "number");
+    const avgIntensityDrop = drops.length > 0 ? Number((drops.reduce((a, b) => a + b, 0) / drops.length).toFixed(1)) : 0;
+
+    const reflectionMessage = completed.length > 0
+      ? `This week you tried ${completed.length} calm activities and earned ${pointsEarned} Calm Points! Here's how your mood and worry have been trending. 📈`
+      : "Start your calm journey with one small step today.";
+
     return {
       completedCount: completed.length,
+      skippedCount: skipped.length,
       pointsEarned,
       completionRate,
       totalCount,
+      avgIntensityDrop,
+      reflectionMessage,
     };
   },
 });
@@ -687,7 +711,7 @@ export const snoozeGoal = mutation({
 
 async function completeGoalWithFeelingHelper(
   ctx: any,
-  args: { id: Id<"microGoals">; feelingAfter: string; dateStr?: string }
+  args: { id: Id<"microGoals">; feelingAfter: string; dateStr?: string; postIntensity?: number }
 ) {
   const identity = await ctx.auth.getUserIdentity();
   if (!identity) throw new Error("Unauthenticated");
@@ -700,13 +724,22 @@ async function completeGoalWithFeelingHelper(
     throw new Error("Unauthorized");
   }
 
-  if (goal.completed) return { success: false, message: "Goal already completed." };
+  if (goal.completed) return { success: false, message: "Goal already completed.", alreadyCompleted: true };
 
-  // 1. Mark complete & save feeling
+  const postInt = args.postIntensity;
+  const preInt = goal.preIntensity;
+  let intensityDrop: number | undefined = undefined;
+  if (typeof postInt === "number" && typeof preInt === "number") {
+    intensityDrop = preInt - postInt;
+  }
+
+  // 1. Mark complete & save feeling & pre/post intensity
   await ctx.db.patch(args.id, {
     completed: true,
     completedAt: Date.now(),
     feelingAfter: args.feelingAfter,
+    postIntensity: postInt,
+    intensityDrop,
     reminderStatus: "completed",
   });
 
@@ -918,6 +951,7 @@ export const completeGoalWithFeeling = mutation({
     id: v.id("microGoals"),
     feelingAfter: v.string(),
     dateStr: v.optional(v.string()),
+    postIntensity: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     return await completeGoalWithFeelingHelper(ctx, args);
@@ -1094,123 +1128,219 @@ export const markComplete = mutation({
 });
 
 // ==========================================
-// 6. PHASE 4: MITRA-LED MICROGOAL ORCHESTRATION
+// 6. PHASE 4: EMOTY-LED MICROGOAL ORCHESTRATION
 // ==========================================
 
-export const getMitraSuggestedGoal = query({
-  args: {
-    dateStr: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return null;
-    const userId = identity.subject;
+const getEmotySuggestedGoalArgs = {
+  dateStr: v.optional(v.string()),
+};
 
-    const todayStr =
-      args.dateStr && isValidCheckinDateStr(args.dateStr)
-        ? args.dateStr
-        : new Date().toISOString().split("T")[0];
+async function getEmotySuggestedGoalHandler(ctx: QueryCtx, args: ObjectType<typeof getEmotySuggestedGoalArgs>) {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) return null;
+  const userId = identity.subject;
 
-    let startOfDay: number;
-    let endOfDay: number;
-    if (todayStr && isValidCheckinDateStr(todayStr)) {
-      const [y, m, d] = todayStr.split("-").map(Number);
-      startOfDay = new Date(y, m - 1, d, 0, 0, 0, 0).getTime();
-      endOfDay = startOfDay + 24 * 60 * 60 * 1000;
-    } else {
-      const now = new Date();
-      startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-      endOfDay = startOfDay + 24 * 60 * 60 * 1000;
-    }
+  const todayStr =
+    args.dateStr && isValidCheckinDateStr(args.dateStr)
+      ? args.dateStr
+      : new Date().toISOString().split("T")[0];
 
-    const allUserGoals = await ctx.db
-      .query("microGoals")
-      .withIndex("by_userId", (q) => q.eq("userId", userId))
-      .collect();
+  let startOfDay: number;
+  let endOfDay: number;
+  if (todayStr && isValidCheckinDateStr(todayStr)) {
+    const [y, m, d] = todayStr.split("-").map(Number);
+    startOfDay = new Date(y, m - 1, d, 0, 0, 0, 0).getTime();
+    endOfDay = startOfDay + 24 * 60 * 60 * 1000;
+  } else {
+    const now = new Date();
+    startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    endOfDay = startOfDay + 24 * 60 * 60 * 1000;
+  }
 
-    const todayGoals = allUserGoals.filter((g) => (args.dateStr ? g.date === todayStr : (g.createdAt >= startOfDay && g.createdAt < endOfDay)));
+  const allUserGoals = await ctx.db
+    .query("microGoals")
+    .withIndex("by_userId", (q) => q.eq("userId", userId))
+    .collect();
 
-    // 1. If an active uncompleted and unskipped goal exists for today in DB:
-    const activeGoal = todayGoals.find((g) => !g.completed && !g.skipped);
-    if (activeGoal) {
-      return {
-        persisted: true,
-        _id: activeGoal._id,
-        goalId: activeGoal.goalId || (activeGoal as any).id || "water",
-        goalTitle: activeGoal.goalTitle || (activeGoal as any).goal || "Drink a glass of water",
-        goalDescription: activeGoal.goalDescription || "",
-        category: activeGoal.category,
-        difficulty: activeGoal.difficulty,
-        points: activeGoal.points || activeGoal.xpAwarded || 10,
-        completed: false,
-        skipped: false,
-        status: "active" as const,
-      };
-    }
+  const todayGoals = allUserGoals.filter((g) => (args.dateStr ? g.date === todayStr : (g.createdAt >= startOfDay && g.createdAt < endOfDay)));
 
-    // 2. If all today's goals are completed:
-    const completedGoals = todayGoals.filter((g) => g.completed);
-    if (todayGoals.length > 0 && completedGoals.length === todayGoals.length) {
-      const lastCompleted = completedGoals[completedGoals.length - 1];
-      return {
-        persisted: true,
-        _id: lastCompleted._id,
-        goalId: lastCompleted.goalId || (lastCompleted as any).id || "water",
-        goalTitle: lastCompleted.goalTitle || (lastCompleted as any).goal || "Drink a glass of water",
-        goalDescription: lastCompleted.goalDescription || "",
-        category: lastCompleted.category,
-        difficulty: lastCompleted.difficulty,
-        points: lastCompleted.points || lastCompleted.xpAwarded || 10,
-        completed: true,
-        skipped: false,
-        status: "all_completed" as const,
-      };
-    }
-
-    // 3. Otherwise, deterministically select today's small routine goal from the catalog:
-    const assignedHistory: AssignedGoalRecord[] = allUserGoals.map((g: any) => ({
-      goalId: g.goalId || g.id,
-      createdAt: g.createdAt,
-      date: g.date,
-    }));
-
-    const { selectedSmall } = selectDailyRoutineGoalsDeterministically({
-      userId,
-      dateStr: todayStr,
-      assignedHistory,
-      cooldownDays: 7,
-    });
-
-    const template = selectedSmall[0];
-    if (!template) return null;
-
+  // 1. If an active uncompleted and unskipped goal exists for today in DB:
+  const activeGoal = todayGoals.find((g) => !g.completed && !g.skipped);
+  if (activeGoal) {
     return {
-      persisted: false,
-      goalId: template.id,
-      goalTitle: template.title,
-      goalDescription: template.description,
-      category: template.category,
-      difficulty: template.difficulty,
-      points: template.points,
-      whyItHelps: template.whyItHelps,
-      estimatedTime: template.estimatedTime,
+      persisted: true,
+      _id: activeGoal._id,
+      goalId: activeGoal.goalId || (activeGoal as any).id || "water",
+      goalTitle: activeGoal.goalTitle || (activeGoal as any).goal || "Drink a glass of water",
+      goalDescription: activeGoal.goalDescription || "",
+      category: activeGoal.category,
+      difficulty: activeGoal.difficulty,
+      points: activeGoal.points || activeGoal.xpAwarded || 10,
       completed: false,
       skipped: false,
-      status: "suggested" as const,
+      status: "active" as const,
     };
-  },
-});
+  }
 
-export const acceptMitraGoal = mutation({
-  args: {
-    goalId: v.optional(v.string()),
-    dateStr: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new ConvexError("Unauthenticated");
-    const userId = identity.subject;
+  // 2. If all today's goals are completed:
+  const completedGoals = todayGoals.filter((g) => g.completed);
+  if (todayGoals.length > 0 && completedGoals.length === todayGoals.length) {
+    const lastCompleted = completedGoals[completedGoals.length - 1];
+    return {
+      persisted: true,
+      _id: lastCompleted._id,
+      goalId: lastCompleted.goalId || (lastCompleted as any).id || "water",
+      goalTitle: lastCompleted.goalTitle || (lastCompleted as any).goal || "Drink a glass of water",
+      goalDescription: lastCompleted.goalDescription || "",
+      category: lastCompleted.category,
+      difficulty: lastCompleted.difficulty,
+      points: lastCompleted.points || lastCompleted.xpAwarded || 10,
+      completed: true,
+      skipped: false,
+      status: "all_completed" as const,
+    };
+  }
 
+  // 3. Otherwise, deterministically select today's small routine goal from the catalog:
+  const assignedHistory: AssignedGoalRecord[] = allUserGoals.map((g: any) => ({
+    goalId: g.goalId || g.id,
+    createdAt: g.createdAt,
+    date: g.date,
+  }));
+
+  const { selectedSmall } = selectDailyRoutineGoalsDeterministically({
+    userId,
+    dateStr: todayStr,
+    assignedHistory,
+    cooldownDays: 7,
+  });
+
+  const template = selectedSmall[0];
+  if (!template) return null;
+
+  return {
+    persisted: false,
+    goalId: template.id,
+    goalTitle: template.title,
+    goalDescription: template.description,
+    category: template.category,
+    difficulty: template.difficulty,
+    points: template.points,
+    whyItHelps: template.whyItHelps,
+    estimatedTime: template.estimatedTime,
+    completed: false,
+    skipped: false,
+    status: "suggested" as const,
+  };
+}
+
+export const getEmotySuggestedGoal = query({ args: getEmotySuggestedGoalArgs, handler: getEmotySuggestedGoalHandler });
+
+/** @deprecated Pre-Emoty name kept so installed app versions keep working. Remove once every client uses `getEmotySuggestedGoal`. */
+export const getMitraSuggestedGoal = query({ args: getEmotySuggestedGoalArgs, handler: getEmotySuggestedGoalHandler });
+
+const acceptEmotyGoalArgs = {
+  goalId: v.optional(v.string()),
+  dateStr: v.optional(v.string()),
+};
+
+async function acceptEmotyGoalHandler(ctx: MutationCtx, args: ObjectType<typeof acceptEmotyGoalArgs>) {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) throw new ConvexError("Unauthenticated");
+  const userId = identity.subject;
+
+  const todayStr =
+    args.dateStr && isValidCheckinDateStr(args.dateStr)
+      ? args.dateStr
+      : new Date().toISOString().split("T")[0];
+
+  let startOfDay: number;
+  let endOfDay: number;
+  if (todayStr && isValidCheckinDateStr(todayStr)) {
+    const [y, m, d] = todayStr.split("-").map(Number);
+    startOfDay = new Date(y, m - 1, d, 0, 0, 0, 0).getTime();
+    endOfDay = startOfDay + 24 * 60 * 60 * 1000;
+  } else {
+    const now = new Date();
+    startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    endOfDay = startOfDay + 24 * 60 * 60 * 1000;
+  }
+
+  const allUserGoals = await ctx.db
+    .query("microGoals")
+    .withIndex("by_userId", (q) => q.eq("userId", userId))
+    .collect();
+
+  const todayGoals = allUserGoals.filter((g) => (args.dateStr ? g.date === todayStr : (g.createdAt >= startOfDay && g.createdAt < endOfDay)));
+
+  // If a matching goal is already in DB for today:
+  if (args.goalId) {
+    const existingMatch = todayGoals.find((g: any) => (g.goalId === args.goalId || g._id === args.goalId) && !g.completed && !g.skipped);
+    if (existingMatch) {
+      return {
+        id: existingMatch._id,
+        goalId: existingMatch.goalId,
+        goalTitle: existingMatch.goalTitle,
+        goalDescription: existingMatch.goalDescription,
+        points: existingMatch.points,
+        category: existingMatch.category,
+      };
+    }
+  }
+
+  // If any active uncompleted goal exists:
+  const activeGoal = todayGoals.find((g: any) => !g.completed && !g.skipped);
+  if (activeGoal) {
+    return {
+      id: activeGoal._id,
+      goalId: activeGoal.goalId,
+      goalTitle: activeGoal.goalTitle,
+      goalDescription: activeGoal.goalDescription,
+      points: activeGoal.points,
+      category: activeGoal.category,
+    };
+  }
+
+  // Otherwise, generate today's standard recommended goals via existing deterministic engine:
+  const insertedIds = await generateRecommendedGoals(ctx, userId, "okay", todayStr);
+  const firstGoal = (await ctx.db.get(insertedIds[0])) as any;
+  if (!firstGoal) throw new ConvexError("Failed to initialize recommended goal");
+  return {
+    id: firstGoal._id,
+    goalId: firstGoal.goalId,
+    goalTitle: firstGoal.goalTitle,
+    goalDescription: firstGoal.goalDescription,
+    points: firstGoal.points,
+    category: firstGoal.category,
+  };
+}
+
+export const acceptEmotyGoal = mutation({ args: acceptEmotyGoalArgs, handler: acceptEmotyGoalHandler });
+
+/** @deprecated Pre-Emoty name kept so installed app versions keep working. Remove once every client uses `acceptEmotyGoal`. */
+export const acceptMitraGoal = mutation({ args: acceptEmotyGoalArgs, handler: acceptEmotyGoalHandler });
+
+const skipEmotyGoalArgs = {
+  id: v.optional(v.id("microGoals")),
+  goalId: v.optional(v.string()),
+  dateStr: v.optional(v.string()),
+};
+
+async function skipEmotyGoalHandler(ctx: MutationCtx, args: ObjectType<typeof skipEmotyGoalArgs>) {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) throw new ConvexError("Unauthenticated");
+  const userId = identity.subject;
+
+  if (args.id) {
+    const goal = await ctx.db.get(args.id);
+    if (!goal) throw new ConvexError("Goal not found");
+    if (goal.userId !== userId) throw new ConvexError("Unauthorized");
+    await ctx.db.patch(args.id, { skipped: true, reminderStatus: "missed" });
+    return { success: true, message: "No problem. We can try something else later." };
+  }
+
+  // If goal is referenced by goalId
+  if (args.goalId) {
     const todayStr =
       args.dateStr && isValidCheckinDateStr(args.dateStr)
         ? args.dateStr
@@ -1233,103 +1363,411 @@ export const acceptMitraGoal = mutation({
       .withIndex("by_userId", (q) => q.eq("userId", userId))
       .collect();
 
-    const todayGoals = allUserGoals.filter((g) => (args.dateStr ? g.date === todayStr : (g.createdAt >= startOfDay && g.createdAt < endOfDay)));
-
-    // If a matching goal is already in DB for today:
-    if (args.goalId) {
-      const existingMatch = todayGoals.find((g: any) => (g.goalId === args.goalId || g._id === args.goalId) && !g.completed && !g.skipped);
-      if (existingMatch) {
-        return {
-          id: existingMatch._id,
-          goalId: existingMatch.goalId,
-          goalTitle: existingMatch.goalTitle,
-          goalDescription: existingMatch.goalDescription,
-          points: existingMatch.points,
-          category: existingMatch.category,
-        };
-      }
+    const todayGoals = allUserGoals.filter((g) => g.createdAt >= startOfDay && g.createdAt < endOfDay);
+    const match = todayGoals.find((g: any) => g.goalId === args.goalId && !g.completed && !g.skipped);
+    if (match) {
+      if (match.userId !== userId) throw new ConvexError("Unauthorized");
+      await ctx.db.patch(match._id, { skipped: true, reminderStatus: "missed" });
     }
+  }
 
-    // If any active uncompleted goal exists:
-    const activeGoal = todayGoals.find((g: any) => !g.completed && !g.skipped);
-    if (activeGoal) {
+  return { success: true, message: "No problem. We can try something else later." };
+}
+
+export const skipEmotyGoal = mutation({ args: skipEmotyGoalArgs, handler: skipEmotyGoalHandler });
+
+/** @deprecated Pre-Emoty name kept so installed app versions keep working. Remove once every client uses `skipEmotyGoal`. */
+export const skipMitraGoal = mutation({ args: skipEmotyGoalArgs, handler: skipEmotyGoalHandler });
+
+// ==========================================
+// 6. PHASE 6: SYMPTOM-BASED MICROGOAL ENGINE
+// ==========================================
+
+export async function getStudentSymptomProfile(ctx: any, userId: string): Promise<{
+  symptoms: Array<{ key: string; score: number }>;
+  todaySeverityAnchor: string;
+}> {
+  const latestAttempt = await ctx.db
+    .query("screeningAttempts")
+    .withIndex("by_userId", (q: any) => q.eq("userId", userId))
+    .order("desc")
+    .first();
+
+  const symptoms: Array<{ key: string; score: number }> = [];
+
+  if (latestAttempt && latestAttempt.responses) {
+    const phq = latestAttempt.responses.phq9 || {};
+    const gad = latestAttempt.responses.gad7 || {};
+
+    const getVal = (record: Record<string, number>, keyNum: number) => {
+      return record[String(keyNum)] ?? record[`q${keyNum}`] ?? record[`phq9_q${keyNum}`] ?? record[`gad7_q${keyNum}`] ?? 0;
+    };
+
+    symptoms.push({ key: "low_interest", score: getVal(phq, 1) });
+    symptoms.push({ key: "low_mood", score: getVal(phq, 2) });
+    symptoms.push({ key: "sleep_difficulties", score: getVal(phq, 3) });
+    symptoms.push({ key: "fatigue", score: getVal(phq, 4) });
+    symptoms.push({ key: "appetite_changes", score: getVal(phq, 5) });
+    symptoms.push({ key: "low_self_esteem", score: getVal(phq, 6) });
+    symptoms.push({ key: "concentration_difficulties", score: getVal(phq, 7) });
+    symptoms.push({ key: "restlessness_slowed", score: getVal(phq, 8) });
+    symptoms.push({ key: "self_harm", score: getVal(phq, 9) });
+
+    symptoms.push({ key: "nervousness", score: getVal(gad, 1) });
+    symptoms.push({ key: "uncontrollable_worry", score: getVal(gad, 2) });
+    symptoms.push({ key: "excessive_worry", score: getVal(gad, 3) });
+    symptoms.push({ key: "trouble_relaxing", score: getVal(gad, 4) });
+    symptoms.push({ key: "restlessness", score: getVal(gad, 5) });
+    symptoms.push({ key: "irritability", score: getVal(gad, 6) });
+    symptoms.push({ key: "fear", score: getVal(gad, 7) });
+  }
+
+  const recentEmotion = await ctx.db
+    .query("emotionLogs")
+    .withIndex("by_userId", (q: any) => q.eq("userId", userId))
+    .order("desc")
+    .first();
+
+  let todaySeverityAnchor = "Some";
+  if (recentEmotion) {
+    if (recentEmotion.preIntensity) {
+      todaySeverityAnchor =
+        recentEmotion.preIntensity >= 7 ? "Overwhelming" : recentEmotion.preIntensity >= 5 ? "A lot" : recentEmotion.preIntensity >= 3 ? "Some" : "A little";
+    }
+    const emotionStr = (recentEmotion.emotion || recentEmotion.strongestEmotion || "").toLowerCase();
+    if (emotionStr.includes("lonel")) symptoms.push({ key: "loneliness", score: 3 });
+    if (emotionStr.includes("burnout") || emotionStr.includes("exhaust")) symptoms.push({ key: "burnout", score: 3 });
+    if (emotionStr.includes("study") || emotionStr.includes("exam") || emotionStr.includes("academic")) symptoms.push({ key: "academic_stress", score: 3 });
+    if (emotionStr.includes("hopeless")) symptoms.push({ key: "hopelessness", score: 3 });
+  }
+
+  const todayStr = new Date().toISOString().split("T")[0];
+  const todayCheckin = await ctx.db
+    .query("dailyCheckins")
+    .withIndex("by_userId_and_dateStr", (q: any) => q.eq("userId", userId).eq("dateStr", todayStr))
+    .first();
+
+  if (todayCheckin) {
+    const m = todayCheckin.mood.toLowerCase();
+    if (m === "low" || m === "sad") symptoms.push({ key: "low_mood", score: 2 });
+    if (m === "stressed" || m === "worried") symptoms.push({ key: "nervousness", score: 2 });
+    if (m === "tired") symptoms.push({ key: "fatigue", score: 2 });
+    if (m === "frustrated") symptoms.push({ key: "irritability", score: 2 });
+  }
+
+  if (symptoms.length === 0) {
+    symptoms.push({ key: "low_mood", score: 1 });
+    symptoms.push({ key: "nervousness", score: 1 });
+  }
+
+  return { symptoms, todaySeverityAnchor };
+}
+
+/**
+ * Generate 3 personalized Symptom-Based MicroGoals (Must Do, Feel Better, Grow Stronger).
+ * Enforces server-side limit of strictly max 3 goals per day per student.
+ */
+export const generateSymptomMicroGoals = mutation({
+  args: {
+    userId: v.optional(v.string()),
+    dateStr: v.optional(v.string()),
+    intensityAnchor: v.optional(v.string()),
+    forceRegenerate: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new ConvexError("Unauthenticated");
+    const targetUserId = args.userId || identity.subject;
+    await assertCanAccessStudent(ctx, targetUserId);
+
+    const todayStr = args.dateStr && isValidCheckinDateStr(args.dateStr) ? args.dateStr : new Date().toISOString().split("T")[0];
+
+    // Enforce 3-goal daily limit server-side
+    const allUserGoals = await ctx.db
+      .query("microGoals")
+      .withIndex("by_userId", (q) => q.eq("userId", targetUserId))
+      .collect();
+
+    const todayGoals = allUserGoals.filter((g) => g.date === todayStr);
+
+    if (todayGoals.length >= 3 && !args.forceRegenerate) {
       return {
-        id: activeGoal._id,
-        goalId: activeGoal.goalId,
-        goalTitle: activeGoal.goalTitle,
-        goalDescription: activeGoal.goalDescription,
-        points: activeGoal.points,
-        category: activeGoal.category,
+        alreadyGenerated: true,
+        safetyOverride: false,
+        goals: todayGoals.slice(0, 3),
       };
     }
 
-    // Otherwise, generate today's standard recommended goals via existing deterministic engine:
-    const insertedIds = await generateRecommendedGoals(ctx, userId, "okay", todayStr);
-    const firstGoal = (await ctx.db.get(insertedIds[0])) as any;
-    if (!firstGoal) throw new ConvexError("Failed to initialize recommended goal");
+    const { symptoms, todaySeverityAnchor } = await getStudentSymptomProfile(ctx, targetUserId);
+    const anchor = args.intensityAnchor || todaySeverityAnchor;
+
+    const history: StudentGoalHistoryItem[] = allUserGoals.map((g) => ({
+      goalId: g.goalId,
+      createdAt: g.createdAt,
+      completed: !!g.completed,
+      skipped: !!g.skipped,
+      preIntensity: g.preIntensity,
+      postIntensity: g.postIntensity,
+      intensityDrop: g.intensityDrop,
+    }));
+
+    const dateHash = todayStr.split("-").reduce((acc, part) => acc + Number(part), 0);
+
+    const selection = selectDailyMicroGoals({
+      studentId: targetUserId,
+      symptoms,
+      todaySeverityAnchor: anchor,
+      history,
+      cooldownDays: 3,
+      explorationRate: 0.10,
+      daySeed: dateHash,
+    });
+
+    if (selection.safetyOverride) {
+      return {
+        safetyOverride: true,
+        dialogueMessage: selection.dialogueMessage,
+        goals: [],
+      };
+    }
+
+    if (selection.hopelessnessAlertTriggered) {
+      await insertSafetyAlert(ctx, {
+        userId: targetUserId,
+        type: "hopelessness",
+        source: "system",
+      });
+    }
+
+    if (args.forceRegenerate) {
+      for (const g of todayGoals.filter((g) => !g.completed && !g.skipped)) {
+        await ctx.db.delete(g._id);
+      }
+    }
+
+    const preIntensityVal = anchor === "Overwhelming" ? 8 : anchor === "A lot" ? 6 : anchor === "Some" ? 4 : 2;
+
+    const insertedGoals = [];
+    for (const res of selection.selectedGoals) {
+      const id = await ctx.db.insert("microGoals", {
+        userId: targetUserId,
+        goalId: res.goal.id,
+        goalTitle: res.goal.title,
+        goalDescription: res.goal.description,
+        category: res.goal.category,
+        difficulty: res.goal.difficulty || "easy",
+        points: 1, // +1 Calm Point standard
+        completed: false,
+        skipped: false,
+        createdAt: Date.now(),
+        slot: res.slot,
+        symptomCategory: res.symptomKey,
+        intensityGroup: res.intensityGroup,
+        dialogueMessage: res.dialogue,
+        date: todayStr,
+        sourceType: "symptom_engine",
+        preIntensity: preIntensityVal,
+        reminderStatus: "scheduled",
+        snoozeCount: 0,
+        xpAwarded: 1,
+        coinsAwarded: 1,
+      });
+      const inserted = await ctx.db.get(id);
+      insertedGoals.push(inserted);
+    }
+
     return {
-      id: firstGoal._id,
-      goalId: firstGoal.goalId,
-      goalTitle: firstGoal.goalTitle,
-      goalDescription: firstGoal.goalDescription,
-      points: firstGoal.points,
-      category: firstGoal.category,
+      safetyOverride: false,
+      dialogueMessage: selection.dialogueMessage,
+      goals: insertedGoals,
     };
   },
 });
 
-export const skipMitraGoal = mutation({
+/**
+ * Retrieve today's 3 Symptom-Based MicroGoals.
+ */
+export const getTodaySymptomGoals = query({
   args: {
-    id: v.optional(v.id("microGoals")),
-    goalId: v.optional(v.string()),
+    userId: v.optional(v.string()),
     dateStr: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return { goals: [], safetyOverride: false, dialogueMessage: "" };
+    const targetUserId = args.userId || identity.subject;
+    await assertCanAccessStudent(ctx, targetUserId);
+
+    const todayStr = args.dateStr && isValidCheckinDateStr(args.dateStr) ? args.dateStr : new Date().toISOString().split("T")[0];
+
+    // Check if safety override applies
+    const { symptoms } = await getStudentSymptomProfile(ctx, targetUserId);
+    const selfHarm = symptoms.find((s) => s.key === "self_harm" && s.score > 0);
+    if (selfHarm) {
+      return {
+        goals: [],
+        safetyOverride: true,
+        dialogueMessage: SYMPTOM_DEFINITIONS.self_harm.dialogue,
+      };
+    }
+
+    const allGoals = await ctx.db
+      .query("microGoals")
+      .withIndex("by_userId", (q) => q.eq("userId", targetUserId))
+      .collect();
+
+    const todayGoals = allGoals.filter((g) => g.date === todayStr);
+    const primaryDialogue = todayGoals.find((g) => g.dialogueMessage)?.dialogueMessage || "";
+
+    return {
+      goals: todayGoals.slice(0, 3),
+      safetyOverride: false,
+      dialogueMessage: primaryDialogue,
+    };
+  },
+});
+
+/**
+ * Complete a Symptom MicroGoal with post-intensity and feeling.
+ * Idempotent: Awards +1 Calm Point once.
+ */
+export const completeSymptomGoal = mutation({
+  args: {
+    id: v.id("microGoals"),
+    feelingAfter: v.string(),
+    postIntensity: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new ConvexError("Unauthenticated");
     const userId = identity.subject;
 
-    if (args.id) {
-      const goal = await ctx.db.get(args.id);
-      if (!goal) throw new ConvexError("Goal not found");
-      if (goal.userId !== userId) throw new ConvexError("Unauthorized");
-      await ctx.db.patch(args.id, { skipped: true, reminderStatus: "missed" });
-      return { success: true, message: "No problem. We can try something else later." };
+    const goal = await ctx.db.get(args.id);
+    if (!goal) throw new ConvexError("Goal not found");
+    if (goal.userId !== userId) throw new ConvexError("Unauthorized");
+
+    if (goal.completed) {
+      return {
+        success: true,
+        alreadyCompleted: true,
+        message: "Goal already completed.",
+        calmPointsAwarded: 0,
+      };
     }
 
-    // If goal is referenced by goalId
-    if (args.goalId) {
-      const todayStr =
-        args.dateStr && isValidCheckinDateStr(args.dateStr)
-          ? args.dateStr
-          : new Date().toISOString().split("T")[0];
-
-      let startOfDay: number;
-      let endOfDay: number;
-      if (todayStr && isValidCheckinDateStr(todayStr)) {
-        const [y, m, d] = todayStr.split("-").map(Number);
-        startOfDay = new Date(y, m - 1, d, 0, 0, 0, 0).getTime();
-        endOfDay = startOfDay + 24 * 60 * 60 * 1000;
-      } else {
-        const now = new Date();
-        startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-        endOfDay = startOfDay + 24 * 60 * 60 * 1000;
-      }
-
-      const allUserGoals = await ctx.db
-        .query("microGoals")
-        .withIndex("by_userId", (q) => q.eq("userId", userId))
-        .collect();
-
-      const todayGoals = allUserGoals.filter((g) => g.createdAt >= startOfDay && g.createdAt < endOfDay);
-      const match = todayGoals.find((g: any) => g.goalId === args.goalId && !g.completed && !g.skipped);
-      if (match) {
-        if (match.userId !== userId) throw new ConvexError("Unauthorized");
-        await ctx.db.patch(match._id, { skipped: true, reminderStatus: "missed" });
-      }
+    const preInt = goal.preIntensity ?? 5;
+    const postInt = args.postIntensity;
+    let intensityDrop: number | undefined = undefined;
+    if (typeof postInt === "number") {
+      intensityDrop = preInt - postInt;
     }
 
-    return { success: true, message: "No problem. We can try something else later." };
+    await ctx.db.patch(args.id, {
+      completed: true,
+      completedAt: Date.now(),
+      feelingAfter: args.feelingAfter,
+      postIntensity: postInt,
+      intensityDrop,
+      reminderStatus: "completed",
+    });
+
+    // Award +1 Calm Point (points table + user record)
+    const user = await ctx.db.get(userId as Id<"users">);
+    if (user) {
+      await ctx.db.patch(userId as Id<"users">, {
+        coins: (user.coins || 0) + 1,
+        xp: (user.xp || 0) + 1,
+      });
+    }
+
+    const reinforcement = COMPLETION_REINFORCEMENTS[Math.floor(Math.random() * COMPLETION_REINFORCEMENTS.length)];
+
+    await logAuditEvent(ctx, userId, "microgoal_completed", `Completed goal: ${goal.goalTitle}. +1 Calm Point.`);
+
+    return {
+      success: true,
+      calmPointsAwarded: 1,
+      intensityDrop,
+      reinforcementMessage: reinforcement,
+    };
+  },
+});
+
+/**
+ * Skip a Symptom MicroGoal penalty-free.
+ */
+export const skipSymptomGoal = mutation({
+  args: { id: v.id("microGoals") },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new ConvexError("Unauthenticated");
+    const userId = identity.subject;
+
+    const goal = await ctx.db.get(args.id);
+    if (!goal) throw new ConvexError("Goal not found");
+    if (goal.userId !== userId) throw new ConvexError("Unauthorized");
+
+    await ctx.db.patch(args.id, {
+      skipped: true,
+      reminderStatus: "missed",
+    });
+
+    const nudge = GENTLE_NUDGES[Math.floor(Math.random() * GENTLE_NUDGES.length)];
+    return {
+      success: true,
+      nudgeMessage: nudge,
+    };
+  },
+});
+
+/**
+ * Weekly MicroGoal summary with intensity trends and modeling message.
+ */
+export const getSymptomWeeklySummary = query({
+  args: { userId: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      return {
+        goalsAssigned: 0,
+        goalsCompleted: 0,
+        goalsSkipped: 0,
+        calmPointsEarned: 0,
+        avgIntensityDrop: 0,
+        reflectionMessage: "Take one small step today to begin.",
+        modelingMessage: WEEKLY_MODELING_MESSAGES[0],
+      };
+    }
+    const targetUserId = args.userId || identity.subject;
+    await assertCanAccessStudent(ctx, targetUserId);
+
+    const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const allGoals = await ctx.db
+      .query("microGoals")
+      .withIndex("by_userId", (q) => q.eq("userId", targetUserId))
+      .collect();
+
+    const recent = allGoals.filter((g) => g.createdAt >= sevenDaysAgo);
+    const completed = recent.filter((g) => g.completed);
+    const skipped = recent.filter((g) => g.skipped);
+
+    const calmPointsEarned = completed.reduce((sum, g) => sum + (g.points || 1), 0);
+    const drops = completed.map((g) => g.intensityDrop).filter((d): d is number => typeof d === "number");
+    const avgIntensityDrop = drops.length > 0 ? Number((drops.reduce((a, b) => a + b, 0) / drops.length).toFixed(1)) : 0;
+
+    const reflectionMessage = completed.length > 0
+      ? `This week you tried ${completed.length} calm activities and earned ${calmPointsEarned} Calm Points! Here's how your mood and worry have been trending. 📈`
+      : "You haven't completed any goals yet this week. No pressure — one tiny action is all it takes.";
+
+    return {
+      goalsAssigned: recent.length,
+      goalsCompleted: completed.length,
+      goalsSkipped: skipped.length,
+      calmPointsEarned,
+      avgIntensityDrop,
+      reflectionMessage,
+      modelingMessage: WEEKLY_MODELING_MESSAGES[0],
+    };
   },
 });
 

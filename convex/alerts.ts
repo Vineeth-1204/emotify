@@ -1,10 +1,12 @@
 import { v } from "convex/values";
 import { internalMutation } from "./_generated/server";
 import { mutation, query } from "./functions";
-import { assertCanAccessStudent, requireCounselorOrAdmin, getStaffRecipientsForStudent } from "./authz";
+import { internal } from "./_generated/api";
+import { assertCanAccessStudent, requireCounselorOrAdmin, getStaffRecipientsForStudent, legacySelfStudent } from "./authz";
 import type { Id } from "./_generated/dataModel";
 import { checkRateLimit } from "./rateLimiter";
 import { logAuditEvent } from "./audit";
+import { createNotification } from "./notify";
 
 const CRITICAL_ALERT_TYPES = new Set(["suicide", "suicideRisk", "psychosis", "psychosisRisk"]);
 
@@ -33,6 +35,11 @@ export async function insertSafetyAlert(
   }
 ): Promise<Id<"alerts">> {
   const now = Date.now();
+
+  // Admins plus the student's assigned counsellor (all counsellors if unassigned)
+  const staff = await getStaffRecipientsForStudent(ctx, params.userId);
+  const deliveryStatus = staff.length > 0 ? "delivered" : "no_active_staff";
+
   const alertId = await ctx.db.insert("alerts", {
     userId: params.userId,
     type: params.type,
@@ -42,6 +49,9 @@ export async function insertSafetyAlert(
     sourceId: params.sourceId,
     attemptId: params.attemptId,
     triageId: params.triageId,
+    deliveryStatus,
+    notifiedStaffCount: staff.length,
+    deliveryFailureCount: staff.length === 0 ? 1 : 0,
   });
 
   let studentLabel = "A student";
@@ -57,27 +67,51 @@ export async function insertSafetyAlert(
   const origin =
     params.source === "screening" ? "a screening" : params.source === "companion" ? "the Emoty companion" : params.source === "cbt" ? "a Think Differently (CBT) session" : "the system";
 
-  // Admins plus the student's assigned counsellor (all counsellors if unassigned)
-  const staff = await getStaffRecipientsForStudent(ctx, params.userId);
+  // In-app record for every recipient first; OS push follows with neutral lock-screen copy
+  // ("Please open Emotify to view an important update."), never the alert details.
   for (const member of staff) {
-    await ctx.db.insert("notifications", {
-      recipientId: String(member._id),
+    await createNotification(ctx, {
+      recipientId: member._id,
       type: isCritical ? "critical_risk" : "safety_alert",
       title,
       message: `${studentLabel}: ${title.toLowerCase()} via ${origin}. Review immediately.`,
       priority: isCritical ? "critical" : "high",
-      read: false,
-      archived: false,
-      createdAt: now,
+      destination: "alerts",
+      relatedId: String(alertId),
+      dedupeKey: `alert:${alertId}`,
     });
   }
 
-  console.log(`[ALERT TRIGGERED] type=${params.type} source=${params.source} notified=${staff.length}`);
+  if (staff.length === 0) {
+    await logAuditEvent(
+      ctx,
+      params.userId,
+      "alert_delivery_failure",
+      `Safety alert created but zero active staff recipients were found. alertType=${params.type} source=${params.source}`
+    );
+    console.warn(`[ALERT DELIVERY WARNING] alertId=${alertId} type=${params.type} notified=0`);
+  } else {
+    console.log(`[ALERT TRIGGERED] type=${params.type} source=${params.source} notified=${staff.length}`);
+  }
+
+  // External emergency-contact notification for critical safety events
+  if (isCritical && (ctx as any).scheduler) {
+    try {
+      await (ctx as any).scheduler.runAfter(0, internal.emergencyDispatch.dispatchExternalAlert, {
+        alertId,
+        userId: params.userId,
+        alertType: params.type,
+      });
+    } catch (schedErr) {
+      console.warn("[EXTERNAL DISPATCH SCHEDULER WARNING]", schedErr);
+    }
+  }
+
   return alertId;
 }
 
 /** Internal: create a new alert for the authenticated student (server-side callers only) */
-export const createAlert = internalMutation({
+export const createIndependentAlert = internalMutation({
   args: {
     userId: v.optional(v.string()),
     type: v.string(),
@@ -156,6 +190,25 @@ export const createSafetyAlertWithDeduplication = internalMutation({
 });
 
 /**
+ * Legacy-client compatibility. App builds up to the `main` release call this right after
+ * creating an emergency counsellor request, and show "Request Error" when it fails, although
+ * the request itself succeeded. The client-created alert was removed on purpose: the
+ * emergency_modal counsellor request now always notifies staff at critical priority
+ * (counsellorRequests.create). This accepts only that legacy call, for the caller's own
+ * account, and writes nothing. Any other use is refused.
+ */
+export const createAlert = mutation({
+  args: { userId: v.optional(v.string()), type: v.string() },
+  handler: async (ctx, args) => {
+    const self = await legacySelfStudent(ctx, args.userId);
+    if (!self) throw new Error("Unauthorized: Alerts are created by the server.");
+    if (args.type !== "counselor_request") throw new Error("Unsupported alert type.");
+    console.log("[legacy-client] alerts.createAlert");
+    return null;
+  },
+});
+
+/**
  * Student: record that they closed the suicide-flag emergency screen.
  * The screen stays dismissible (so students are never locked out of support tools),
  * but every dismissal is stamped on their open suicide alerts so counsellors can see it.
@@ -219,6 +272,8 @@ export const acknowledgeAlert = mutation({
 export const getPending = query({
   args: { userId: v.optional(v.string()) },
   handler: async (ctx, args) => {
+    // Staff-only clinical read: students use the minimal self-service endpoints instead.
+    await requireCounselorOrAdmin(ctx);
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
     const targetUserId = args.userId || identity.subject;
@@ -268,6 +323,8 @@ export const getPending = query({
 export const getAll = query({
   args: { userId: v.optional(v.string()) },
   handler: async (ctx, args) => {
+    // Staff-only clinical read: students use the minimal self-service endpoints instead.
+    await requireCounselorOrAdmin(ctx);
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
     const targetUserId = args.userId || identity.subject;
@@ -285,6 +342,8 @@ export const getAll = query({
 export const getAlertProvenance = query({
   args: { alertId: v.id("alerts") },
   handler: async (ctx, args) => {
+    // Staff-only clinical read: students use the minimal self-service endpoints instead.
+    await requireCounselorOrAdmin(ctx);
     const alert = await ctx.db.get(args.alertId);
     if (!alert) return null;
 
@@ -301,6 +360,8 @@ export const getAlertProvenance = query({
 export const getTriageAlerts = query({
   args: { triageId: v.id("triages") },
   handler: async (ctx, args) => {
+    // Staff-only clinical read: students use the minimal self-service endpoints instead.
+    await requireCounselorOrAdmin(ctx);
     const triage = await ctx.db.get(args.triageId);
     if (!triage) return [];
 
@@ -312,4 +373,20 @@ export const getTriageAlerts = query({
       .collect();
   },
 });
+
+/** Staff: get unresolved alerts where notification delivery could not reach any active staff */
+export const getUndeliveredAlerts = query({
+  args: {},
+  handler: async (ctx) => {
+    await requireCounselorOrAdmin(ctx);
+    const undelivered = await ctx.db
+      .query("alerts")
+      .withIndex("by_deliveryStatus", (q) => q.eq("deliveryStatus", "no_active_staff"))
+      .collect();
+    return undelivered
+      .filter((a) => a.status === "pending")
+      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  },
+});
+
 

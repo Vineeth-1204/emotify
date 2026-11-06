@@ -1,11 +1,17 @@
-import { v } from "convex/values";
-import { internalMutation } from "./_generated/server";
+import { v, type ObjectType } from "convex/values";
+import { internalMutation, type QueryCtx, type MutationCtx } from "./_generated/server";
 import { mutation, query } from "./functions";
 import type { Id } from "./_generated/dataModel";
 import { signJwt, verifyPassword, hashPassword, generateTemporaryPassword, readUnverifiedSessionId } from "./authHelpers";
 import { internal } from "./_generated/api";
 import { logAuditEvent } from "./audit";
+import { endAssignmentsForDeletedUser, endAssignmentsForDeactivatedUser } from "./counsellorAssignments";
 import { assertCanAccessStudent, requireAdmin, getAuthenticatedUser } from "./authz";
+import {
+  getCompanionDisplayName,
+  readStoredEmotyPreferences,
+  storedEmotyPreferencesPatch,
+} from "../common/companionName";
 
 function sanitizeUser(u: any) {
   if (!u) return null;
@@ -542,6 +548,11 @@ export const toggleUserStatus = mutation({
     const admin = await checkAdmin(ctx);
     if (!admin) throw new Error("Unauthorized");
 
+    // Server-side status validation
+    if (args.status !== "active" && args.status !== "inactive") {
+      throw new Error("Invalid user status. Allowed statuses are 'active' or 'inactive'.");
+    }
+
     const user = await ctx.db.get(args.userId);
     if (!user) throw new Error("User not found");
 
@@ -555,7 +566,7 @@ export const toggleUserStatus = mutation({
       updated_at: Date.now(),
     });
 
-    // If deactivated, delete all active sessions immediately to log them out
+    // If deactivated, delete all active sessions immediately and safely offboard assignments
     if (args.status === "inactive") {
       const userSessions = await ctx.db
         .query("sessions")
@@ -564,7 +575,23 @@ export const toggleUserStatus = mutation({
       for (const session of userSessions) {
         await ctx.db.delete(session._id);
       }
+
+      await logAuditEvent(
+        ctx,
+        String(admin._id),
+        "user_deactivated",
+        `User ${args.userId} (role: ${user.role}) status changed to inactive. Active sessions terminated.`
+      );
+    } else {
+      await logAuditEvent(
+        ctx,
+        String(admin._id),
+        "user_reactivated",
+        `User ${args.userId} (role: ${user.role}) status changed to active.`
+      );
     }
+
+    return { success: true };
   },
 });
 
@@ -581,6 +608,14 @@ export const editUser = mutation({
     const admin = await checkAdmin(ctx);
     if (!admin) throw new Error("Unauthorized");
 
+    // Server-side status validation
+    if (args.status !== "active" && args.status !== "inactive") {
+      throw new Error("Invalid user status. Allowed statuses are 'active' or 'inactive'.");
+    }
+
+    const user = await ctx.db.get(args.userId);
+    if (!user) throw new Error("User not found");
+
     const existing = await ctx.db
       .query("users")
       .withIndex("by_mobile_number", (q) => q.eq("mobile_number", args.mobile_number))
@@ -590,6 +625,8 @@ export const editUser = mutation({
       throw new Error("Mobile number is registered to another user.");
     }
 
+    const statusChangedToInactive = args.status === "inactive" && user.status !== "inactive";
+
     await ctx.db.patch(args.userId, {
       full_name: args.full_name,
       mobile_number: args.mobile_number,
@@ -597,6 +634,25 @@ export const editUser = mutation({
       status: args.status,
       updated_at: Date.now(),
     });
+
+    if (statusChangedToInactive) {
+      const userSessions = await ctx.db
+        .query("sessions")
+        .withIndex("by_userId", (q) => q.eq("userId", args.userId))
+        .collect();
+      for (const session of userSessions) {
+        await ctx.db.delete(session._id);
+      }
+
+      await logAuditEvent(
+        ctx,
+        String(admin._id),
+        "user_deactivated",
+        `User ${args.userId} (role: ${user.role}) edited to inactive. Active sessions terminated.`
+      );
+    }
+
+    return { success: true };
   },
 });
 
@@ -663,7 +719,7 @@ export const completeOnboarding = mutation({
     consentTimestamp: v.number(),
     emergencyContactName: v.optional(v.string()),
     emergencyContactPhone: v.optional(v.string()),
-    mitraPreferences: v.optional(
+    emotyPreferences: v.optional(
       v.object({
         name: v.optional(v.string()),
         avatarGender: v.optional(v.string()),
@@ -710,25 +766,25 @@ export const completeOnboarding = mutation({
     }
     if (!user) throw new Error("User not found.");
 
-    // Process optional mitraPreferences or keep existing/default
-    let validatedMitra = user.mitraPreferences;
-    if (args.mitraPreferences) {
-      let g = (args.mitraPreferences.avatarGender || "female").toLowerCase().trim();
+    // Process optional Emoty preferences or keep existing/default
+    let validatedPrefs = readStoredEmotyPreferences(user);
+    if (args.emotyPreferences) {
+      let g = (args.emotyPreferences.avatarGender || "female").toLowerCase().trim();
       if (g !== "female" && g !== "male") g = "female";
 
-      let rawName = args.mitraPreferences.name ? args.mitraPreferences.name.replace(/[\x00-\x1F\x7F]/g, "").trim() : "Emoty";
+      let rawName = args.emotyPreferences.name ? args.emotyPreferences.name.replace(/[\x00-\x1F\x7F]/g, "").trim() : "Emoty";
       if (rawName.length > 30) rawName = rawName.substring(0, 30).trim();
       const n = rawName.length > 0 ? rawName : "Emoty";
 
-      validatedMitra = {
+      validatedPrefs = {
         name: n,
         avatarGender: g,
         avatarVariant: "default",
         updatedAt: Date.now(),
       };
-    } else if (!validatedMitra) {
+    } else if (!validatedPrefs) {
       // Default to female + Emoty if none set
-      validatedMitra = {
+      validatedPrefs = {
         name: "Emoty",
         avatarGender: "female",
         avatarVariant: "default",
@@ -748,7 +804,7 @@ export const completeOnboarding = mutation({
       emergencyContactName: args.emergencyContactName,
       emergencyContactPhone: args.emergencyContactPhone,
       onboardingComplete: true,
-      mitraPreferences: validatedMitra,
+      ...storedEmotyPreferencesPatch(validatedPrefs),
       updated_at: Date.now(),
     });
 
@@ -1321,6 +1377,7 @@ const USER_OWNED_TABLES: Array<{ table: string; index: string; field: string; id
   { table: "sessions", index: "by_userId", field: "userId", idOnly: true },
   { table: "appointments", index: "by_userId", field: "userId", idOnly: true },
   { table: "screenings", index: "by_userId", field: "userId" },
+  { table: "screeningSubmissions", index: "by_user_and_key", field: "userId" },
   { table: "screeningAttempts", index: "by_userId", field: "userId" },
   { table: "triages", index: "by_userId", field: "userId" },
   { table: "alerts", index: "by_userId", field: "userId" },
@@ -1351,6 +1408,12 @@ const USER_OWNED_TABLES: Array<{ table: string; index: string; field: string; id
   { table: "aiMonitoringLogs", index: "by_userId", field: "userId" },
   { table: "loginHistory", index: "by_userId", field: "userId" },
   { table: "notifications", index: "by_recipientId", field: "recipientId" },
+  // Device push tokens (stored under the canonical id).
+  { table: "pushTokens", index: "by_userId", field: "userId" },
+  { table: "emotyGuideDismissals", index: "by_userId", field: "userId" },
+  // The student's own assignment history. Rows where the deleted user was the counsellor
+  // belong to other students' history and are kept (already ended by endAssignmentsForDeletedUser).
+  { table: "counsellorAssignments", index: "by_student_and_active", field: "studentId", idOnly: true },
 ];
 
 /** Maximum documents deleted per transaction before the purge continues in a new one. */
@@ -1478,6 +1541,9 @@ export const deleteUser = mutation({
 
     await logAuditEvent(ctx, String(admin._id), "user_deleted", `Deleted user ${user.patientId || String(args.userId)}`);
 
+    // No active caseload assignment may point at a deleted account (as student or counsellor).
+    await endAssignmentsForDeletedUser(ctx, args.userId, admin._id);
+
     const aliases = Array.from(new Set([String(args.userId), user.clerkId].filter((x): x is string => !!x)));
     const done = await purgeUserData(ctx, args.userId, aliases, DELETE_BATCH_BUDGET);
     if (done) {
@@ -1524,109 +1590,116 @@ export const redactLegacyTrashEntries = internalMutation({
 });
 
 // ==========================================
-// MITRA PREFERENCES (Priority 6)
+// EMOTY PREFERENCES (Priority 6)
 // ==========================================
 
-/** Get persistent Mitra preferences for student (with safe female + Mitra defaults) */
-export const getMitraPreferences = query({
-  args: { userId: v.optional(v.string()) },
-  handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) {
-      return {
-        name: "Emoty",
-        avatarGender: "female",
-        avatarVariant: "default",
-      };
-    }
-    const targetUserId = args.userId || identity.subject;
-    await assertCanAccessStudent(ctx, targetUserId);
+/** Get persistent Emoty preferences for student (with safe female + Emoty defaults) */
+const getEmotyPreferencesArgs = { userId: v.optional(v.string()) };
 
-    let user = null;
-    try {
-      user = await ctx.db.get(targetUserId as Id<"users">);
-    } catch (e) {}
-    if (!user) {
-      user = await ctx.db
-        .query("users")
-        .withIndex("by_clerkId", (q) => q.eq("clerkId", targetUserId))
-        .first();
-    }
-
-    const prefs = user?.mitraPreferences;
-    const name = prefs?.name && prefs.name.trim().length > 0 ? prefs.name.trim() : "Emoty";
-    const avatarGender =
-      prefs?.avatarGender === "male" || prefs?.avatarGender === "female"
-        ? prefs.avatarGender
-        : "female";
-
+async function getEmotyPreferencesHandler(ctx: QueryCtx, args: ObjectType<typeof getEmotyPreferencesArgs>) {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) {
     return {
-      name,
-      avatarGender,
-      avatarVariant: prefs?.avatarVariant || "default",
-      updatedAt: prefs?.updatedAt,
-    };
-  },
-});
-
-/** Update persistent Mitra preferences for student */
-export const updateMitraPreferences = mutation({
-  args: {
-    userId: v.optional(v.string()),
-    name: v.optional(v.string()),
-    avatarGender: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Unauthenticated");
-    const targetUserId = args.userId || identity.subject;
-    await assertCanAccessStudent(ctx, targetUserId);
-
-    let user = null;
-    try {
-      user = await ctx.db.get(targetUserId as Id<"users">);
-    } catch (e) {}
-    if (!user) {
-      user = await ctx.db
-        .query("users")
-        .withIndex("by_clerkId", (q) => q.eq("clerkId", targetUserId))
-        .first();
-    }
-    if (!user) throw new Error("User not found");
-
-    // Validate avatarGender: must be "female" or "male"
-    let validatedGender = user.mitraPreferences?.avatarGender || "female";
-    if (args.avatarGender !== undefined) {
-      const g = args.avatarGender.toLowerCase().trim();
-      if (g === "female" || g === "male") {
-        validatedGender = g;
-      } else {
-        validatedGender = "female";
-      }
-    }
-
-    // Validate and sanitize custom name (strip control characters, trim, max length 30)
-    let validatedName = user.mitraPreferences?.name || "Emoty";
-    if (args.name !== undefined) {
-      let clean = args.name.replace(/[\x00-\x1F\x7F]/g, "").trim();
-      if (clean.length > 30) clean = clean.substring(0, 30).trim();
-      validatedName = clean.length > 0 ? clean : "Emoty";
-    }
-
-    const updatedPrefs = {
-      name: validatedName,
-      avatarGender: validatedGender,
+      name: "Emoty",
+      avatarGender: "female",
       avatarVariant: "default",
-      updatedAt: Date.now(),
     };
+  }
+  const targetUserId = args.userId || identity.subject;
+  await assertCanAccessStudent(ctx, targetUserId);
 
-    await ctx.db.patch(user._id, {
-      mitraPreferences: updatedPrefs,
-    });
+  let user = null;
+  try {
+    user = await ctx.db.get(targetUserId as Id<"users">);
+  } catch (e) {}
+  if (!user) {
+    user = await ctx.db
+      .query("users")
+      .withIndex("by_clerkId", (q) => q.eq("clerkId", targetUserId))
+      .first();
+  }
 
-    return updatedPrefs;
-  },
-});
+  const prefs = readStoredEmotyPreferences(user);
+  const name = getCompanionDisplayName(prefs?.name);
+  const avatarGender =
+    prefs?.avatarGender === "male" || prefs?.avatarGender === "female"
+      ? prefs.avatarGender
+      : "female";
+
+  return {
+    name,
+    avatarGender,
+    avatarVariant: prefs?.avatarVariant || "default",
+    updatedAt: prefs?.updatedAt,
+  };
+}
+
+export const getEmotyPreferences = query({ args: getEmotyPreferencesArgs, handler: getEmotyPreferencesHandler });
+
+/** @deprecated Pre-Emoty name kept so installed app versions keep working. Remove once every client uses `getEmotyPreferences`. */
+export const getMitraPreferences = query({ args: getEmotyPreferencesArgs, handler: getEmotyPreferencesHandler });
+
+/** Update persistent Emoty preferences for student */
+const updateEmotyPreferencesArgs = {
+  userId: v.optional(v.string()),
+  name: v.optional(v.string()),
+  avatarGender: v.optional(v.string()),
+};
+
+async function updateEmotyPreferencesHandler(ctx: MutationCtx, args: ObjectType<typeof updateEmotyPreferencesArgs>) {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) throw new Error("Unauthenticated");
+  const targetUserId = args.userId || identity.subject;
+  await assertCanAccessStudent(ctx, targetUserId);
+
+  let user = null;
+  try {
+    user = await ctx.db.get(targetUserId as Id<"users">);
+  } catch (e) {}
+  if (!user) {
+    user = await ctx.db
+      .query("users")
+      .withIndex("by_clerkId", (q) => q.eq("clerkId", targetUserId))
+      .first();
+  }
+  if (!user) throw new Error("User not found");
+
+  // Validate avatarGender: must be "female" or "male"
+  const existingPrefs = readStoredEmotyPreferences(user);
+  let validatedGender = existingPrefs?.avatarGender || "female";
+  if (args.avatarGender !== undefined) {
+    const g = args.avatarGender.toLowerCase().trim();
+    if (g === "female" || g === "male") {
+      validatedGender = g;
+    } else {
+      validatedGender = "female";
+    }
+  }
+
+  // Validate and sanitize custom name (strip control characters, trim, max length 30)
+  let validatedName = getCompanionDisplayName(existingPrefs?.name);
+  if (args.name !== undefined) {
+    let clean = args.name.replace(/[\x00-\x1F\x7F]/g, "").trim();
+    if (clean.length > 30) clean = clean.substring(0, 30).trim();
+    validatedName = clean.length > 0 ? clean : "Emoty";
+  }
+
+  const updatedPrefs = {
+    name: validatedName,
+    avatarGender: validatedGender,
+    avatarVariant: "default",
+    updatedAt: Date.now(),
+  };
+
+  await ctx.db.patch(user._id, storedEmotyPreferencesPatch(updatedPrefs));
+
+  return updatedPrefs;
+}
+
+export const updateEmotyPreferences = mutation({ args: updateEmotyPreferencesArgs, handler: updateEmotyPreferencesHandler });
+
+/** @deprecated Pre-Emoty name kept so installed app versions keep working. Remove once every client uses `updateEmotyPreferences`. */
+export const updateMitraPreferences = mutation({ args: updateEmotyPreferencesArgs, handler: updateEmotyPreferencesHandler });
 
 /** Student: Update allowed profile information (alias, age, campus, department, year, demographic gender, emergency contacts) */
 export const updateStudentProfile = mutation({
@@ -1733,6 +1806,132 @@ export const updateStudentProfile = mutation({
       success: true,
       updatedFields: changedKeys,
     };
+  },
+});
+
+// ==========================================
+// NOTIFICATION PREFERENCES (Adaptive Engagement)
+// ==========================================
+
+export const getNotificationPreferences = query({
+  args: { userId: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      return {
+        engagementEnabled: true,
+        quietHoursStart: 22,
+        quietHoursEnd: 7,
+        maxPerDay: 4,
+        minSpacingHours: 2.5,
+        timezone: "Asia/Kolkata",
+      };
+    }
+    const targetUserId = args.userId || identity.subject;
+    await assertCanAccessStudent(ctx, targetUserId);
+
+    let user = null;
+    try {
+      user = await ctx.db.get(targetUserId as Id<"users">);
+    } catch {}
+    if (!user) {
+      user = await ctx.db
+        .query("users")
+        .withIndex("by_clerkId", (q) => q.eq("clerkId", targetUserId))
+        .first();
+    }
+    if (!user) {
+      return {
+        engagementEnabled: true,
+        quietHoursStart: 22,
+        quietHoursEnd: 7,
+        maxPerDay: 4,
+        minSpacingHours: 2.5,
+        timezone: "Asia/Kolkata",
+      };
+    }
+
+    const prefs = user.notificationPreferences;
+    return {
+      engagementEnabled: prefs?.engagementEnabled ?? true,
+      quietHoursStart: prefs?.quietHoursStart ?? 22,
+      quietHoursEnd: prefs?.quietHoursEnd ?? 7,
+      maxPerDay: prefs?.maxPerDay ?? 4,
+      minSpacingHours: prefs?.minSpacingHours ?? 2.5,
+      timezone: prefs?.timezone ?? "Asia/Kolkata",
+    };
+  },
+});
+
+export const updateNotificationPreferences = mutation({
+  args: {
+    userId: v.optional(v.string()),
+    engagementEnabled: v.optional(v.boolean()),
+    quietHoursStart: v.optional(v.number()),
+    quietHoursEnd: v.optional(v.number()),
+    maxPerDay: v.optional(v.number()),
+    minSpacingHours: v.optional(v.number()),
+    timezone: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const targetUserId = args.userId || identity.subject;
+    await assertCanAccessStudent(ctx, targetUserId);
+
+    let user = null;
+    try {
+      user = await ctx.db.get(targetUserId as Id<"users">);
+    } catch {}
+    if (!user) {
+      user = await ctx.db
+        .query("users")
+        .withIndex("by_clerkId", (q) => q.eq("clerkId", targetUserId))
+        .first();
+    }
+    if (!user) throw new Error("User not found");
+
+    const currentPrefs = user.notificationPreferences || {};
+    const patch: Record<string, any> = { ...currentPrefs };
+
+    if (args.engagementEnabled !== undefined) {
+      patch.engagementEnabled = args.engagementEnabled;
+    }
+    if (args.quietHoursStart !== undefined) {
+      if (args.quietHoursStart < 0 || args.quietHoursStart > 23 || !Number.isInteger(args.quietHoursStart)) {
+        throw new Error("quietHoursStart must be an integer between 0 and 23");
+      }
+      patch.quietHoursStart = args.quietHoursStart;
+    }
+    if (args.quietHoursEnd !== undefined) {
+      if (args.quietHoursEnd < 0 || args.quietHoursEnd > 23 || !Number.isInteger(args.quietHoursEnd)) {
+        throw new Error("quietHoursEnd must be an integer between 0 and 23");
+      }
+      patch.quietHoursEnd = args.quietHoursEnd;
+    }
+    if (args.maxPerDay !== undefined) {
+      if (args.maxPerDay < 1 || args.maxPerDay > 4 || !Number.isInteger(args.maxPerDay)) {
+        throw new Error("maxPerDay must be an integer between 1 and 4");
+      }
+      patch.maxPerDay = args.maxPerDay;
+    }
+    if (args.minSpacingHours !== undefined) {
+      if (args.minSpacingHours < 0.5 || args.minSpacingHours > 12) {
+        throw new Error("minSpacingHours must be between 0.5 and 12");
+      }
+      patch.minSpacingHours = args.minSpacingHours;
+    }
+    if (args.timezone !== undefined) {
+      const cleanTz = args.timezone.trim();
+      patch.timezone = cleanTz || "Asia/Kolkata";
+    }
+
+    await ctx.db.patch(user._id, {
+      notificationPreferences: patch,
+      updated_at: Date.now(),
+    });
+
+    return patch;
   },
 });
 

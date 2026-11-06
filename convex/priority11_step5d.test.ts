@@ -290,13 +290,12 @@ describe("Priority 11 Step 5D: Counselor Roster & History Pagination", () => {
       });
     });
 
+    // Students get no alert rows (staff view): never B's, and not their own either.
     const alerts = await authedA.query(api.dashboard.getAlerts, {});
-    expect(alerts).toHaveLength(1);
-    expect(alerts[0].userId).toBe(studentAId);
-    expect(alerts.some((a: any) => a.userId === studentBId)).toBe(false);
+    expect(alerts).toEqual([]);
   });
 
-  test("P11-5D-AUTH-02: Student A still receives their own alerts when Student B has many newer alerts", async () => {
+  test("P11-5D-AUTH-02: Students receive no alert rows, even when other students have many newer alerts", async () => {
     const { t, studentAId, studentBId, authedA } = await setupTestEnvironment();
 
     await t.run(async (ctx) => {
@@ -319,10 +318,9 @@ describe("Priority 11 Step 5D: Counselor Roster & History Pagination", () => {
       }
     });
 
-    // Student A must not be starved out by global alerts
+    // Students get no alert rows (staff view); the student's crisis gate uses getMySafetyStatus.
     const alerts = await authedA.query(api.dashboard.getAlerts, {});
-    expect(alerts).toHaveLength(1);
-    expect(alerts[0].userId).toBe(studentAId);
+    expect(alerts).toEqual([]);
   });
 
   test("P11-5D-AUTH-03: Student activity feed cannot be starved by another student's activity", async () => {

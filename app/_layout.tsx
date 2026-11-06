@@ -12,6 +12,7 @@ import { View, ActivityIndicator } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { AuthProvider, useAppAuth } from "@/utils/auth";
 import { api } from "@/convex/_generated/api";
+import { usePushNotifications } from "@/hooks/usePushNotifications";
 import { MoodThemeProvider } from "@/context/MoodThemeContext";
 import { AvatarProvider } from "@/context/AvatarContext";
 import { LanguageProvider } from "@/context/LanguageContext";
@@ -42,6 +43,9 @@ function InitialLayout() {
       logout();
     }
   }, [isAuthenticated, isSessionActive, logout]);
+
+  // OS push notifications: explained permission request, token registration, tap routing.
+  usePushNotifications();
 
   const [fontsLoaded] = useFonts({
     DMSans_400Regular,

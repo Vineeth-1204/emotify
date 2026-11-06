@@ -72,7 +72,23 @@ function loadPrivateJwk(): RsaPrivateJwk {
   if (jwk?.kty !== "RSA" || required.some((k) => typeof jwk[k] !== "string" || jwk[k].length === 0)) {
     throw new Error("Server misconfiguration: JWT_PRIVATE_JWK must be a complete RSA private JWK with a kid.");
   }
+  if (isRevokedSigningKey(jwk)) {
+    throw new Error("Server misconfiguration: JWT_PRIVATE_JWK is a revoked key. Generate a new one with scripts/generate-jwt-key.mjs.");
+  }
   return jwk as RsaPrivateJwk;
+}
+
+/**
+ * Keys that must never sign or be published again. The static key that was committed to git
+ * history (kid "static-key-1") is public knowledge, so anyone could forge tokens with it. It is
+ * identified by its kid and by the start of its PUBLIC modulus (the private parts are not here).
+ */
+const REVOKED_KIDS = new Set(["static-key-1"]);
+const REVOKED_MODULUS_PREFIXES = ["0CmBQeFhFsxN4MTkynWRuJbTbBfOk-OJvUAAkPWx55l"];
+
+export function isRevokedSigningKey(jwk: { kid?: string; n?: string }): boolean {
+  if (jwk.kid && REVOKED_KIDS.has(jwk.kid)) return true;
+  return !!jwk.n && REVOKED_MODULUS_PREFIXES.some((prefix) => jwk.n!.startsWith(prefix));
 }
 
 /** Public signing key derived from the configured private key (safe to publish). */

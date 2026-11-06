@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { query } from "./functions";
 import type { Id } from "./_generated/dataModel";
-import { assertCanAccessStudent } from "./authz";
+import { assertCanAccessStudent, requireCounselorOrAdmin } from "./authz";
 
 /**
  * Normalized Canonical Clinical Timeline Event Model
@@ -152,6 +152,8 @@ export const getStudentClinicalTimeline = query({
     paginate: v.optional(v.boolean()),
   },
   handler: async (ctx, args): Promise<PaginatedTimelineResult> => {
+    // Staff-only clinical read: students use the minimal self-service endpoints instead.
+    await requireCounselorOrAdmin(ctx);
     // 1. Enforce authorization
     await assertCanAccessStudent(ctx, args.userId);
 

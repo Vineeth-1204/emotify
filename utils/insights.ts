@@ -1,7 +1,5 @@
 export interface UserState {
   triage_level: 'mild' | 'moderate' | 'severe' | 'suicide_flag' | 'psychosis_flag';
-  wsas_total?: number;
-  reqol10_total?: number;
   alias: string;
   recentEmotions?: any[];
   recentTools?: any[];

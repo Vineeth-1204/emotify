@@ -27,7 +27,7 @@ Emotify-Clerk/
 │       └── te.json            # Telugu (తెలుగు)
 ├── context/
 │   └── LanguageContext.tsx    # React Context Provider and useLanguage hook
-└── LOCALIZATION.md            # Architecture documentation (this file)
+└── docs/LOCALIZATION.md       # Architecture documentation (this file)
 ```
 
 ---

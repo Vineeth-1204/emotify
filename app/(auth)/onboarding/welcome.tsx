@@ -12,6 +12,7 @@ import { useLanguage } from "@/context/LanguageContext";
 import { useAvatar, AvatarGender } from "@/context/AvatarContext";
 
 import { EmotyAvatar } from "@/components/avatar/EmotyAvatar";
+import { Ionicons } from "@expo/vector-icons";
 import { MindfulnessActivityIcon, DeepBreathingActivityIcon } from "@/components/svg/activities";
 import { CounsellorBadgeIcon, PlantProgress, ReminderIcon } from "@/components/svg/system";
 
@@ -21,12 +22,13 @@ export default function WelcomeScreen() {
   const { isAuthenticated: isConvexAuthed } = useConvexAuth();
   const isReady = Boolean(isAuthenticated && isConvexAuthed && user?.id);
 
-  const { t } = useLanguage();
+  const { t, language, setLanguage, supportedLanguages } = useLanguage();
   const { avatarName, avatarGender, setEmotyPreferences } = useAvatar();
   const dbUser = useQuery(api.users.getByClerkId, isReady ? { clerkId: user!.id } : "skip");
 
   const [selectedGender, setSelectedGender] = useState<AvatarGender>(avatarGender || "female");
   const [customName, setCustomName] = useState<string>(avatarName || "Emoty");
+  const [selectedLanguage, setSelectedLanguage] = useState<string>(language);
 
   useEffect(() => {
     if (avatarGender) setSelectedGender(avatarGender);
@@ -35,6 +37,19 @@ export default function WelcomeScreen() {
   useEffect(() => {
     if (avatarName) setCustomName(avatarName);
   }, [avatarName]);
+
+  useEffect(() => {
+    if (language) setSelectedLanguage(language);
+  }, [language]);
+
+  const handleSelectLanguage = async (code: string) => {
+    setSelectedLanguage(code);
+    try {
+      await setLanguage(code);
+    } catch (e) {
+      console.warn("Failed to set language on welcome screen:", e);
+    }
+  };
 
   useEffect(() => {
     if (dbUser === undefined) return;
@@ -48,6 +63,9 @@ export default function WelcomeScreen() {
     const finalName = customName.trim() || "Emoty";
     const finalGender: AvatarGender = selectedGender === "male" ? "male" : "female";
     try {
+      if (selectedLanguage && selectedLanguage !== language) {
+        await setLanguage(selectedLanguage);
+      }
       await setEmotyPreferences({
         name: finalName,
         avatarGender: finalGender,
@@ -55,7 +73,7 @@ export default function WelcomeScreen() {
     } catch (e) {
       console.warn("Failed to save Emoty preferences during welcome:", e);
     }
-    router.push("/(auth)/onboarding/consent");
+    router.replace("/(auth)/onboarding/consent");
   };
 
   const insets = useSafeAreaInsets();
@@ -149,6 +167,54 @@ export default function WelcomeScreen() {
           autoCorrect={false}
           accessibilityLabel={t("profile.companionNameLabel")}
         />
+
+        {/* Language Preference Selection */}
+        <Text style={[styles.fieldLabel, { marginTop: Theme.spacing.md }]}>
+          {t("profile.selectLanguage")}
+        </Text>
+        <View style={styles.languageSelectionGrid}>
+          {supportedLanguages.map((lang) => {
+            const isSelected = (selectedLanguage || language) === lang.code;
+            return (
+              <TouchableOpacity
+                key={lang.code}
+                style={[
+                  styles.languageOption,
+                  isSelected && styles.languageOptionSelected,
+                ]}
+                onPress={() => handleSelectLanguage(lang.code)}
+                accessibilityRole="button"
+                accessibilityLabel={`${lang.nativeName}, ${isSelected ? "selected" : "not selected"}`}
+                activeOpacity={0.8}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text
+                    style={[
+                      styles.languageOptionNative,
+                      isSelected && styles.languageOptionNativeSelected,
+                    ]}
+                  >
+                    {lang.nativeName}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.languageOptionSub,
+                      isSelected && styles.languageOptionSubSelected,
+                    ]}
+                  >
+                    {lang.name}
+                  </Text>
+                </View>
+                <Ionicons
+                  name={isSelected ? "checkmark-circle" : "ellipse-outline"}
+                  size={18}
+                  color={isSelected ? Colors.primary : Colors.textMuted}
+                />
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
         <Text style={styles.helperText}>
           {t("onboarding.canChangeLater")}
         </Text>
@@ -358,5 +424,45 @@ const styles = StyleSheet.create({
     fontSize: Theme.fontSize.xs,
     color: Colors.textMuted,
     marginTop: 6,
+  },
+  languageSelectionGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: Theme.spacing.sm,
+  },
+  languageOption: {
+    width: "48%",
+    flexGrow: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: Colors.background,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: Theme.borderRadius.md,
+    borderWidth: 2,
+    borderColor: Colors.border,
+  },
+  languageOptionSelected: {
+    borderColor: Colors.primary,
+    backgroundColor: "rgba(124, 77, 255, 0.08)",
+  },
+  languageOptionNative: {
+    fontFamily: Theme.fontFamily.medium,
+    fontSize: Theme.fontSize.md,
+    color: Colors.text,
+  },
+  languageOptionNativeSelected: {
+    fontFamily: Theme.fontFamily.bold,
+    color: Colors.primary,
+  },
+  languageOptionSub: {
+    fontFamily: Theme.fontFamily.regular,
+    fontSize: Theme.fontSize.xs,
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
+  languageOptionSubSelected: {
+    color: Colors.primary,
   },
 });

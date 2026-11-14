@@ -45,6 +45,7 @@ export default function ProfileScreen() {
   const [showVoiceModal, setShowVoiceModal] = useState(false);
   const [selectedGender, setSelectedGender] = useState<AvatarGender>(avatarGender || "female");
   const [newCompanionName, setNewCompanionName] = useState(avatarName);
+  const [selectedLanguage, setSelectedLanguage] = useState<string>(language);
   const [isExporting, setIsExporting] = useState(false);
 
   // Profile Editing State
@@ -125,6 +126,10 @@ export default function ProfileScreen() {
     if (avatarName) setNewCompanionName(avatarName);
   }, [avatarName]);
 
+  React.useEffect(() => {
+    if (language) setSelectedLanguage(language);
+  }, [language]);
+
   const handleSaveCompanionName = async () => {
     const trimmed = newCompanionName.trim();
     if (trimmed.length === 0) {
@@ -133,6 +138,9 @@ export default function ProfileScreen() {
     }
     const finalGender: AvatarGender = selectedGender === "male" ? "male" : "female";
     try {
+      if (selectedLanguage && selectedLanguage !== language) {
+        await setLanguage(selectedLanguage);
+      }
       await setEmotyPreferences({
         name: trimmed,
         avatarGender: finalGender,
@@ -357,7 +365,7 @@ export default function ProfileScreen() {
                     {avatarName}
                   </Text>
                   <Text style={{ fontFamily: Theme.fontFamily.medium, fontSize: 12, color: colors.textSecondary, marginTop: 2 }} numberOfLines={1}>
-                    {avatarGender === "male" ? t("profile.avatarBoy") : t("profile.avatarGirl")} • {t("profile.companionPersonalizedSubtitle")}
+                    {avatarGender === "male" ? t("profile.avatarBoy") : t("profile.avatarGirl")} • {activeLanguageOption.nativeName} • {t("profile.companionPersonalizedSubtitle")}
                   </Text>
                 </View>
               </View>
@@ -365,6 +373,7 @@ export default function ProfileScreen() {
                 onPress={() => {
                   setSelectedGender(avatarGender || "female");
                   setNewCompanionName(avatarName || "Emoty");
+                  setSelectedLanguage(language);
                   setShowRenameModal(true);
                 }}
                 style={{
@@ -616,111 +625,169 @@ export default function ProfileScreen() {
         animationType="fade"
         onRequestClose={() => setShowRenameModal(false)}
       >
-        <View style={styles.renameModalOverlay}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={styles.renameModalOverlay}
+        >
           <View style={styles.renameModalCard}>
-            <View style={{ alignItems: 'center', marginBottom: 16 }}>
-              <EmotyAvatar gender={selectedGender} state="happy" size="md" />
-            </View>
-            <Text style={styles.renameModalTitle}>{t("profile.customizeModalTitle")}</Text>
-            <Text style={styles.renameModalSubtitle}>
-              {t("profile.customizeModalSubtitle")}
-            </Text>
+            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 540 }} contentContainerStyle={{ paddingBottom: 4 }}>
+              <View style={{ alignItems: 'center', marginBottom: 16 }}>
+                <EmotyAvatar gender={selectedGender} state="happy" size="md" />
+              </View>
+              <Text style={styles.renameModalTitle}>{t("profile.customizeModalTitle")}</Text>
+              <Text style={styles.renameModalSubtitle}>
+                {t("profile.customizeModalSubtitle")}
+              </Text>
 
-            {/* Avatar Gender Selection */}
-            <Text style={{ fontFamily: Theme.fontFamily.medium, fontSize: 11, color: colors.textSecondary, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>
-              {t("profile.chooseAvatar")}
-            </Text>
-            <View style={{ flexDirection: 'row', gap: 12, marginBottom: 16 }}>
-              <TouchableOpacity
-                style={{
-                  flex: 1,
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 8,
-                  paddingVertical: 10,
-                  paddingHorizontal: 8,
-                  borderRadius: 12,
-                  borderWidth: 2,
-                  borderColor: selectedGender === 'female' ? colors.primary : '#E2E8F0',
-                  backgroundColor: selectedGender === 'female' ? colors.primary + '14' : colors.surface,
-                }}
-                onPress={() => setSelectedGender('female')}
-                activeOpacity={0.8}
-                accessibilityRole="button"
-                accessibilityLabel={`${t("profile.avatarGirl")}, ${selectedGender === 'female' ? 'selected' : 'not selected'}`}
-              >
-                <EmotyAvatar gender="female" size="xs" state="happy" />
-                <Text style={{
-                  fontFamily: selectedGender === 'female' ? Theme.fontFamily.bold : Theme.fontFamily.medium,
-                  fontSize: 14,
-                  color: selectedGender === 'female' ? colors.primary : colors.textSecondary,
-                }}>
-                  {t("profile.avatarGirl")}
-                </Text>
-              </TouchableOpacity>
+              {/* Avatar Gender Selection */}
+              <Text style={{ fontFamily: Theme.fontFamily.medium, fontSize: 11, color: colors.textSecondary, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>
+                {t("profile.chooseAvatar")}
+              </Text>
+              <View style={{ flexDirection: 'row', gap: 12, marginBottom: 16 }}>
+                <TouchableOpacity
+                  style={{
+                    flex: 1,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 8,
+                    paddingVertical: 10,
+                    paddingHorizontal: 8,
+                    borderRadius: 12,
+                    borderWidth: 2,
+                    borderColor: selectedGender === 'female' ? colors.primary : '#E2E8F0',
+                    backgroundColor: selectedGender === 'female' ? colors.primary + '14' : colors.surface,
+                  }}
+                  onPress={() => setSelectedGender('female')}
+                  activeOpacity={0.8}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${t("profile.avatarGirl")}, ${selectedGender === 'female' ? 'selected' : 'not selected'}`}
+                >
+                  <EmotyAvatar gender="female" size="xs" state="happy" />
+                  <Text style={{
+                    fontFamily: selectedGender === 'female' ? Theme.fontFamily.bold : Theme.fontFamily.medium,
+                    fontSize: 14,
+                    color: selectedGender === 'female' ? colors.primary : colors.textSecondary,
+                  }}>
+                    {t("profile.avatarGirl")}
+                  </Text>
+                </TouchableOpacity>
 
-              <TouchableOpacity
-                style={{
-                  flex: 1,
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 8,
-                  paddingVertical: 10,
-                  paddingHorizontal: 8,
-                  borderRadius: 12,
-                  borderWidth: 2,
-                  borderColor: selectedGender === 'male' ? colors.primary : '#E2E8F0',
-                  backgroundColor: selectedGender === 'male' ? colors.primary + '14' : colors.surface,
-                }}
-                onPress={() => setSelectedGender('male')}
-                activeOpacity={0.8}
-                accessibilityRole="button"
-                accessibilityLabel={`${t("profile.avatarBoy")}, ${selectedGender === 'male' ? 'selected' : 'not selected'}`}
-              >
-                <EmotyAvatar gender="male" size="xs" state="happy" />
-                <Text style={{
-                  fontFamily: selectedGender === 'male' ? Theme.fontFamily.bold : Theme.fontFamily.medium,
-                  fontSize: 14,
-                  color: selectedGender === 'male' ? colors.primary : colors.textSecondary,
-                }}>
-                  {t("profile.avatarBoy")}
-                </Text>
-              </TouchableOpacity>
-            </View>
+                <TouchableOpacity
+                  style={{
+                    flex: 1,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 8,
+                    paddingVertical: 10,
+                    paddingHorizontal: 8,
+                    borderRadius: 12,
+                    borderWidth: 2,
+                    borderColor: selectedGender === 'male' ? colors.primary : '#E2E8F0',
+                    backgroundColor: selectedGender === 'male' ? colors.primary + '14' : colors.surface,
+                  }}
+                  onPress={() => setSelectedGender('male')}
+                  activeOpacity={0.8}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${t("profile.avatarBoy")}, ${selectedGender === 'male' ? 'selected' : 'not selected'}`}
+                >
+                  <EmotyAvatar gender="male" size="xs" state="happy" />
+                  <Text style={{
+                    fontFamily: selectedGender === 'male' ? Theme.fontFamily.bold : Theme.fontFamily.medium,
+                    fontSize: 14,
+                    color: selectedGender === 'male' ? colors.primary : colors.textSecondary,
+                  }}>
+                    {t("profile.avatarBoy")}
+                  </Text>
+                </TouchableOpacity>
+              </View>
 
-            {/* Companion Name */}
-            <Text style={{ fontFamily: Theme.fontFamily.medium, fontSize: 11, color: colors.textSecondary, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>
-              {t("profile.companionNameLabel")}
-            </Text>
-            <TextInput
-              style={[styles.renameInput, { borderColor: colors.primary + '40', color: colors.text }]}
-              value={newCompanionName}
-              onChangeText={setNewCompanionName}
-              placeholder={t("profile.renameInputPlaceholder")}
-              placeholderTextColor={colors.textSecondary}
-              maxLength={30}
-              accessibilityLabel={t("profile.companionNameLabel")}
-            />
+              {/* Companion Name */}
+              <Text style={{ fontFamily: Theme.fontFamily.medium, fontSize: 11, color: colors.textSecondary, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>
+                {t("profile.companionNameLabel")}
+              </Text>
+              <TextInput
+                style={[styles.renameInput, { borderColor: colors.primary + '40', color: colors.text, marginBottom: 16 }]}
+                value={newCompanionName}
+                onChangeText={setNewCompanionName}
+                placeholder={t("profile.renameInputPlaceholder")}
+                placeholderTextColor={colors.textSecondary}
+                maxLength={30}
+                accessibilityLabel={t("profile.companionNameLabel")}
+              />
 
-            <View style={styles.renameBtnRow}>
-              <TouchableOpacity
-                style={[styles.renameCancelBtn, { borderColor: '#E2E8F0' }]}
-                onPress={() => setShowRenameModal(false)}
-              >
-                <Text style={[styles.renameCancelBtnText, { color: colors.textSecondary }]}>{t("common.cancel")}</Text>
-              </TouchableOpacity>
+              {/* Language Selection */}
+              <Text style={{ fontFamily: Theme.fontFamily.medium, fontSize: 11, color: colors.textSecondary, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>
+                {t("profile.selectLanguage")}
+              </Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 20 }}>
+                {supportedLanguages.map((lang) => {
+                  const isSelected = (selectedLanguage || language) === lang.code;
+                  return (
+                    <TouchableOpacity
+                      key={lang.code}
+                      onPress={() => setSelectedLanguage(lang.code)}
+                      style={{
+                        width: '48%',
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        paddingVertical: 10,
+                        paddingHorizontal: 12,
+                        borderRadius: 12,
+                        borderWidth: 1.5,
+                        borderColor: isSelected ? colors.primary : '#E2E8F0',
+                        backgroundColor: isSelected ? colors.primary + '14' : colors.surface,
+                      }}
+                      activeOpacity={0.8}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${lang.nativeName}, ${isSelected ? 'selected' : 'not selected'}`}
+                    >
+                      <View>
+                        <Text style={{
+                          fontFamily: isSelected ? Theme.fontFamily.bold : Theme.fontFamily.medium,
+                          fontSize: 14,
+                          color: isSelected ? colors.primary : colors.text,
+                        }}>
+                          {lang.nativeName}
+                        </Text>
+                        <Text style={{
+                          fontFamily: Theme.fontFamily.regular,
+                          fontSize: 11,
+                          color: colors.textSecondary,
+                        }}>
+                          {lang.name}
+                        </Text>
+                      </View>
+                      <Ionicons
+                        name={isSelected ? "checkmark-circle" : "ellipse-outline"}
+                        size={18}
+                        color={isSelected ? colors.primary : colors.textMuted}
+                      />
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
 
-              <TouchableOpacity
-                style={[styles.renameSaveBtn, { backgroundColor: colors.primary }]}
-                onPress={handleSaveCompanionName}
-              >
-                <Text style={styles.renameSaveBtnText}>{t("profile.renameSave")}</Text>
-              </TouchableOpacity>
-            </View>
+              <View style={styles.renameBtnRow}>
+                <TouchableOpacity
+                  style={[styles.renameCancelBtn, { borderColor: '#E2E8F0' }]}
+                  onPress={() => setShowRenameModal(false)}
+                >
+                  <Text style={[styles.renameCancelBtnText, { color: colors.textSecondary }]}>{t("common.cancel")}</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.renameSaveBtn, { backgroundColor: colors.primary }]}
+                  onPress={handleSaveCompanionName}
+                >
+                  <Text style={styles.renameSaveBtnText}>{t("profile.renameSave")}</Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* LANGUAGE SELECTOR MODAL */}

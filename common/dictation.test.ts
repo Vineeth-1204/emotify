@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import fs from "fs";
 import path from "path";
-import { DictationController, appendDictation, chooseOnDeviceLocale, MAX_SESSION_MS, type SpeechModuleLike } from "./dictation";
+import { DictationController, appendDictation, chooseOnDeviceLocale, resolvePermissionIssue, MAX_SESSION_MS, type SpeechModuleLike } from "./dictation";
 
 const read = (p: string) => fs.readFileSync(path.resolve(__dirname, "..", p), "utf-8");
 
@@ -180,6 +180,23 @@ describe("availability and permissions", () => {
   });
 });
 
+describe("a build without the microphone permission", () => {
+  test("a refusal on the very first request means the build is missing the permission, not a user choice", () => {
+    expect(resolvePermissionIssue("permission_blocked", false)).toBe("build_missing_microphone");
+    expect(resolvePermissionIssue("permission_blocked", true)).toBe("permission_blocked");
+    expect(resolvePermissionIssue("permission_denied", false)).toBe("permission_denied");
+    expect(resolvePermissionIssue("language_unavailable", false)).toBe("language_unavailable");
+  });
+
+  test("the app explains it and remembers that it has asked before", () => {
+    const hook = read("hooks/useDictation.ts");
+    expect(hook).toContain("resolvePermissionIssue(result.issue, askedBefore)");
+    expect(hook).toContain("MIC_REQUESTED_KEY");
+    const en = JSON.parse(read("i18n/locales/en.json"));
+    expect(en.dictation.issue.build_missing_microphone.body).toMatch(/latest test version/);
+  });
+});
+
 describe("languages", () => {
   test("each app language maps to its Indian locale when installed", () => {
     const all = { locales: [], installedLocales: ["en-IN", "hi-IN", "ta-IN", "te-IN"] };
@@ -242,7 +259,13 @@ describe("integration in the app (source checks; device behaviour is verified ma
     for (const p of ["expo-router", "expo-splash-screen", "expo-font", "expo-secure-store", "expo-local-authentication", "expo-web-browser", "expo-video", "expo-notifications", "expo-speech-recognition"]) {
       expect(plugins).toContain(p);
     }
-    expect(app.android.permissions).toEqual(["android.permission.USE_BIOMETRIC", "android.permission.USE_FINGERPRINT", "android.permission.POST_NOTIFICATIONS"]);
+    // Existing permissions kept; the microphone is declared explicitly as well as by the plugin.
+    expect(app.android.permissions).toEqual([
+      "android.permission.USE_BIOMETRIC",
+      "android.permission.USE_FINGERPRINT",
+      "android.permission.POST_NOTIFICATIONS",
+      "android.permission.RECORD_AUDIO",
+    ]);
     expect(JSON.parse(read("package.json")).dependencies["expo-speech-recognition"]).toBe("~3.1.3");
   });
 });

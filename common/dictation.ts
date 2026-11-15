@@ -33,6 +33,7 @@ export type DictationIssue =
   | "model_not_installed"
   | "permission_denied"
   | "permission_blocked"
+  | "build_missing_microphone"
   | "failed";
 
 /** The parts of ExpoSpeechRecognitionModule this feature uses. */
@@ -90,6 +91,16 @@ export function chooseOnDeviceLocale(
   const downloadable = pick(supported.locales);
   if (downloadable) return { ok: false, issue: "model_not_installed", downloadLocale: downloadable };
   return { ok: false, issue: "language_unavailable" };
+}
+
+/**
+ * Android refuses a permission the installed build never declared exactly like a permanent
+ * "don't ask again": denied, cannot ask again, no dialog. A real permanent denial needs earlier
+ * requests, so a "blocked" answer to this install's very first request means the build is
+ * missing the microphone permission (it was built without the speech config plugin).
+ */
+export function resolvePermissionIssue(issue: DictationIssue, askedBefore: boolean): DictationIssue {
+  return issue === "permission_blocked" && !askedBefore ? "build_missing_microphone" : issue;
 }
 
 /** Appends dictated words to existing text. Empty speech never changes the text. */

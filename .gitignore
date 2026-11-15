@@ -50,6 +50,7 @@ google-services.json
 scratch/
 SS/
 *.mp4
+!assets/*.mp4
 scratch_analyze.py
 verify_timestamps.py
 scratch_*.txt

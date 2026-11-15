@@ -35,8 +35,8 @@ yarn-error.*
 .env.*
 .env*.local
 !.env.example
+# Firebase config lives at the project root (outside the generated android/ folder) and must be uploaded.
 !google-services.json
-!android/app/google-services.json
 
 # typescript
 *.tsbuildinfo
@@ -51,6 +51,7 @@ yarn-error.*
 scratch/
 SS/
 *.mp4
+!assets/*.mp4
 scratch_analyze.py
 verify_timestamps.py
 scratch_*.txt

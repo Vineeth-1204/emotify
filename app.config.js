@@ -6,7 +6,7 @@ module.exports = ({ config }) => {
       googleServicesFile:
         process.env.GOOGLE_SERVICES_JSON ||
         config.android?.googleServicesFile ||
-        './android/app/google-services.json',
+        './google-services.json',
     },
   };
 };

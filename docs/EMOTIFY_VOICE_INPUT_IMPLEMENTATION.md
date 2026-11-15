@@ -86,3 +86,25 @@ The new messages are in English. Hindi, Tamil and Telugu show English until they
 4. Deny the microphone permission: a message appears and typing still works. Deny with "Don't ask again": the message offers Open settings.
 5. Start listening, then go back or switch tabs: the microphone indicator in the Android status bar turns off.
 6. In Think Differently, dictate the situation and the thought, continue through the steps, and complete Positive Growth. Check that the session saves as before.
+
+## Update (fix for "Listening… shows for a split second, then stops")
+
+Cause: the app used the library's continuous mode. On Android 13+ that mode records the
+microphone in the app and streams it to the recognizer (`EXTRA_AUDIO_SOURCE` with a segmented
+session), and some phones' on-device recognizers reject that immediately. The app ignored the
+resulting error, so students only saw the microphone switch off. Separately, Android's permission
+dialog paused the app, which the app treated as "went to background" and cancelled the first tap.
+
+Changes:
+- Standard mode (`continuous: false`): the recognizer captures the microphone itself. A session
+  ends after a pause of about 3 seconds; tapping again adds more text.
+- The language check is cached for 10 minutes, and the first start waits 400 ms after it, so the
+  probe's recognizer has been released ("busy"/"client" errors).
+- A transient error ("busy", "client", "too-many-requests", "unknown") within 3 seconds of
+  starting is retried once.
+- Every other ending is explained: nothing heard, microphone in use, language not downloaded
+  (with download), or "stopped unexpectedly (code: …)".
+- Recognizer errors are logged as `[DICTATION] recognizer error: <code>` in Metro or
+  `adb logcat`. Transcripts are never logged.
+- Only a real move to the background stops listening, never the permission dialog.
+

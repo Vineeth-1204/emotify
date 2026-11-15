@@ -501,6 +501,18 @@
       "build_missing_microphone": {
         "title": "Voice typing isn't set up in this version",
         "body": "This version of Emotify was built without microphone access, so your phone can't offer it. Please install the latest test version. You can keep typing as usual."
+      },
+      "no_speech": {
+        "title": "I didn't catch that",
+        "body": "Tap the microphone and start speaking. It stops after a short pause; tap again to add more."
+      },
+      "mic_in_use": {
+        "title": "Microphone is busy",
+        "body": "Another app may be using the microphone (a call, a recorder or a voice assistant). Close it and try again, or keep typing."
+      },
+      "recognition_failed": {
+        "title": "Voice typing stopped",
+        "body": "Your phone's speech recognition stopped unexpectedly (code: {{code}}). Please try again, or keep typing."
       }
     }
   },

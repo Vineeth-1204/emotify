@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import fs from "fs";
 import path from "path";
-import { DictationController, appendDictation, chooseOnDeviceLocale, resolvePermissionIssue, MAX_SESSION_MS, type SpeechModuleLike } from "./dictation";
+import { DictationController, appendDictation, chooseOnDeviceLocale, issueForRecognizerError, resolvePermissionIssue, MAX_SESSION_MS, type DictationProblem, type SpeechModuleLike } from "./dictation";
 
 const read = (p: string) => fs.readFileSync(path.resolve(__dirname, "..", p), "utf-8");
 
@@ -25,10 +25,18 @@ const android = { platform: "android", androidApiLevel: 34 };
 
 function setup(overrides: Partial<SpeechModuleLike> = {}, env = android, installed?: string[]) {
   const { mod, calls } = fakeModule(overrides, installed);
-  const c = new DictationController(() => mod, env);
+  (mod as any).probes = 0;
+  const probe = mod.getSupportedLocales;
+  mod.getSupportedLocales = async (o) => {
+    (mod as any).probes++;
+    return probe(o);
+  };
+  const c = new DictationController(() => mod, env, { settleMs: 0, retryDelayMs: 0 });
   const field = { value: "" };
   const onText = (t: string) => (field.value = t);
-  return { c, calls, field, onText };
+  const problems: DictationProblem[] = [];
+  c.onProblem((p) => problems.push(p));
+  return { c, calls, field, onText, problems, mod };
 }
 
 const result = (transcript: string, isFinal = false) => ({ isFinal, results: [{ transcript }] });
@@ -142,6 +150,86 @@ describe("sessions", () => {
     c.handleEnd();
     expect(field.value).toBe("partial words");
     expect(c.snapshot().status).toBe("idle");
+  });
+});
+
+describe("the recognizer ending a session (the 'Listening… then nothing' problem)", () => {
+  const wait = () => new Promise((r) => setTimeout(r, 5));
+
+  test("uses the standard microphone mode, not app-side audio streaming", async () => {
+    const { c, calls, onText } = setup();
+    await c.start("s:f", "", onText, "en");
+    const [, options] = calls.find((x) => x[0] === "start");
+    expect(options.continuous).toBe(false);
+    expect(options.recordingOptions).toEqual({ persist: false });
+  });
+
+  test("the language check is cached, so later taps don't probe the recognizer again", async () => {
+    const { c, onText, mod } = setup();
+    await c.start("s:f", "", onText, "en");
+    c.handleEnd();
+    await c.start("s:f", "", onText, "en");
+    expect((mod as any).probes).toBe(1);
+  });
+
+  test("a transient error right after starting is retried once, then reported with its code", async () => {
+    const { c, calls, onText, problems } = setup();
+    await c.start("s:f", "", onText, "en");
+    c.handleError({ error: "busy" });
+    c.handleEnd();
+    await wait();
+    expect(calls.filter((x) => x[0] === "start")).toHaveLength(2);
+    expect(c.snapshot().status).toBe("listening");
+    expect(problems).toEqual([]);
+    c.handleError({ error: "client" });
+    c.handleEnd();
+    expect(problems).toEqual([{ target: "s:f", issue: "recognition_failed", code: "client", downloadLocale: undefined }]);
+    expect(c.snapshot().status).toBe("idle");
+  });
+
+  test("each recognizer error is explained instead of silently ending", async () => {
+    const run = async (code: string, speech = "") => {
+      const t = setup();
+      await t.c.start("s:f", "", t.onText, "hi");
+      if (speech) t.c.handleResult(result(speech));
+      t.c.handleError({ error: code });
+      t.c.handleEnd();
+      return t;
+    };
+    expect((await run("audio-capture")).problems[0]).toMatchObject({ issue: "mic_in_use", code: "audio-capture" });
+    const lang = await run("language-not-supported");
+    expect(lang.problems[0]).toMatchObject({ issue: "model_not_installed", downloadLocale: "hi-IN" });
+    expect((await run("no-speech")).problems[0]).toMatchObject({ issue: "no_speech" });
+    expect((await run("no-speech", "hello")).problems).toEqual([]); // words were heard: nothing to explain
+    expect((await run("aborted")).problems).toEqual([]);
+  });
+
+  test("ending with nothing heard says so; a stop by the student says nothing", async () => {
+    const quiet = setup();
+    await quiet.c.start("s:f", "", quiet.onText, "en");
+    quiet.c.handleEnd();
+    expect(quiet.problems.map((p) => p.issue)).toEqual(["no_speech"]);
+    const stopped = setup();
+    await stopped.c.start("s:f", "", stopped.onText, "en");
+    stopped.c.stop();
+    stopped.c.handleEnd();
+    expect(stopped.problems).toEqual([]);
+  });
+
+  test("error mapping", () => {
+    expect(issueForRecognizerError("not-allowed", false)).toBe("permission_blocked");
+    expect(issueForRecognizerError("speech-timeout", false)).toBe("no_speech");
+    expect(issueForRecognizerError("network", false)).toBe("recognition_failed");
+  });
+
+  test("the permission dialog no longer cancels the first tap; errors are logged with their code", () => {
+    const hook = read("hooks/useDictation.ts");
+    expect(hook).toContain('state === "background" && getController().snapshot().status !== "starting"');
+    expect(hook).toContain("[DICTATION] recognizer error");
+    expect(hook).toContain("getController().onProblem(");
+    const en = JSON.parse(read("i18n/locales/en.json"));
+    for (const k of ["no_speech", "mic_in_use", "recognition_failed"]) expect(en.dictation.issue[k].title, k).toEqual(expect.any(String));
+    expect(en.dictation.issue.recognition_failed.body).toContain("{{code}}");
   });
 });
 

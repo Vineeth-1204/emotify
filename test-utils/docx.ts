@@ -6,7 +6,7 @@ import fs from "fs";
 import path from "path";
 import zlib from "zlib";
 
-export const PRODUCT_SPEC_PATH = path.resolve(__dirname, "..", "priyanka app .docx");
+export const PRODUCT_SPEC_PATH = path.resolve(__dirname, "..", "docs", "priyanka app .docx");
 
 export function readZipEntry(zipPath: string, entryName: string): string {
   const buf = fs.readFileSync(zipPath);

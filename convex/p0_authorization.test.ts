@@ -7,10 +7,17 @@
  *    and their self-service views; explicit staff roles are never treated as students.
  */
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";
 import { isStudentRole } from "./authz";
+
+// The appointment fixtures use fixed dates; pin "today" so they stay in the future.
+beforeAll(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-10-20T09:00:00Z"));
+});
+afterAll(() => vi.useRealTimers());
 
 const modules = import.meta.glob("./**/*.ts");
 

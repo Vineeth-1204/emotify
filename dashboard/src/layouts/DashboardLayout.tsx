@@ -12,8 +12,7 @@ import {
   LayoutDashboard,
   LogOut,
   UserCog,
-  Users,
-} from "lucide-react";
+  Users, ClipboardList } from "lucide-react";
 
 export default function DashboardLayout() {
   const { user, isAdmin, logout } = useDashboardAuth();
@@ -64,6 +63,11 @@ export default function DashboardLayout() {
           {isAdmin && (
             <NavLink to="/ai-monitoring" className={({ isActive }) => isActive ? "nav-item active" : "nav-item"}>
               <BrainCircuit size={18} /> AI Monitoring
+            </NavLink>
+          )}
+          {isAdmin && (
+            <NavLink to="/beta-report" className={({ isActive }) => isActive ? "nav-item active" : "nav-item"}>
+              <ClipboardList size={18} /> Beta report
             </NavLink>
           )}
 

@@ -24,6 +24,14 @@ export default function DemographicsScreen() {
     clerkId: user!.id,
   } : "skip");
 
+  React.useEffect(() => {
+    if (appUser === undefined) return;
+    const hasDemographics = appUser?.alias && appUser?.age && appUser?.campus && appUser?.department;
+    if (appUser?.onboardingComplete || hasDemographics) {
+      router.replace("/(auth)/(tabs)");
+    }
+  }, [appUser]);
+
   const completeOnboarding = useMutation(api.users.completeOnboarding);
 
   const assignedName = appUser?.full_name || user?.full_name || "Student";

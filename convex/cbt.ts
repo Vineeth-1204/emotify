@@ -1441,7 +1441,9 @@ async function handleMockResponse(ctx: any, sessionId: Id<"cbtSessions">, sessio
           automaticThought: userMsg,
           emotion: "Anxiety",
           emotionBefore: 7,
-          thinkingStyle: matchedTp.name,
+          // thinkingStyle is the student-friendly phrase (as in the live Gemini path); the
+          // catalogue's clinical name goes in cbtDistortion / thinkingPatternId.
+          thinkingStyle: "I'm being hard on myself",
           thinkingPatternId: matchedTp.id,
           cbtDistortion: matchedTp.name,
           challengeQuestions: [...matchedTp.challengeQuestions],

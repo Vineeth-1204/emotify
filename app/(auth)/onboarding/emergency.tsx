@@ -1,17 +1,33 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { View, Text, TextInput, StyleSheet, ScrollView, KeyboardAvoidingView, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Colors } from "@/constants/Colors";
 import { Theme } from "@/constants/Theme";
 import { Button } from "@/components/ui/Button";
+import { useAppAuth } from "@/utils/auth";
+import { useQuery, useConvexAuth } from "convex/react";
+import { api } from "@/convex/_generated/api";
 
 import { ShieldSafetyIcon } from "@/components/svg/system";
 
 export default function EmergencyContactScreen() {
   const router = useRouter();
+  const { user, isAuthenticated } = useAppAuth();
+  const { isAuthenticated: isConvexAuthed } = useConvexAuth();
+  const isReady = Boolean(isAuthenticated && isConvexAuthed && user?.id);
+  const dbUser = useQuery(api.users.getByClerkId, isReady ? { clerkId: user!.id } : "skip");
+
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
+
+  useEffect(() => {
+    if (dbUser === undefined) return;
+    const hasDemographics = dbUser?.alias && dbUser?.age && dbUser?.campus && dbUser?.department;
+    if (dbUser?.onboardingComplete || hasDemographics) {
+      router.replace("/(auth)/(tabs)");
+    }
+  }, [dbUser]);
 
   const insets = useSafeAreaInsets();
 
@@ -80,7 +96,7 @@ export default function EmergencyContactScreen() {
       <Button
         title="Continue"
         onPress={() =>
-          router.push({
+          router.replace({
             pathname: "/(auth)/onboarding/demographics",
             params: {
               emergencyName: name.trim(),

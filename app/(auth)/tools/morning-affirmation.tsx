@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from "react";
+import { DictationButton } from "@/components/ui/DictationButton";
+import { useDictation } from "@/hooks/useDictation";
 import {
   View,
   Text,
@@ -29,6 +31,8 @@ import {
 const { width } = Dimensions.get("window");
 
 export default function MorningAffirmationScreen() {
+  // Voice-to-text for the free-text reflection (on-device; never auto-submitted).
+  const dictation = useDictation();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const todayStr = getLocalDateString();
@@ -351,6 +355,14 @@ export default function MorningAffirmationScreen() {
                 numberOfLines={3}
                 maxLength={200}
                 autoFocus
+              />
+            )}
+            {isCustomMode && (
+              <DictationButton
+                dictation={dictation}
+                field="customIntention"
+                value={customText}
+                onChangeText={(txt) => setCustomText(txt.slice(0, 200))}
               />
             )}
           </TouchableOpacity>

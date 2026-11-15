@@ -324,7 +324,7 @@ export default function EmotionMapScreen() {
       }
       if (step === 2) {
         if (contextualPrimary) {
-          router.back();
+          router.replace("/(auth)/(tabs)");
           return true;
         }
         setStep(1);
@@ -350,7 +350,9 @@ export default function EmotionMapScreen() {
         router.replace("/(auth)/(tabs)");
         return true;
       }
-      return false;
+      // Step 1: exiting emotion check-in safely redirects to Home page
+      router.replace("/(auth)/(tabs)");
+      return true;
     };
 
     const sub = BackHandler.addEventListener("hardwareBackPress", onBackPress);
@@ -839,7 +841,7 @@ export default function EmotionMapScreen() {
                 } else if (step === 2 && discovery.kind !== "choose") {
                   handleDiscoveryBack();
                 } else if (step === 2) {
-                  if (contextualPrimary) router.back();
+                  if (contextualPrimary) router.replace("/(auth)/(tabs)");
                   else setStep(1);
                 } else if (step === 3) {
                   setStep(2);
@@ -852,7 +854,7 @@ export default function EmotionMapScreen() {
                 } else if (step === 7 || step === 8) {
                   router.replace("/(auth)/(tabs)");
                 } else {
-                  router.back();
+                  router.replace("/(auth)/(tabs)");
                 }
               }}
               style={styles.backBtn}

@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "node -e \"if (!require('fs').existsSync('../node_modules/convex')) { console.log('Installing root deps for Convex types...'); try { require('child_process').execSync('npm --prefix .. install --legacy-peer-deps', {stdio: 'inherit'}); } catch(e){} }\" && tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview"
   },

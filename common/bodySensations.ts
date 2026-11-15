@@ -1,7 +1,7 @@
 /**
  * Body sensations for the guided check-in ("How does it feel in your body?").
  *
- * Source: the product specification ("priyanka app .docx"), emotion table, column
+ * Source: the product specification ("docs/priyanka app .docx"), emotion table, column
  * "Possible body sensations" (rows E01–E08). Wording is kept as written there.
  *
  * Each sensation maps to the existing body-figure regions (Head, Shoulders, Chest, Stomach,

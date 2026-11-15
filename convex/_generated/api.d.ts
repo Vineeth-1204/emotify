@@ -13,6 +13,8 @@ import type * as appointments from "../appointments.js";
 import type * as audit from "../audit.js";
 import type * as authHelpers from "../authHelpers.js";
 import type * as authz from "../authz.js";
+import type * as betaFeedback from "../betaFeedback.js";
+import type * as betaReport from "../betaReport.js";
 import type * as avatarAssets from "../avatarAssets.js";
 import type * as avatarMedia from "../avatarMedia.js";
 import type * as breathing from "../breathing.js";
@@ -81,6 +83,8 @@ declare const fullApi: ApiFromModules<{
   audit: typeof audit;
   authHelpers: typeof authHelpers;
   authz: typeof authz;
+  betaFeedback: typeof betaFeedback;
+  betaReport: typeof betaReport;
   avatarAssets: typeof avatarAssets;
   avatarMedia: typeof avatarMedia;
   breathing: typeof breathing;

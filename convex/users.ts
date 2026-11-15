@@ -1411,6 +1411,7 @@ const USER_OWNED_TABLES: Array<{ table: string; index: string; field: string; id
   // Device push tokens (stored under the canonical id).
   { table: "pushTokens", index: "by_userId", field: "userId" },
   { table: "emotyGuideDismissals", index: "by_userId", field: "userId" },
+  { table: "betaFeedback", index: "by_userId", field: "userId" },
   // The student's own assignment history. Rows where the deleted user was the counsellor
   // belong to other students' history and are kept (already ended by endAssignmentsForDeletedUser).
   { table: "counsellorAssignments", index: "by_student_and_active", field: "studentId", idOnly: true },

@@ -62,7 +62,9 @@ describe("CBT Therapy Module State Machine", () => {
     expect(sessionState3!.situation).toBe("Stressful event");
     expect(sessionState3!.automaticThought).toBe("Yes, I really worry about that.");
     expect(sessionState3!.thinkingStyle).toBe("I'm being hard on myself");
-    expect(sessionState3!.cbtDistortion).toBe("All-or-Nothing Thinking");
+    // Distortion names come from the TP01-TP15 catalogue (TP02 replaced "All-or-Nothing Thinking").
+    expect(sessionState3!.cbtDistortion).toBe("Black-and-White Thinking");
+    expect(sessionState3!.thinkingPatternId).toBe("TP02");
     expect(sessionState3!.challengeQuestions).toHaveLength(3);
     expect(sessionState3!.stepIndex).toBe(0);
 

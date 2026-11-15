@@ -33,6 +33,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BlurView } from "expo-blur";
 import { useAvatar } from "@/context/AvatarContext";
 import { useLanguage } from "@/context/LanguageContext";
+import { useDictation, useDictationField } from "@/hooks/useDictation";
 import { useVoice } from "@/context/VoiceContext";
 import { EmotyAvatar, AvatarState } from "@/components/avatar/EmotyAvatar";
 import { ShieldSafetyIcon } from "@/components/svg/system";
@@ -207,11 +208,12 @@ export default function AICompanionScreen() {
 
   const flatListRef = useRef<FlatList>(null);
   const inputRef = useRef<TextInput>(null);
-  const recognitionRef = useRef<any>(null);
-
   const [inputVal, setInputVal] = useState("");
   const [isAiLoading, setIsAiLoading] = useState(false);
-  const [isListening, setIsListening] = useState(false);
+  // On-device voice-to-text into the message box (never sent automatically).
+  const dictation = useDictation();
+  const messageDictation = useDictationField(dictation, "message", inputVal, setInputVal);
+  const isListening = messageDictation.isListening;
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [showSafetyBanner, setShowSafetyBanner] = useState(false);
 
@@ -277,61 +279,10 @@ export default function AICompanionScreen() {
     };
   }, []);
 
-  // Voice recognition toggle (STT)
+  // Voice-to-text (STT): adds the student's words to the message box; Send stays manual.
   const toggleVoiceInput = () => {
-    if (Platform.OS === "web" && typeof window !== "undefined") {
-      const SpeechRecognition =
-        (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      if (SpeechRecognition) {
-        if (isListening) {
-          recognitionRef.current?.stop();
-          setIsListening(false);
-        } else {
-          try {
-            const recognition = new SpeechRecognition();
-            recognition.continuous = false;
-            recognition.interimResults = true;
-            recognition.lang = "en-US";
-
-            recognition.onstart = () => {
-              setIsListening(true);
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-            };
-
-            recognition.onresult = (event: any) => {
-              const transcript = Array.from(event.results)
-                .map((res: any) => res[0].transcript)
-                .join("");
-              setInputVal(transcript);
-            };
-
-            recognition.onerror = (event: any) => {
-              console.log("Speech recognition error", event.error);
-              setIsListening(false);
-            };
-
-            recognition.onend = () => {
-              setIsListening(false);
-            };
-
-            recognitionRef.current = recognition;
-            recognition.start();
-          } catch (e) {
-            console.error(e);
-            setIsListening(false);
-          }
-        }
-        return;
-      }
-    }
-
-    // Native fallback or unsupported browser: guidance to use keyboard mic
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-    Alert.alert(
-      "Voice Input",
-      "You can dictate by tapping the microphone key on your device keyboard, or type your message directly.",
-      [{ text: "Got it", onPress: () => inputRef.current?.focus() }]
-    );
+    messageDictation.toggle();
   };
 
   // Text-to-Speech (TTS) using ElevenLabs

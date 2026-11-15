@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { expect, test, describe } from "vitest";
+import { expect, test, describe, vi } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";
 import { assignAllPatientsToCounsellors } from "../test-utils/identity";
@@ -346,41 +346,48 @@ describe("P14 Step 5: Final Security & Cross-Cutting Verification Suite", () => 
   });
 
   test("FINAL-P2-03: Status synchronization across appointments and requests is idempotent and safe", async () => {
-    const { authedCounselor, authedStudentA, studentAId, t } = await setupFinalEnvironment();
+    // The appointment date below is fixed; pin "today" so it stays in the future.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-20T09:00:00Z"));
+    try {
+      const { authedCounselor, authedStudentA, studentAId, t } = await setupFinalEnvironment();
 
-    const apptId = await authedStudentA.mutation(api.appointments.createAppointmentRequest, {
-      title: "Follow-up Consultation",
-      userId: studentAId,
-      createdBy: "user",
-      date: "2026-10-30",
-      time: "03:00 PM",
-      reason: "Post-session review",
-    });
+      const apptId = await authedStudentA.mutation(api.appointments.createAppointmentRequest, {
+        title: "Follow-up Consultation",
+        userId: studentAId,
+        createdBy: "user",
+        date: "2026-10-30",
+        time: "03:00 PM",
+        reason: "Post-session review",
+      });
 
-    // Accept appointment
-    const res1 = await authedCounselor.mutation(api.appointments.updateAppointmentStatus, {
-      appointmentId: apptId,
-      status: "accepted",
-    });
-    expect(res1.success).toBe(true);
+      // Accept appointment
+      const res1 = await authedCounselor.mutation(api.appointments.updateAppointmentStatus, {
+        appointmentId: apptId,
+        status: "accepted",
+      });
+      expect(res1.success).toBe(true);
 
-    let notifCount1 = 0;
-    await t.run(async (ctx) => {
-      const notifs = await ctx.db.query("notifications").collect();
-      notifCount1 = notifs.length;
-    });
+      let notifCount1 = 0;
+      await t.run(async (ctx) => {
+        const notifs = await ctx.db.query("notifications").collect();
+        notifCount1 = notifs.length;
+      });
 
-    // Repeated call with identical status
-    const res2 = await authedCounselor.mutation(api.appointments.updateAppointmentStatus, {
-      appointmentId: apptId,
-      status: "accepted",
-    });
-    expect(res2.success).toBe(true);
+      // Repeated call with identical status
+      const res2 = await authedCounselor.mutation(api.appointments.updateAppointmentStatus, {
+        appointmentId: apptId,
+        status: "accepted",
+      });
+      expect(res2.success).toBe(true);
 
-    // Verify zero duplicate notifications
-    await t.run(async (ctx) => {
-      const notifs = await ctx.db.query("notifications").collect();
-      expect(notifs.length).toBe(notifCount1);
-    });
+      // Verify zero duplicate notifications
+      await t.run(async (ctx) => {
+        const notifs = await ctx.db.query("notifications").collect();
+        expect(notifs.length).toBe(notifCount1);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

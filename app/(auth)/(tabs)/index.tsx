@@ -11,6 +11,7 @@ import {
   getEmotionMapPrimaryForDailyMood,
 } from "@/common/phase6EmotionEntry";
 import { getEmotyNextStep, EMOTY_STEP_ROUTES, type EmotyNextActionType } from "@/common/homeEmotyAction";
+import { BetaBadge } from "@/components/BetaNotice";
 import { getEmotyPresence, type CheckinMood } from "@/common/emotyPresence";
 import { EmotyPresence } from "@/components/avatar/EmotyPresence";
 import { useThemeColors, useStyles } from "@/context/MoodThemeContext";
@@ -667,7 +668,10 @@ export default function DashboardScreen() {
         <View style={styles.header}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
             <View style={{ flex: 1, marginRight: 8 }}>
-              <Text style={styles.greeting}>{getGreeting()}, {alias}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <Text style={styles.greeting}>{getGreeting()}, {alias}</Text>
+                <BetaBadge />
+              </View>
               <Text style={styles.date}>{new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</Text>
             </View>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>

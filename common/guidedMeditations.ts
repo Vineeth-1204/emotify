@@ -1,7 +1,7 @@
 /**
  * Optional guided meditations for the Emotion Map check-in.
  *
- * Source: the product specification ("priyanka app .docx", "Step 2 – Choose the strongest
+ * Source: the product specification ("docs/priyanka app .docx", "Step 2 – Choose the strongest
  * emotion"), which links one YouTube meditation to each of the eight canonical emotions.
  * URLs are copied verbatim from that document; a test re-reads it to keep them in sync.
  *

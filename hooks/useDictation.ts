@@ -34,8 +34,16 @@ function loadSpeechModule(): SpeechModuleLike | null {
   if (speechModule && !listenersAttached) {
     const mod = speechModule as any;
     mod.addListener("result", (e: any) => controller?.handleResult(e));
-    mod.addListener("error", (e: any) => controller?.handleError(e));
-    mod.addListener("end", () => controller?.handleEnd());
+    mod.addListener("error", (e: any) => {
+      // Diagnosis aid (Metro / adb logcat): error code and message only, never transcripts.
+      console.warn(`[DICTATION] recognizer error: ${e?.error} (${e?.code ?? "-"}) ${e?.message ?? ""}`);
+      controller?.handleError(e);
+    });
+    mod.addListener("start", () => console.log("[DICTATION] recognizer started"));
+    mod.addListener("end", () => {
+      console.log("[DICTATION] recognizer ended");
+      controller?.handleEnd();
+    });
     listenersAttached = true;
   }
   return speechModule ?? null;
@@ -78,17 +86,19 @@ export function useDictation(): Dictation {
     useCallback(() => () => getController().abortOwner(owner), [owner])
   );
 
+  // The app going to the background stops the microphone. Not while starting: Android pauses the
+  // app while its permission dialog is open, which must not cancel the request being answered.
   useEffect(() => {
     const sub = AppState.addEventListener("change", (state) => {
-      if (state !== "active") getController().abortOwner(owner);
+      if (state === "background" && getController().snapshot().status !== "starting") getController().abortOwner(owner);
     });
     return () => sub.remove();
   }, [owner]);
 
   const explain = useCallback(
-    (issue: DictationIssue, downloadLocale?: string) => {
+    (issue: DictationIssue, downloadLocale?: string, code?: string) => {
       const title = t(`dictation.issue.${issue}.title`);
-      const body = t(`dictation.issue.${issue}.body`);
+      const body = t(`dictation.issue.${issue}.body`, { code: code ?? "unknown" });
       if (issue === "model_not_installed" && downloadLocale) {
         Alert.alert(title, body, [
           { text: t("dictation.notNow"), style: "cancel" },
@@ -116,6 +126,15 @@ export function useDictation(): Dictation {
       Alert.alert(title, body, [{ text: t("dictation.ok") }]);
     },
     [t]
+  );
+
+  // Problems that end a session after it started (recognizer errors, nothing heard).
+  useEffect(
+    () =>
+      getController().onProblem((p) => {
+        if (p.target.startsWith(`${owner}:`)) explain(p.issue, p.downloadLocale, p.code);
+      }),
+    [owner, explain]
   );
 
   const toggle = useCallback(

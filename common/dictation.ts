@@ -34,6 +34,9 @@ export type DictationIssue =
   | "permission_denied"
   | "permission_blocked"
   | "build_missing_microphone"
+  | "no_speech"
+  | "mic_in_use"
+  | "recognition_failed"
   | "failed";
 
 /** The parts of ExpoSpeechRecognitionModule this feature uses. */
@@ -65,6 +68,67 @@ export const DICTATION_LOCALES: Record<string, string> = {
 export const MAX_SESSION_MS = 2 * 60 * 1000;
 /** If the recognizer never reports "end" after a stop/abort, stop waiting for it after this long. */
 const END_GRACE_MS = 3000;
+/** A language check stays valid this long, so a tap doesn't probe the recognizer every time. */
+const AVAILABILITY_TTL_MS = 10 * 60 * 1000;
+/**
+ * The locale probe (getSupportedLocales) binds its own on-device recognizer; starting another
+ * immediately can fail with "busy"/"client". Wait this long after a fresh probe.
+ */
+const PROBE_SETTLE_MS = 400;
+/** A transient recognizer error this soon after starting is retried once. */
+const RETRY_WINDOW_MS = 3000;
+const RETRY_DELAY_MS = 600;
+const TRANSIENT_ERRORS = new Set(["busy", "client", "too-many-requests", "unknown"]);
+
+/**
+ * Recognition settings. Not continuous: in continuous mode the library records the microphone
+ * itself and streams it to the recognizer (EXTRA_AUDIO_SOURCE + segmented session), which some
+ * phones' on-device recognizers reject at once. In this mode the recognizer captures the
+ * microphone itself; a session ends after a pause and the next tap appends more text.
+ */
+export function recognitionOptions(locale: string) {
+  return {
+    lang: locale,
+    interimResults: true,
+    continuous: false,
+    maxAlternatives: 1,
+    requiresOnDeviceRecognition: true,
+    addsPunctuation: false,
+    recordingOptions: { persist: false },
+    androidIntentOptions: {
+      // Give students time to think between phrases (not every recognizer honours these).
+      EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS: 3000,
+      EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS: 3000,
+    },
+  };
+}
+
+/** What a recognizer error means for the student. Returns null when nothing needs saying. */
+export function issueForRecognizerError(code: string, gotSpeech: boolean): DictationIssue | null {
+  switch (code) {
+    case "aborted":
+      return null;
+    case "no-speech":
+    case "speech-timeout":
+      return gotSpeech ? null : "no_speech";
+    case "not-allowed":
+      return "permission_blocked";
+    case "language-not-supported":
+      return "model_not_installed";
+    case "audio-capture":
+      return "mic_in_use";
+    default:
+      return "recognition_failed";
+  }
+}
+
+export interface DictationProblem {
+  target: string;
+  issue: DictationIssue;
+  /** Recognizer error code, for diagnosis (e.g. "client", "busy"). */
+  code?: string;
+  downloadLocale?: string;
+}
 
 const normalize = (locale: string) => locale.replace(/_/g, "-").toLowerCase();
 const languageOf = (locale: string) => normalize(locale).split("-")[0];
@@ -126,6 +190,12 @@ interface Session {
   lastEmitted: string;
   /** Recent texts this session put into the input; renders can lag behind fast results. */
   emitted: string[];
+  locale?: string;
+  appLanguage: string;
+  startedAt: number;
+  gotSpeech: boolean;
+  error?: { code: string; message?: string };
+  retried: boolean;
 }
 
 export type StartResult = { started: true } | { started: false; issue: DictationIssue; downloadLocale?: string; ignored?: false } | { started: false; ignored: true };
@@ -137,12 +207,27 @@ export class DictationController {
   private nativeActive = false;
   private nativeReleasedAt = 0;
   private sessionTimer: ReturnType<typeof setTimeout> | null = null;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private listeners = new Set<(s: DictationSnapshot) => void>();
+  private problemListeners = new Set<(p: DictationProblem) => void>();
+  private availabilityCache = new Map<string, { locale: string; at: number }>();
+  private readonly settleMs: number;
+  private readonly retryDelayMs: number;
 
   constructor(
     private readonly getModule: () => SpeechModuleLike | null,
-    private readonly env: DictationEnv
-  ) {}
+    private readonly env: DictationEnv,
+    timing: { settleMs?: number; retryDelayMs?: number } = {}
+  ) {
+    this.settleMs = timing.settleMs ?? PROBE_SETTLE_MS;
+    this.retryDelayMs = timing.retryDelayMs ?? RETRY_DELAY_MS;
+  }
+
+  /** Problems that end a session after it started (the screen explains them). */
+  onProblem(listener: (p: DictationProblem) => void): () => void {
+    this.problemListeners.add(listener);
+    return () => this.problemListeners.delete(listener);
+  }
 
   snapshot(): DictationSnapshot {
     return { status: this.status, target: this.session?.target ?? null };
@@ -177,8 +262,12 @@ export class DictationController {
     try {
       if (!mod.isRecognitionAvailable()) return { ok: false, issue: "service_unavailable" };
       if (!mod.supportsOnDeviceRecognition()) return { ok: false, issue: "on_device_unavailable" };
+      const cached = this.availabilityCache.get(appLanguage);
+      if (cached && Date.now() - cached.at < AVAILABILITY_TTL_MS) return { ok: true, locale: cached.locale };
       const choice = chooseOnDeviceLocale(appLanguage, await mod.getSupportedLocales({}));
       if (!choice.ok) return choice.issue === "model_not_installed" ? { ok: false, issue: choice.issue, downloadLocale: choice.downloadLocale } : { ok: false, issue: choice.issue };
+      this.availabilityCache.set(appLanguage, { locale: choice.locale, at: Date.now() });
+      if (this.settleMs > 0) await new Promise((r) => setTimeout(r, this.settleMs));
       return { ok: true, locale: choice.locale };
     } catch {
       return { ok: false, issue: "service_unavailable" };
@@ -191,7 +280,19 @@ export class DictationController {
    */
   async start(target: string, baseText: string, onText: (text: string) => void, appLanguage: string): Promise<StartResult> {
     if (this.status !== "idle" || this.isNativeBusy()) return { started: false, ignored: true };
-    this.session = { target, base: baseText, onText, finals: [], partial: "", lastEmitted: baseText, emitted: [baseText] };
+    this.session = {
+      target,
+      base: baseText,
+      onText,
+      finals: [],
+      partial: "",
+      lastEmitted: baseText,
+      emitted: [baseText],
+      appLanguage,
+      startedAt: Date.now(),
+      gotSpeech: false,
+      retried: false,
+    };
     this.setStatus("starting");
 
     const fail = (issue: DictationIssue, downloadLocale?: string): StartResult => {
@@ -215,16 +316,10 @@ export class DictationController {
     if (this.session?.target !== target) return { started: false, ignored: true };
 
     try {
+      this.session.locale = available.locale;
+      this.session.startedAt = Date.now();
       this.nativeActive = true;
-      mod.start({
-        lang: available.locale,
-        interimResults: true,
-        continuous: true,
-        maxAlternatives: 1,
-        requiresOnDeviceRecognition: true,
-        addsPunctuation: false,
-        recordingOptions: { persist: false },
-      });
+      mod.start(recognitionOptions(available.locale));
     } catch {
       this.nativeActive = false;
       return fail("failed");
@@ -268,6 +363,7 @@ export class DictationController {
     const s = this.session;
     if (!s || this.status === "idle") return;
     const transcript = (event.results?.[0]?.transcript ?? "").trim();
+    if (transcript) s.gotSpeech = true;
     if (event.isFinal) {
       if (transcript) s.finals.push(transcript);
       s.partial = "";
@@ -285,17 +381,54 @@ export class DictationController {
     }
   }
 
-  handleError(_event: { error: string }): void {
-    // "end" always follows an error; the session closes there. Partial text already shown stays.
+  handleError(event: { error: string; message?: string }): void {
+    // "end" always follows an error; the session closes (or retries) there.
+    if (this.session) this.session.error = { code: event.error, message: event.message };
   }
 
   handleEnd(): void {
     this.nativeActive = false;
     this.nativeReleasedAt = 0;
-    if (this.session) {
-      this.clearTimer();
-      this.finish();
+    const s = this.session;
+    if (!s) return;
+    const error = s.error;
+    s.error = undefined;
+
+    // A transient failure right after starting (recognizer still busy) is retried once.
+    if (error && TRANSIENT_ERRORS.has(error.code) && !s.retried && !s.gotSpeech && s.locale && Date.now() - s.startedAt < RETRY_WINDOW_MS && this.status === "listening") {
+      s.retried = true;
+      this.retryTimer = setTimeout(() => {
+        this.retryTimer = null;
+        if (this.session !== s || this.status !== "listening") return;
+        try {
+          this.nativeActive = true;
+          s.startedAt = Date.now();
+          this.getModule()?.start(recognitionOptions(s.locale!));
+        } catch {
+          this.nativeActive = false;
+          this.report(s, "recognition_failed", error.code);
+          this.clearTimer();
+          this.finish();
+        }
+      }, this.retryDelayMs);
+      return;
     }
+
+    this.clearTimer();
+    if (error) {
+      const issue = issueForRecognizerError(error.code, s.gotSpeech);
+      if (issue === "model_not_installed") this.availabilityCache.delete(s.appLanguage);
+      if (issue) this.report(s, issue, error.code, issue === "model_not_installed" ? s.locale : undefined);
+    } else if (!s.gotSpeech && this.status === "listening") {
+      // Ended by itself with nothing heard (no error from the recognizer).
+      this.report(s, "no_speech");
+    }
+    this.finish();
+  }
+
+  private report(s: Session, issue: DictationIssue, code?: string, downloadLocale?: string) {
+    const problem: DictationProblem = { target: s.target, issue, code, downloadLocale };
+    this.problemListeners.forEach((l) => l(problem));
   }
 
   private isNativeBusy(): boolean {
@@ -308,6 +441,8 @@ export class DictationController {
   }
 
   private finish() {
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
     this.session = null;
     this.setStatus("idle");
   }

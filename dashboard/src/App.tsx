@@ -15,6 +15,7 @@ import TrashBin from './pages/TrashBin';
 import CounsellorRequests from './pages/CounsellorRequests';
 import Assignments from './pages/Assignments';
 import Counsellors from './pages/Counsellors';
+import BetaReport from './pages/BetaReport';
 
 
 import Login from './pages/Login';
@@ -77,6 +78,7 @@ function App() {
                   <Route path="screenings" element={<ScreeningCentre />} />
                   <Route path="requests" element={<CounsellorRequests />} />
                   <Route path="ai-monitoring" element={<AdminRoute><AiMonitoring /></AdminRoute>} />
+                  <Route path="beta-report" element={<AdminRoute><BetaReport /></AdminRoute>} />
                   <Route path="notifications" element={<Notifications />} />
                 </Route>
               </Routes>

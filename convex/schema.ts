@@ -886,6 +886,22 @@ export default defineSchema({
     .index("by_userId_and_key", ["userId", "key"])
     .index("by_userId_and_active", ["userId", "active"]),
 
+  /** Beta testers' in-app feedback (Profile -> Send feedback). Removed with the account. */
+  betaFeedback: defineTable({
+    userId: v.string(),
+    role: v.string(),
+    category: v.string(), // "bug" | "confusing" | "idea" | "praise" | "other"
+    message: v.string(),
+    screen: v.optional(v.string()),
+    appVersion: v.optional(v.string()),
+    platform: v.optional(v.string()),
+    /** The safety classifier found crisis language: shown first in the daily report. */
+    flagged: v.boolean(),
+    createdAt: v.number(),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_createdAt", ["createdAt"]),
+
   /** "Not now" on one of Emoty's Home suggestions: hidden for the rest of that local day. */
   emotyGuideDismissals: defineTable({
     userId: v.string(),

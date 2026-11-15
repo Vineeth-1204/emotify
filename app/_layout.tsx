@@ -13,6 +13,7 @@ import { StatusBar } from "expo-status-bar";
 import { AuthProvider, useAppAuth } from "@/utils/auth";
 import { api } from "@/convex/_generated/api";
 import { usePushNotifications } from "@/hooks/usePushNotifications";
+import { BetaNotice } from "@/components/BetaNotice";
 import { MoodThemeProvider } from "@/context/MoodThemeContext";
 import { AvatarProvider } from "@/context/AvatarContext";
 import { LanguageProvider } from "@/context/LanguageContext";
@@ -90,6 +91,8 @@ function InitialLayout() {
     <>
       <StatusBar style="light" />
       <Slot />
+      {/* Test builds: one-time notice with what "beta" means and the crisis numbers. */}
+      <BetaNotice />
     </>
   );
 }

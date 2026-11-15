@@ -499,5 +499,52 @@
         "body": "Something went wrong. Please try again, or keep typing as usual."
       }
     }
+  },
+  "beta": {
+    "notice": {
+      "title": "You're testing Emotify",
+      "testVersion": "This is a test (beta) version. Some things may not work yet, and features may change during the test.",
+      "whoSees": "What you enter is stored on the test server. The person running this test can see it in the staff dashboard, as a counsellor would.",
+      "notTherapy": "Emotify supports your wellbeing but is not a replacement for professional help.",
+      "feedback": "Spotted a problem or have an idea? Use Profile → Send feedback.",
+      "crisisTitle": "If you ever need help right now",
+      "helplineNote": "free, 24/7",
+      "emergencyNote": "emergency",
+      "accept": "I understand"
+    }
+  },
+  "feedback": {
+    "profileRow": "Send feedback",
+    "title": "Send feedback",
+    "intro": "Tell us what worked, what broke or what confused you. Every message is read by the test team.",
+    "categoryLabel": "What is it about?",
+    "category": {
+      "bug": "Something broke",
+      "confusing": "Confusing",
+      "idea": "Idea",
+      "praise": "I liked this",
+      "other": "Other"
+    },
+    "messageLabel": "Your feedback",
+    "messagePlaceholder": "What happened, and what did you expect?",
+    "screenLabel": "Which screen? (optional)",
+    "screenPlaceholder": "e.g. Check-in, Companion, Appointments",
+    "send": "Send feedback",
+    "sending": "Sending…",
+    "supportNote": "Feedback is not monitored as a support channel. If you need help now, call {{name}} {{number}}.",
+    "ok": "OK",
+    "thanks": {
+      "title": "Thank you!",
+      "body": "Your feedback was sent to the test team."
+    },
+    "error": {
+      "title": "Couldn't send",
+      "body": "Please try again in a moment."
+    },
+    "crisis": {
+      "title": "Thank you for telling us",
+      "body": "Your feedback was sent. If you're going through a hard time, you don't have to wait: {{name}} {{number}} is free and open 24/7, or call {{emergency}} in an emergency.",
+      "call": "Call {{name}}"
+    }
   }
 }

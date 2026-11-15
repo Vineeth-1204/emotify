@@ -552,6 +552,19 @@ export default function ProfileScreen() {
                 <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
               </View>
             </TouchableOpacity>
+            <View style={styles.divider} />
+            <TouchableOpacity
+              style={styles.row}
+              onPress={() => router.push("/(auth)/feedback" as any)}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+            >
+              <View style={styles.rowLeft}>
+                <Ionicons name="chatbox-ellipses-outline" size={18} color={colors.textSecondary} style={styles.icon} />
+                <Text style={styles.label}>{t("feedback.profileRow")}</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
+            </TouchableOpacity>
           </View>
         </View>
 

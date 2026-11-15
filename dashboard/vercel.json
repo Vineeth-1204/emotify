@@ -1,6 +1,5 @@
 {
   "framework": "vite",
-  "installCommand": "npm install && (cd .. && npm install --legacy-peer-deps)",
   "rewrites": [
     {
       "source": "/(.*)",

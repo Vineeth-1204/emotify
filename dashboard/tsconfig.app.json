@@ -8,6 +8,10 @@
     "skipLibCheck": true,
 
     /* Bundler mode */
+    "paths": {
+      "convex": ["./node_modules/convex"],
+      "convex/*": ["./node_modules/convex/*"]
+    },
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": false,

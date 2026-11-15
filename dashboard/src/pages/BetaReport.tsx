@@ -83,7 +83,7 @@ export default function BetaReport() {
           {report.feedback.length > 0 && (
             <section className="glass-panel" style={panel} aria-labelledby="fb-today">
               <h2 id="fb-today" style={h2}><MessageSquare size={18} /> Feedback on this day</h2>
-              {report.feedback.map((f, i) => (
+              {report.feedback.map((f: any, i: number) => (
                 <div key={i} style={{ padding: "10px 0", borderBottom: "1px solid #F1F5F9" }}>
                   <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", ...muted }}>
                     {f.flagged && <span className="badge badge-red">Crisis language – check on this person</span>}

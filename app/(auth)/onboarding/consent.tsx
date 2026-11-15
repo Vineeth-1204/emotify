@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -6,10 +6,26 @@ import { useRouter } from "expo-router";
 import { Colors } from "@/constants/Colors";
 import { Theme } from "@/constants/Theme";
 import { Button } from "@/components/ui/Button";
+import { useAppAuth } from "@/utils/auth";
+import { useQuery, useConvexAuth } from "convex/react";
+import { api } from "@/convex/_generated/api";
 
 export default function ConsentScreen() {
   const router = useRouter();
+  const { user, isAuthenticated } = useAppAuth();
+  const { isAuthenticated: isConvexAuthed } = useConvexAuth();
+  const isReady = Boolean(isAuthenticated && isConvexAuthed && user?.id);
+  const dbUser = useQuery(api.users.getByClerkId, isReady ? { clerkId: user!.id } : "skip");
+
   const [agreed, setAgreed] = useState(false);
+
+  useEffect(() => {
+    if (dbUser === undefined) return;
+    const hasDemographics = dbUser?.alias && dbUser?.age && dbUser?.campus && dbUser?.department;
+    if (dbUser?.onboardingComplete || hasDemographics) {
+      router.replace("/(auth)/(tabs)");
+    }
+  }, [dbUser]);
 
   const insets = useSafeAreaInsets();
 
@@ -74,7 +90,7 @@ export default function ConsentScreen() {
       <Button
         title="Continue"
         onPress={() =>
-          router.push("/(auth)/onboarding/emergency")
+          router.replace("/(auth)/onboarding/emergency")
         }
         disabled={!agreed}
         size="lg"

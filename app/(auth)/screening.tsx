@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { View, StyleSheet, ActivityIndicator, Text, ScrollView, TouchableOpacity, Linking } from "react-native";
+import { View, StyleSheet, ActivityIndicator, Text, ScrollView, TouchableOpacity, Linking, BackHandler } from "react-native";
 import { useRouter } from "expo-router";
 import { useAppAuth } from "@/utils/auth";
 import { useMutation, useQuery, useConvexConnectionState } from "convex/react";
@@ -103,6 +103,18 @@ export default function ScreeningScreen() {
   const safetyStatus = useQuery(api.triage.getMySafetyStatus, user?.id ? {} : "skip");
 
   const isForceRetest = !!safetyStatus?.forceRetest;
+
+  useEffect(() => {
+    const onBackPress = () => {
+      if (selectedInstrument !== null) {
+        setSelectedInstrument(null);
+        return true;
+      }
+      return true; // prevent hardware back from popping back into completed onboarding
+    };
+    const sub = BackHandler.addEventListener("hardwareBackPress", onBackPress);
+    return () => sub.remove();
+  }, [selectedInstrument]);
 
   // Load persisted progress on mount/user change
   useEffect(() => {

@@ -1,5 +1,5 @@
-import React from "react";
-import { View, Text, StyleSheet, ScrollView, ActivityIndicator, Linking, TouchableOpacity } from "react-native";
+import React, { useEffect } from "react";
+import { View, Text, StyleSheet, ScrollView, ActivityIndicator, Linking, TouchableOpacity, BackHandler } from "react-native";
 import { useRouter } from "expo-router";
 import { useQuery, useConvexConnectionState } from "convex/react";
 import { LinearGradient } from "expo-linear-gradient";
@@ -50,6 +50,15 @@ function ScreeningResult() {
   const state = resultScreenState(summary, connection);
 
   const goHome = () => router.replace({ pathname: "/(auth)/(tabs)", params: { from: "screening" } } as any);
+
+  useEffect(() => {
+    const onBackPress = () => {
+      goHome();
+      return true;
+    };
+    const sub = BackHandler.addEventListener("hardwareBackPress", onBackPress);
+    return () => sub.remove();
+  }, []);
   const run = (action: ScreeningAction) => {
     switch (action) {
       case "home":

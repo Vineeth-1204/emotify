@@ -22,6 +22,8 @@ import { api } from "@/convex/_generated/api";
 import { Colors } from "@/constants/Colors";
 import { Theme } from "@/constants/Theme";
 import { Button } from "@/components/ui/Button";
+import { DictationButton } from "@/components/ui/DictationButton";
+import { useDictation } from "@/hooks/useDictation";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
@@ -259,6 +261,10 @@ export default function ReframeScreen() {
 
   // Support mode states
   const [supportTab, setSupportTab] = useState<string | null>(null);
+  // Support Mode free writing: kept on this screen only, never saved (unchanged behaviour).
+  const [supportWriting, setSupportWriting] = useState("");
+  // Voice-to-text for this screen's free-text fields (on-device; never auto-submitted).
+  const dictation = useDictation();
 
   const scrollRef = useRef<ScrollView>(null);
   const chatInputRef = useRef<TextInput>(null);
@@ -694,7 +700,10 @@ export default function ReframeScreen() {
                     multiline
                     placeholder="Start writing here..."
                     placeholderTextColor={Colors.textMuted}
+                    value={supportWriting}
+                    onChangeText={setSupportWriting}
                   />
+                  <DictationButton dictation={dictation} field="supportWriting" value={supportWriting} onChangeText={setSupportWriting} />
                 </View>
               )}
             </View>
@@ -928,6 +937,7 @@ export default function ReframeScreen() {
                 placeholderTextColor={Colors.textMuted}
                 textAlignVertical="top"
               />
+              <DictationButton dictation={dictation} field="balancedThought" value={editedBalancedThought} onChangeText={setEditedBalancedThought} />
 
               <Button
                 title="Save Balanced Thought"
@@ -1070,6 +1080,7 @@ export default function ReframeScreen() {
                   placeholderTextColor={Colors.textMuted}
                   multiline
                 />
+                <DictationButton dictation={dictation} field="chat" value={inputText} onChangeText={setInputText} variant="icon" />
                 {(currentStep === "guided_discovery" || currentStep === "clarification") && (
                   <TouchableOpacity
                     onPress={handleSkipQuestion}
@@ -1128,6 +1139,7 @@ export default function ReframeScreen() {
                     onChangeText={setGrowthReflection}
                     textAlignVertical="top"
                   />
+                  <DictationButton dictation={dictation} field="growthReflection" value={growthReflection} onChangeText={setGrowthReflection} />
                   <Button
                     title="Next Step"
                     onPress={() => setGrowthStep(2)}
@@ -1151,6 +1163,7 @@ export default function ReframeScreen() {
                     onChangeText={setGrowthStrength}
                     textAlignVertical="top"
                   />
+                  <DictationButton dictation={dictation} field="growthStrength" value={growthStrength} onChangeText={setGrowthStrength} />
                   <View style={{ flexDirection: "row", gap: 10, marginTop: 10 }}>
                     <Button title="Back" variant="outline" onPress={() => setGrowthStep(1)} style={{ flex: 1 }} />
                     <Button title="Next Step" onPress={() => setGrowthStep(3)} disabled={!growthStrength.trim()} style={{ flex: 2, backgroundColor: Colors.primary }} />
@@ -1172,6 +1185,7 @@ export default function ReframeScreen() {
                     onChangeText={setGrowthGratitude}
                     textAlignVertical="top"
                   />
+                  <DictationButton dictation={dictation} field="growthGratitude" value={growthGratitude} onChangeText={setGrowthGratitude} />
                   <View style={{ flexDirection: "row", gap: 10, marginTop: 10 }}>
                     <Button title="Back" variant="outline" onPress={() => setGrowthStep(2)} style={{ flex: 1 }} />
                     <Button title="Next Step" onPress={() => setGrowthStep(4)} disabled={!growthGratitude.trim()} style={{ flex: 2, backgroundColor: Colors.primary }} />
@@ -1220,6 +1234,7 @@ export default function ReframeScreen() {
                     onChangeText={setGrowthTomorrow}
                     textAlignVertical="top"
                   />
+                  <DictationButton dictation={dictation} field="growthTomorrow" value={growthTomorrow} onChangeText={setGrowthTomorrow} />
                   <View style={{ flexDirection: "row", gap: 10, marginTop: 10 }}>
                     <Button title="Back" variant="outline" onPress={() => setGrowthStep(4)} style={{ flex: 1 }} />
                     <Button title="Review & Save" onPress={() => setGrowthStep(6)} disabled={!growthTomorrow.trim()} style={{ flex: 2, backgroundColor: Colors.primary }} />

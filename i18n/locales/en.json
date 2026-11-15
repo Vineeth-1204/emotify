@@ -443,5 +443,61 @@
     "appointmentTomorrowCopy": "You have a session with your counsellor tomorrow. You can check the details any time.",
     "appointmentButton": "View appointment",
     "notNow": "Not now"
+  },
+  "dictation": {
+    "start": "Speak instead of typing",
+    "stop": "Stop listening",
+    "speak": "Speak",
+    "listening": "Listening… tap to stop",
+    "ok": "OK",
+    "notNow": "Not now",
+    "download": "Download",
+    "openSettings": "Open settings",
+    "downloaded": {
+      "title": "Language ready",
+      "body": "You can now speak instead of typing. Tap the microphone again."
+    },
+    "issue": {
+      "platform_unsupported": {
+        "title": "Voice typing isn't available here",
+        "body": "Voice typing in Emotify works on Android phones, where your words are turned into text on the phone itself. You can keep typing as usual."
+      },
+      "android_too_old": {
+        "title": "Voice typing isn't available on this phone",
+        "body": "Voice typing needs Android 13 or newer so your voice stays on your phone. You can keep typing as usual."
+      },
+      "needs_app_update": {
+        "title": "Update needed",
+        "body": "Voice typing needs the latest version of Emotify. You can keep typing as usual."
+      },
+      "service_unavailable": {
+        "title": "Voice typing isn't available",
+        "body": "Speech recognition is turned off or missing on this phone. Check that \"Speech Recognition & Synthesis by Google\" is installed and enabled. You can keep typing as usual."
+      },
+      "on_device_unavailable": {
+        "title": "Voice typing isn't available",
+        "body": "This phone can't turn speech into text on the device itself, and Emotify doesn't send your voice anywhere. You can keep typing as usual."
+      },
+      "language_unavailable": {
+        "title": "Your language isn't available",
+        "body": "This phone can't recognise your app language offline yet. You can keep typing as usual."
+      },
+      "model_not_installed": {
+        "title": "Download your language",
+        "body": "To keep your voice on your phone, Emotify uses offline speech recognition. Download your language once to use voice typing."
+      },
+      "permission_denied": {
+        "title": "Microphone not allowed",
+        "body": "Voice typing needs the microphone. Nothing is recorded or saved. You can keep typing as usual."
+      },
+      "permission_blocked": {
+        "title": "Microphone is turned off",
+        "body": "Allow the microphone for Emotify in your phone settings to use voice typing. Nothing is recorded or saved."
+      },
+      "failed": {
+        "title": "Voice typing didn't start",
+        "body": "Something went wrong. Please try again, or keep typing as usual."
+      }
+    }
   }
 }

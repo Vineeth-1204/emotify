@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from "react";
+import { DictationButton } from "@/components/ui/DictationButton";
+import { useDictation } from "@/hooks/useDictation";
 import {
   View,
   Text,
@@ -22,6 +24,8 @@ import { getLocalDateString } from "@/utils/date";
 import { EVENING_GRATITUDE_COPY } from "@/common/routinesCatalogue";
 
 export default function EveningGratitudeScreen() {
+  // Voice-to-text for the free-text reflection (on-device; never auto-submitted).
+  const dictation = useDictation();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const todayStr = getLocalDateString();
@@ -248,6 +252,12 @@ export default function EveningGratitudeScreen() {
                 multiline
                 numberOfLines={2}
                 maxLength={200}
+              />
+              <DictationButton
+                dictation={dictation}
+                field={`entry${idx}`}
+                value={entries[idx] || ""}
+                onChangeText={(txt) => handleEntryChange(txt.slice(0, 200), idx)}
               />
             </View>
           ))}

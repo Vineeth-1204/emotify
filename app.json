@@ -58,6 +58,18 @@
         {
           "icon": "./assets/notification-icon.png"
         }
+      ],
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Allow $(PRODUCT_NAME) to use the microphone so you can speak instead of typing. Nothing is recorded or saved.",
+          "speechRecognitionPermission": "Allow $(PRODUCT_NAME) to turn your speech into text on your device.",
+          "androidSpeechServicePackages": [
+            "com.google.android.as",
+            "com.google.android.tts",
+            "com.google.android.googlequicksearchbox"
+          ]
+        }
       ]
     ],
     "experiments": {

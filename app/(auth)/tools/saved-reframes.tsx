@@ -1,4 +1,6 @@
 import React, { useState } from "react";
+import { DictationButton } from "@/components/ui/DictationButton";
+import { useDictation } from "@/hooks/useDictation";
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, TextInput, Modal, KeyboardAvoidingView, Platform, ActivityIndicator, Dimensions } from "react-native";
 import { useRouter } from "expo-router";
 import { useAppAuth } from "@/utils/auth";
@@ -28,6 +30,8 @@ const THINKING_TRAPS_MAP: Record<string, string> = {
 };
 
 export default function SavedReframesScreen() {
+  // Voice-to-text for the free-text reflection (on-device; never auto-submitted).
+  const dictation = useDictation();
   const router = useRouter();
   const { user } = useAppAuth();
   const insets = useSafeAreaInsets();
@@ -427,6 +431,7 @@ export default function SavedReframesScreen() {
                   placeholderTextColor={Colors.textMuted}
                   textAlignVertical="top"
                 />
+                <DictationButton dictation={dictation} field="editReframe" value={editText} onChangeText={setEditText} />
               </View>
             </ScrollView>
 

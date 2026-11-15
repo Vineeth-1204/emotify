@@ -497,6 +497,10 @@
       "failed": {
         "title": "Voice typing didn't start",
         "body": "Something went wrong. Please try again, or keep typing as usual."
+      },
+      "build_missing_microphone": {
+        "title": "Voice typing isn't set up in this version",
+        "body": "This version of Emotify was built without microphone access, so your phone can't offer it. Please install the latest test version. You can keep typing as usual."
       }
     }
   },

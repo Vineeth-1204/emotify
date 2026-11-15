@@ -2,7 +2,10 @@ import { useCallback, useEffect, useState } from "react";
 import { Alert, AppState, Linking, Platform } from "react-native";
 import { useFocusEffect } from "expo-router";
 import { useLanguage } from "@/context/LanguageContext";
-import { DictationController, type DictationIssue, type DictationSnapshot, type SpeechModuleLike } from "@/common/dictation";
+import * as SecureStore from "expo-secure-store";
+import { DictationController, resolvePermissionIssue, type DictationIssue, type DictationSnapshot, type SpeechModuleLike } from "@/common/dictation";
+
+const MIC_REQUESTED_KEY = "dictation_mic_requested";
 
 /**
  * Voice-to-text for free-text inputs (see common/dictation.ts for the privacy and platform
@@ -126,7 +129,12 @@ export function useDictation(): Dictation {
         return;
       }
       const result = await c.start(target, value, setValue, language);
-      if (!result.started && !result.ignored) explain(result.issue, result.downloadLocale);
+      const askedPermission = result.started || (!result.ignored && (result.issue === "permission_denied" || result.issue === "permission_blocked"));
+      if (!result.started && !result.ignored) {
+        const askedBefore = askedPermission ? !!(await SecureStore.getItemAsync(MIC_REQUESTED_KEY).catch(() => "1")) : true;
+        explain(resolvePermissionIssue(result.issue, askedBefore), result.downloadLocale);
+      }
+      if (askedPermission) SecureStore.setItemAsync(MIC_REQUESTED_KEY, "1").catch(() => {});
     },
     [owner, language, explain]
   );

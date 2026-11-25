@@ -63,6 +63,8 @@ export async function requestPushPermission(): Promise<PushPermission> {
 
 const STORED_TOKEN_KEY = "push_token";
 
+export const EAS_PROJECT_ID = "4f9d28f2-8302-4f94-8e9d-9f5fc8c2f30c";
+
 /**
  * The Expo push token for this device, or null when unavailable (permission not granted, no
  * Firebase/FCM configuration in the build, emulator without Play services, web). Never throws.
@@ -71,12 +73,23 @@ export async function getExpoPushToken(): Promise<string | null> {
   if (Platform.OS === "web") return null;
   try {
     await ensureNotificationChannels();
-    if ((await getPushPermission()) !== "granted") return null;
-    const projectId = Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
-    const tokenData = await Notifications.getExpoPushTokenAsync(projectId ? { projectId } : undefined);
+    const permission = await getPushPermission();
+    if (permission !== "granted") {
+      console.warn("[NOTIFICATIONS] Push permission not granted, status:", permission);
+      return null;
+    }
+    const projectId =
+      Constants.expoConfig?.extra?.eas?.projectId ??
+      Constants.easConfig?.projectId ??
+      EAS_PROJECT_ID;
+    console.log("[NOTIFICATIONS] Requesting Expo push token for project:", projectId);
+    const tokenData = await Notifications.getExpoPushTokenAsync(
+      projectId ? { projectId } : undefined
+    );
+    console.log("[NOTIFICATIONS] Successfully obtained push token:", tokenData?.data?.slice(0, 20) + "...");
     return tokenData.data;
   } catch (error) {
-    console.warn("[NOTIFICATIONS] Push token unavailable:", error instanceof Error ? error.message : error);
+    console.error("[NOTIFICATIONS] Push token unavailable:", error instanceof Error ? error.message : error);
     return null;
   }
 }

@@ -450,8 +450,12 @@ export const evaluateMicroGoalReminders = internalMutation({
     const sixtyMinutesMs = 60 * 60 * 1000;
     const twentyFourHoursMs = 24 * 60 * 60 * 1000;
 
-    // Scan recent goals that are at least 60 minutes old, but not older than 24 hours
-    const allGoals = await ctx.db.query("microGoals").collect();
+    // Scan recent goals that are at least 60 minutes old, but not older than 24 hours. Read only
+    // that window (by creation time) instead of every goal ever created.
+    const allGoals = await ctx.db
+      .query("microGoals")
+      .withIndex("by_creation_time", (q) => q.gte("_creationTime", nowMs - twentyFourHoursMs - sixtyMinutesMs))
+      .take(5000);
     const candidateGoals = allGoals.filter((g) => {
       // Must be between 60 minutes and 24 hours old
       const ageMs = nowMs - g.createdAt;

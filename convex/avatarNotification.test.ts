@@ -198,7 +198,7 @@ describe("Phase 2: Push Message Payload Construction with Rich Content", () => {
 });
 
 describe("Phase 2 & 3: End-to-End Notification Delivery with Brand Icon", () => {
-  test("BRAND-NOTIF-01: deliverNotification delivers appointment-status notification with brand icon", async () => {
+  test("BRAND-NOTIF-01: deliverNotification delivers appointment-status notification with the student's avatar as large icon", async () => {
     vi.useFakeTimers();
     process.env.EXPO_PUSH_LIVE = "stubbed-fetch";
     const sent: any[] = [];
@@ -241,12 +241,13 @@ describe("Phase 2 & 3: End-to-End Notification Delivery with Brand Icon", () => 
     await t.finishAllScheduledFunctions(vi.runAllTimers);
 
     expect(sent.length).toBe(1);
-    expect(sent[0].richContent).toBeUndefined(); // Uses authoritative brand logo notification icon
+    // Large icon = the student's companion (boy); the status-bar small icon stays the monochrome logo.
+    expect(sent[0].richContent?.image).toMatch(/\/api\/avatar\/boy\.jpg$/);
     expect(sent[0].channelId).toBe("appointments");
     expect(sent[0].body).toBe("Your appointment status has changed.");
   });
 
-  test("BRAND-NOTIF-02: deliverNotification delivers general-update notification with brand icon", async () => {
+  test("BRAND-NOTIF-02: deliverNotification delivers general-update notification with the student's avatar as large icon", async () => {
     vi.useFakeTimers();
     process.env.EXPO_PUSH_LIVE = "stubbed-fetch";
     const sent: any[] = [];
@@ -289,12 +290,12 @@ describe("Phase 2 & 3: End-to-End Notification Delivery with Brand Icon", () => 
     await t.finishAllScheduledFunctions(vi.runAllTimers);
 
     expect(sent.length).toBe(1);
-    expect(sent[0].richContent).toBeUndefined(); // Uses authoritative brand logo notification icon
+    expect(sent[0].richContent?.image).toMatch(/\/api\/avatar\/girl\.jpg$/);
     expect(sent[0].channelId).toBe("default");
     expect(sent[0].body).toBe("You have an update from Emotify.");
   });
 
-  test("BRAND-NOTIF-03: deliverNotification delivers routine reminder notification with brand icon", async () => {
+  test("BRAND-NOTIF-03: deliverNotification delivers routine reminder notification with the student's avatar as large icon", async () => {
     vi.useFakeTimers();
     process.env.EXPO_PUSH_LIVE = "stubbed-fetch";
     const sent: any[] = [];
@@ -336,7 +337,8 @@ describe("Phase 2 & 3: End-to-End Notification Delivery with Brand Icon", () => 
     await t.finishAllScheduledFunctions(vi.runAllTimers);
 
     expect(sent.length).toBe(1);
-    expect(sent[0].richContent).toBeUndefined();
+    // No companion chosen yet: the app's default companion (girl) is used.
+    expect(sent[0].richContent?.image).toMatch(/\/api\/avatar\/girl\.jpg$/);
     expect(sent[0].channelId).toBe("reminders");
     expect(sent[0].body).toBe("Time for your morning affirmation. Set an intention for today.");
   });

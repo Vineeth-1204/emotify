@@ -1,5 +1,7 @@
 import { v } from "convex/values";
 import { internalAction, internalMutation, internalQuery } from "./_generated/server";
+import { mutation } from "./functions";
+import { checkRateLimit } from "./rateLimiter";
 import { internal } from "./_generated/api";
 import { createNotification, pushCopyFor } from "./notify";
 import { MOBILE_DESTINATION_ROUTES, isNotificationDestination, type NotificationDestination } from "../common/notificationRoutes";
@@ -121,6 +123,19 @@ async function sendToExpo(messages: ExpoPushMessage[]): Promise<SendOutcome> {
   }
 }
 
+/**
+ * Emotify avatar shown as the notification's large icon on Android (expo-notifications sets the
+ * FCM image as the large icon; the status-bar small icon stays the monochrome app silhouette).
+ * Students get their chosen companion (the app's default companion when none is chosen yet);
+ * staff get no image. Expo sends it to FCM from `richContent.image`.
+ */
+export function notificationAvatarUrl(role: string | null | undefined, avatarGender: string | null | undefined): string | null {
+  if (!isStudentUserRole(role)) return null;
+  return getNotificationAvatarUrl(resolveAvatarCharacterId(avatarGender) ?? DEFAULT_NOTIFICATION_AVATAR);
+}
+/** The app's default companion (AvatarContext starts with "female"). */
+const DEFAULT_NOTIFICATION_AVATAR = "girl" as const;
+
 /** Internal: what delivering one notification needs. Tokens never leave the server. */
 export const getDeliveryContext = internalQuery({
   args: { notificationId: v.id("notifications") },
@@ -235,6 +250,15 @@ export const diagnosePush = internalQuery({
         role: user?.role ?? null,
         active: !!user && user.status !== "inactive",
         devices: tokens.map((t) => ({ platform: t.platform, token: maskToken(t.token), registeredAt: new Date(t.updatedAt).toISOString() })),
+        registrationEvents: id
+          ? (
+              await ctx.db
+                .query("pushRegistrationEvents")
+                .withIndex("by_userId_and_createdAt", (q) => q.eq("userId", String(id)))
+                .order("desc")
+                .take(5)
+            ).map((e) => ({ at: new Date(e.createdAt).toISOString(), stage: e.stage, status: e.status, errorCode: e.errorCode ?? null }))
+          : [],
       });
     }
 
@@ -290,6 +314,7 @@ export const deliverNotification = internalAction({
     const destination: NotificationDestination = isNotificationDestination(delivery.destination) ? delivery.destination : "notifications";
     // Only ids and a destination key travel in the payload; `route` is for older app builds.
     const data = { notificationId: String(args.notificationId), destination, route: MOBILE_DESTINATION_ROUTES[destination] };
+    const avatarUrl = notificationAvatarUrl(delivery.recipientRole, delivery.avatarGender);
 
     const messages: ExpoPushMessage[] = delivery.tokens.map((to: string) => ({
       to,
@@ -299,6 +324,7 @@ export const deliverNotification = internalAction({
       channelId: copy.channelId,
       data,
       priority: copy.channelId === "default" ? "default" : "high",
+      ...(avatarUrl ? { richContent: { image: avatarUrl } } : {}),
     }));
 
     const outcome = await sendToExpo(messages);
@@ -378,6 +404,16 @@ export const getUserAvatarGender = internalQuery({
   },
 });
 
+/** Internal query: a user's role (null when the user does not exist). */
+export const getUserRole = internalQuery({
+  args: { userId: v.string() },
+  handler: async (ctx, args) => {
+    const id = ctx.db.normalizeId("users", args.userId);
+    const user = id ? await ctx.db.get(id) : null;
+    return user ? (user.role ?? "patient") : null;
+  },
+});
+
 /**
  * Server-side Action: Dispatches privacy-safe mobile push notifications via the Expo Push API.
  * Kept for direct server use; business events go through notify.createNotification, which
@@ -409,6 +445,9 @@ export const sendPushNotification = internalAction({
       return { status: "no_tokens", sentCount: 0 };
     }
 
+    const gender = args.avatarGender ?? (await ctx.runQuery(internal.pushNotifications.getUserAvatarGender, { userId: args.userId }));
+    const role = gender === null ? await ctx.runQuery(internal.pushNotifications.getUserRole, { userId: args.userId }) : "patient";
+    const avatarUrl = role === null ? null : notificationAvatarUrl(role, gender);
     const messages: ExpoPushMessage[] = tokens.map((token) => ({
       to: token,
       title: args.title,
@@ -417,6 +456,7 @@ export const sendPushNotification = internalAction({
       channelId: args.channelId || "default",
       data: args.data || {},
       priority: "high",
+      ...(avatarUrl ? { richContent: { image: avatarUrl } } : {}),
     }));
 
     const outcome = await sendToExpo(messages);
@@ -490,5 +530,31 @@ export const dispatchTestNotification = internalMutation({
       dedupeKey,
       recipientId: args.studentId,
     };
+  },
+});
+
+/**
+ * Profile -> "Send a test notification": one neutral test push to the caller's own devices,
+ * through the same pipeline as every other notification (in-app record, push, receipt). The
+ * result appears in pushTokens.getMyPushStatus().lastTest. Rate-limited; never another user.
+ */
+export const sendMyTestNotification = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity?.subject) throw new Error("Unauthenticated: Login required.");
+    const userId = identity.subject;
+    await checkRateLimit(ctx, userId, "push_self_test", 5, 60 * 60 * 1000);
+    const { id } = await createNotification(ctx, {
+      recipientId: userId,
+      type: "notification_test",
+      title: "Emotify notification test",
+      message: "Your test notification arrived successfully.",
+      priority: "low",
+      destination: "notifications",
+      dedupeKey: `self_test:${userId}:${Date.now()}`,
+      category: "operational",
+    });
+    return { notificationId: id };
   },
 });

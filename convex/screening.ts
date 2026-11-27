@@ -823,8 +823,9 @@ async function ownScreeningHistory(ctx: any, keys: string[]) {
     );
     legacy.push(...(await ctx.db.query("screenings").withIndex("by_userId", (q: any) => q.eq("userId", key)).collect()));
   }
-  attempts.sort((a, b) => (b.completedAt || b.startedAt) - (a.completedAt || a.startedAt));
-  legacy.sort((a, b) => b.createdAt - a.createdAt);
+  // Newest first; attempts finished in the same millisecond keep their insertion order (newest first).
+  attempts.sort((a, b) => (b.completedAt || b.startedAt) - (a.completedAt || a.startedAt) || b._creationTime - a._creationTime);
+  legacy.sort((a, b) => b.createdAt - a.createdAt || b._creationTime - a._creationTime);
   return { attempts, legacy };
 }
 

@@ -49,6 +49,10 @@ export const evaluateAndDispatchStudent = internalMutation({
   },
 });
 
+/** Bounds for one 30-minute run (well above the beta's size; see the warning below). */
+const MAX_USERS_SCANNED = 5000;
+const MAX_STUDENTS_PER_RUN = 1000;
+
 export const evaluateAllEligibleStudents = internalMutation({
   args: {
     nowMs: v.optional(v.number()),
@@ -56,13 +60,17 @@ export const evaluateAllEligibleStudents = internalMutation({
   },
   handler: async (ctx, args) => {
     const nowMs = args.nowMs ?? Date.now();
-    const limit = Math.min(Math.max(args.batchLimit ?? 50, 1), 100);
+    const limit = Math.min(Math.max(args.batchLimit ?? MAX_STUDENTS_PER_RUN, 1), MAX_STUDENTS_PER_RUN);
 
-    // Fetch active students / patients (bounded query to respect Convex limits)
-    const allUsers = await ctx.db.query("users").take(limit * 2);
+    // Every active student is evaluated. (Previously only the first `limit * 2` accounts by
+    // creation time were read, so students who joined later were never evaluated.)
+    const allUsers = await ctx.db.query("users").take(MAX_USERS_SCANNED);
     const students = allUsers
       .filter((u: any) => (!u.role || u.role === "patient" || u.role === "student") && u.status !== "inactive")
       .slice(0, limit);
+    if (allUsers.length === MAX_USERS_SCANNED || students.length === limit) {
+      console.warn(`[ENGAGEMENT] student scan hit its bound (users read ${allUsers.length}, students ${students.length}); add pagination before growing further.`);
+    }
 
     let dispatchedCount = 0;
     let skippedCount = 0;

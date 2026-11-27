@@ -2,6 +2,7 @@ import { Platform } from "react-native";
 import * as Notifications from "expo-notifications";
 import Constants from "expo-constants";
 import * as SecureStore from "expo-secure-store";
+import { describeError, type PermissionDetails } from "../common/pushRegistration";
 
 export {
   ALLOWED_NOTIFICATION_ROUTES,
@@ -65,33 +66,45 @@ const STORED_TOKEN_KEY = "push_token";
 
 export const EAS_PROJECT_ID = "4f9d28f2-8302-4f94-8e9d-9f5fc8c2f30c";
 
+export type TokenResult = { ok: true; token: string } | { ok: false; reason: "permission" | "web" | "error"; error: string };
+
 /**
- * The Expo push token for this device, or null when unavailable (permission not granted, no
- * Firebase/FCM configuration in the build, emulator without Play services, web). Never throws.
+ * The Expo push token for this device (format ExponentPushToken[...]; the backend sends through
+ * Expo, which forwards to FCM). Returns why it is unavailable instead of throwing: no permission,
+ * no Firebase/FCM configuration in the build ("Default FirebaseApp is not initialized"), no
+ * Google Play services, no network.
  */
-export async function getExpoPushToken(): Promise<string | null> {
-  if (Platform.OS === "web") return null;
+export async function acquireExpoPushToken(): Promise<TokenResult> {
+  if (Platform.OS === "web") return { ok: false, reason: "web", error: "web" };
   try {
     await ensureNotificationChannels();
     const permission = await getPushPermission();
-    if (permission !== "granted") {
-      console.warn("[NOTIFICATIONS] Push permission not granted, status:", permission);
-      return null;
-    }
-    const projectId =
-      Constants.expoConfig?.extra?.eas?.projectId ??
-      Constants.easConfig?.projectId ??
-      EAS_PROJECT_ID;
-    console.log("[NOTIFICATIONS] Requesting Expo push token for project:", projectId);
-    const tokenData = await Notifications.getExpoPushTokenAsync(
-      projectId ? { projectId } : undefined
-    );
-    console.log("[NOTIFICATIONS] Successfully obtained push token:", tokenData?.data?.slice(0, 20) + "...");
-    return tokenData.data;
+    if (permission !== "granted") return { ok: false, reason: "permission", error: `permission ${permission}` };
+    const projectId = Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId ?? EAS_PROJECT_ID;
+    const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
+    if (!tokenData?.data) return { ok: false, reason: "error", error: "empty token" };
+    console.log("[PUSH] Expo push token obtained for project", projectId);
+    return { ok: true, token: tokenData.data };
   } catch (error) {
-    console.error("[NOTIFICATIONS] Push token unavailable:", error instanceof Error ? error.message : error);
-    return null;
+    const message = describeError(error);
+    console.error("[PUSH] Push token unavailable:", message);
+    return { ok: false, reason: "error", error: message };
   }
+}
+
+/** The Expo push token for this device, or null when unavailable (see acquireExpoPushToken). */
+export async function getExpoPushToken(): Promise<string | null> {
+  const result = await acquireExpoPushToken();
+  return result.ok ? result.token : null;
+}
+
+/** Permission status plus whether Android will still show its prompt. */
+export async function getPushPermissionDetails(): Promise<PermissionDetails> {
+  const { status, canAskAgain } = await Notifications.getPermissionsAsync();
+  return {
+    status: status === "granted" ? "granted" : status === "denied" ? "denied" : "undetermined",
+    canAskAgain: canAskAgain !== false,
+  };
 }
 
 /** Remembers which token this device registered, so logout can unregister it. */

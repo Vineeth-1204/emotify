@@ -11,6 +11,7 @@ import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
+import { PushStatusRow } from "@/components/PushStatusRow";
 import * as SecureStore from "expo-secure-store";
 import * as LocalAuthentication from "expo-local-authentication";
 import { useAvatar, AvatarGender } from "@/context/AvatarContext";
@@ -565,6 +566,8 @@ export default function ProfileScreen() {
               </View>
               <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
             </TouchableOpacity>
+            <View style={styles.divider} />
+            <PushStatusRow />
           </View>
         </View>
 

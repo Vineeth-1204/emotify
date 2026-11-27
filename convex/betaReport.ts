@@ -156,6 +156,28 @@ export async function buildDailySummary(ctx: { db: any }, date?: string, tzOffse
   }
   const noRecipientAlerts = audit.filter((r: any) => r.action === "alert_delivery_failure").length;
 
+  // ---- phone (push) registration ---------------------------------------------------------
+  const allUsers = await ctx.db.query("users").take(5000);
+  const studentUsers = allUsers.filter((u: any) => (!u.role || u.role === "patient" || u.role === "student") && u.status !== "inactive");
+  const tokenRows = await ctx.db.query("pushTokens").take(5000);
+  const withDevice = new Set(tokenRows.map((t: any) => t.userId));
+  const regEvents = await ctx.db
+    .query("pushRegistrationEvents")
+    .withIndex("by_createdAt", (q: any) => q.gte("createdAt", win.from).lt("createdAt", win.to))
+    .take(ROW_CAP);
+  const registrationProblems: Record<string, number> = {};
+  for (const e of regEvents) if (e.status !== "ok") inc(registrationProblems, `${e.stage}: ${e.status}${e.errorCode ? ` (${e.errorCode})` : ""}`);
+  const pushRegistration = {
+    students: studentUsers.length,
+    studentsWithDevice: studentUsers.filter((u: any) => withDevice.has(String(u._id))).length,
+    studentsWithoutDevice: studentUsers
+      .filter((u: any) => !withDevice.has(String(u._id)))
+      .slice(0, 50)
+      .map((u: any) => ({ name: u.full_name || u.alias || "Unknown", label: u.patientId ? `Student ${u.patientId}` : "No student ID" })),
+    registeredToday: regEvents.filter((e: any) => e.stage === "registered" && e.status === "ok").length,
+    problemsToday: registrationProblems,
+  };
+
   // ---- feedback --------------------------------------------------------------------------
   const feedbackRows = await ctx.db
     .query("betaFeedback")
@@ -194,6 +216,7 @@ export async function buildDailySummary(ctx: { db: any }, date?: string, tzOffse
       note: "Function exceptions are not stored in the database; check Logs in the Convex dashboard.",
     },
     notifications: { created: notes.length, read, pushByStatus, pushErrors },
+    pushRegistration,
     safety: {
       alertsCreated: alerts.length,
       byType: alertsByType,

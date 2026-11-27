@@ -430,6 +430,41 @@
       "minutesAgo": "{{count}} min ago",
       "hoursAgo": "{{count}} h ago",
       "daysAgo": "{{count}} d ago"
+    },
+    "phone": {
+      "label": "Phone notifications",
+      "state": {
+        "on": "On",
+        "off": "Off",
+        "blocked": "Blocked",
+        "not_registered": "Not set up",
+        "unknown": "Checking…"
+      },
+      "help": {
+        "off": "Turn on notifications to get reminders and updates on this phone.",
+        "blocked": "Notifications are turned off for Emotify in your phone settings.",
+        "not_registered": "This phone hasn't finished setting up notifications yet."
+      },
+      "turnOn": "Turn on",
+      "openSettings": "Open settings",
+      "retry": "Try again",
+      "sendTest": "Send a test notification",
+      "testSentTitle": "Test sent",
+      "testSentBody": "A test notification should appear within a minute. The result is shown here.",
+      "testFailedTitle": "Couldn't send a test",
+      "lastTest": "Last test",
+      "result": {
+        "sending": "sending…",
+        "acceptedByExpo": "accepted by Expo, waiting for Google's confirmation",
+        "acceptedByGoogle": "delivered to Google's push service",
+        "failed": "failed",
+        "liveOff": "not sent: phone notifications are switched off on the server",
+        "noDevice": "no phone registered",
+        "skipped": "not sent",
+        "unknown": "unknown"
+      },
+      "blockedTitle": "Notifications are blocked",
+      "blockedBody": "Emotify can't ask again. Turn on notifications for Emotify in your phone settings."
     }
   },
   "emotyGuide": {

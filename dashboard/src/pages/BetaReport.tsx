@@ -178,6 +178,25 @@ export default function BetaReport() {
               <CountList data={report.notifications.pushErrors} empty="None." />
             </section>
 
+            <section className="glass-panel" style={panel} aria-labelledby="devices-title">
+              <h2 id="devices-title" style={h2}><Bell size={18} /> Phones registered for push</h2>
+              <p style={muted}>
+                Students with a registered phone: <strong>{report.pushRegistration.studentsWithDevice}</strong> of {report.pushRegistration.students} · registrations on this day: {report.pushRegistration.registeredToday}
+              </p>
+              <p style={{ ...muted, marginTop: 12 }}>Registration problems reported by phones</p>
+              <CountList data={report.pushRegistration.problemsToday} empty="None." />
+              {report.pushRegistration.studentsWithoutDevice.length > 0 && (
+                <>
+                  <p style={{ ...muted, marginTop: 12 }}>Students with no registered phone (they get in-app notifications only)</p>
+                  <ul style={{ margin: "6px 0 0 18px" }}>
+                    {report.pushRegistration.studentsWithoutDevice.map((s: { name: string; label: string }, i: number) => (
+                      <li key={i} style={{ color: "var(--text-primary)", fontSize: "0.88rem" }}>{s.name} <span style={muted}>({s.label})</span></li>
+                    ))}
+                  </ul>
+                </>
+              )}
+            </section>
+
             <section className="glass-panel" style={panel} aria-labelledby="errors-title">
               <h2 id="errors-title" style={h2}><Bug size={18} /> Errors</h2>
               <p style={muted}>

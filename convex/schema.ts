@@ -917,11 +917,30 @@ export default defineSchema({
     token: v.string(),
     platform: v.string(), // "android" | "ios" | "web"
     deviceId: v.optional(v.string()),
-    updatedAt: v.number(),
+    appVersion: v.optional(v.string()),
+    updatedAt: v.number(), // last successful registration from the device
   })
     .index("by_userId", ["userId"])
     .index("by_token", ["token"])
     .index("by_userId_and_token", ["userId", "token"]),
+
+  /**
+   * Push registration lifecycle reported by devices (and token invalidation by the server), so a
+   * missing device can be diagnosed without device logs. Never stores tokens or message text.
+   */
+  pushRegistrationEvents: defineTable({
+    userId: v.string(),
+    stage: v.string(), // "permission" | "token" | "backend" | "registered" | "invalidated"
+    status: v.string(), // "ok" | "denied" | "blocked" | "deferred" | "error"
+    errorCode: v.optional(v.string()),
+    permission: v.optional(v.string()), // granted | denied | undetermined
+    platform: v.optional(v.string()),
+    appVersion: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_userId_and_createdAt", ["userId", "createdAt"])
+    .index("by_userId", ["userId"])
+    .index("by_createdAt", ["createdAt"]),
 
   positiveMemories: defineTable({
     userId: v.string(),

@@ -42,6 +42,9 @@ export const PUSH_COPY: Record<string, PushCopy | null> = {
   // Adaptive Student Engagement
   engagement_morning: { title: "Emotify", body: "Time for your morning check-in. How are you feeling today?", channelId: "reminders" },
   engagement_microgoal: { title: "Emotify", body: "A small step is waiting for you today. Ready to take it?", channelId: "reminders" },
+  // The engagement engine names its afternoon (MicroGoal) window "engagement_afternoon"; without
+  // this entry that notification was saved in-app but never pushed. Same copy as above.
+  engagement_afternoon: { title: "Emotify", body: "A small step is waiting for you today. Ready to take it?", channelId: "reminders" },
   engagement_evening: { title: "Emotify", body: "Take a quiet moment to reflect on your day.", channelId: "reminders" },
   engagement_night: { title: "Emotify", body: "Time to unwind and relax tonight.", channelId: "reminders" },
   // Daily Routines & MicroGoals (Phase 8 & 9)
